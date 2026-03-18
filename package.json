@@ -1,6 +1,6 @@
 {
   "name": "spafix-server",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "SpaFix API proxy server",
   "main": "index.js",
   "scripts": {
