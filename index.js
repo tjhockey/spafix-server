@@ -5,7 +5,7 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: "50mb" }));
 
-const PRO_PASSWORD = "testmonkey6";
+const PRO_PASSWORD = "spafix-pro-2025";
 
 // ── Free tier limits ─────────────────────────────────────────────
 const FREE_DAILY_MSG_LIMIT = 10;   // messages per day
@@ -166,9 +166,78 @@ app.post("/api/start-session", (req, res) => {
   res.json(check);
 });
 
+// ── Junk filter ──────────────────────────────────────────────────
+// Rough spa/hot tub keyword check — if none match, run a cheap
+// Haiku gate before spending on a full Sonnet call
+const SPA_KEYWORDS = [
+  "hot tub","spa","jacuzzi","jet","pump","heater","filter","water","chemical",
+  "ph","alkalinity","chlorine","bromine","sanitize","error","code","leak","motor",
+  "blower","circ","circulation","temp","temperature","balboa","gecko","sundance",
+  "bullfrog","caldera","master spa","hot spring","dimension one","marquis","arctic",
+  "cover","shell","cabinet","control","panel","display","topside","seal","o-ring",
+  "manifold","diverter","valve","plumbing","pipe","fitting","pressure","flow","sensor",
+  "thermistor","relay","capacitor","fuse","gfci","breaker","voltage","wiring","drain",
+  "fill","foam","scum","algae","cloudy","green","odor","smell","shock","oxidize",
+  "cartridge","skimmer","weir","ozone","uv","salt","mineral","startup","winterize",
+  "fix","repair","replace","broken","not working","won't","doesn't","stopped","issue",
+  "problem","help","diagnose","noise","vibration","trip","reset","error"
+];
+
+function looksSpaRelated(text) {
+  const lower = text.toLowerCase();
+  return SPA_KEYWORDS.some(kw => lower.includes(kw));
+}
+
+async function haikusaysSpaRelated(text) {
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 10,
+        system: "You are a content filter. Reply with only YES or NO. Does this message relate to hot tubs, spas, jacuzzis, pool equipment, water chemistry, or spa repair?",
+        messages: [{ role: "user", content: text }]
+      })
+    });
+    const data = await res.json();
+    const reply = (data.content?.[0]?.text || "").trim().toUpperCase();
+    return reply.startsWith("YES");
+  } catch (e) {
+    return true; // if gate fails, let it through
+  }
+}
+
+async function isValidMessage(text) {
+  if (!text || text.trim().length < 3) return { valid: false, reason: "too_short" };
+  if (text.trim().length > 2000) return { valid: false, reason: "too_long" };
+  // Fast keyword check first (free)
+  if (looksSpaRelated(text)) return { valid: true };
+  // If no keywords matched, ask Haiku (very cheap)
+  const related = await haikusaysSpaRelated(text);
+  if (!related) return { valid: false, reason: "off_topic" };
+  return { valid: true };
+}
+// ─────────────────────────────────────────────────────────────────
+
 app.post("/api/chat", async (req, res) => {
   const { messages, isPro } = req.body;
   if (!messages || !Array.isArray(messages)) return res.status(400).json({ error: "messages array required" });
+
+  // Validate the latest user message
+  const lastMsg = messages[messages.length - 1];
+  if (lastMsg?.role === "user") {
+    const content = typeof lastMsg.content === "string" ? lastMsg.content : "";
+    const check = await isValidMessage(content);
+    if (!check.valid) {
+      const msgs = {
+        too_short: "Please describe your hot tub issue in a bit more detail.",
+        too_long: "Your message is too long — please keep it under 2,000 characters.",
+        off_topic: "SpaFix can only help with hot tub and spa questions. Please describe your spa issue and I'll be happy to help!"
+      };
+      return res.status(400).json({ error: msgs[check.reason] || "Please ask a spa-related question." });
+    }
+  }
 
   // Enforce free limits
   if (!isPro) {
