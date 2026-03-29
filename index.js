@@ -5,7 +5,7 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: "50mb" }));
 
-const PRO_PASSWORD = "spafix-pro-2025";
+const PRO_PASSWORD = "testmonkey6";
 
 // ── Free tier limits ─────────────────────────────────────────────
 const FREE_DAILY_MSG_LIMIT = 10;   // messages per day
