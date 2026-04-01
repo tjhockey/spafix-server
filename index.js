@@ -9,7 +9,7 @@ const PRO_PASSWORD = "testmonkey6";
 
 // ── Free tier limits ─────────────────────────────────────────────
 const FREE_DAILY_MSG_LIMIT = 10;   // messages per day
-const FREE_WEEKLY_SESSION_LIMIT = 3; // sessions per week
+const FREE_WEEKLY_SESSION_LIMIT = 5; // sessions per week
 
 // In-memory store for rate limiting (resets on server restart)
 // In production, replace with Redis or a database
