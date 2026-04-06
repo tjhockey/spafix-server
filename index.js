@@ -272,6 +272,7 @@ const SPA_KEYWORDS = [
   "cartridge","skimmer","weir","ozone","uv","salt","mineral","startup","winterize",
   "fix","repair","replace","broken","not working","won't","doesn't","stopped","issue",
   "problem","help","diagnose","noise","vibration","trip","reset","error",
+  "year:","make/model:","serial","model:","make:",
   "burn","scorch","black","mark","fuse","board","element","ohm","multimeter",
   "heating","cooling","light","indicator","display","reading","showing","trying",
   "clean","dirty","clogged","rinse","restart","power","electricity","wire"
@@ -338,8 +339,12 @@ app.post("/api/chat", async (req, res) => {
   // Validate the latest user message
   const lastMsg = messages[messages.length - 1];
   if (lastMsg?.role === "user") {
-    const content = typeof lastMsg.content === "string" ? lastMsg.content : "";
-    const check = await isValidMessage(content);
+    const rawContent = typeof lastMsg.content === "string" ? lastMsg.content : "";
+    // Strip silent system prefix before validation (e.g. [SYSTEM: ...] or [Issue context: ...])
+    const content = rawContent.replace(/^\[SYSTEM:[^\]]*\]\s*/i, '').replace(/^\[Issue context:[^\]]*\]\s*/i, '');
+    // Always allow spa detail form submissions
+    const isSpaForm = content.includes('Year:') || content.includes('Make/Model:') || content.includes('Serial#:');
+    const check = isSpaForm ? { valid: true } : await isValidMessage(content);
     if (!check.valid) {
       const msgs = {
         too_short: "Please describe your hot tub issue in a bit more detail.",
