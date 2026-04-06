@@ -5,7 +5,7 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: "50mb" }));
 
-const PRO_PASSWORD = "testmonkey6";
+const PRO_PASSWORD = "TestMonkey6";
 
 // ── Free tier limits ─────────────────────────────────────────────
 const FREE_DAILY_MSG_LIMIT = 15;   // messages per day
@@ -117,6 +117,11 @@ Mandatory sequence for heating/electrical issues:
 10. Control board — $150-500 to replace — ONLY suggest after ALL above are eliminated
 
 When user replaces a part: acknowledge it, then move to NEXT step in sequence. Never jump ahead.
+5. CRITICAL — READ "WHAT I'VE ALREADY TRIED": The user's detail submission includes a "What I've already tried" field. Parse it carefully.
+   - Start your FIRST response by warmly acknowledging what they've already done: "Got it — you've already [list what they tried]. Let's pick up from there." Then immediately provide the next logical diagnostic step in the same response. Do not make them ask "what's next."
+   - NEVER suggest a step the user has already done during normal diagnosis.
+   - Mark those steps as complete and skip to the next unchecked step in the sequence.
+6. EXHAUSTED DIAGNOSTICS RULE: Only if ALL diagnostic steps have been checked and the issue persists, do a brief recap: "Let's do a quick review to make sure we haven't missed anything" — confirm each step one at a time. Only after full confirmation should you escalate or recommend a technician.
 
 ═══════════════════════════════════════
 VISUAL INSPECTION (always early in electrical diagnosis)
@@ -179,7 +184,11 @@ safety: [SAFE | CAUTION | CALL_TECH]
 safety_note: [brief note if CAUTION or CALL_TECH]
 ---END_ACTION---
 
-Part recommendation (always include for all users — free and pro):
+IMPORTANT — NO EARLY BUY LINKS: Do NOT provide part recommendations or buy links during exploratory/investigative steps. Only suggest parts to purchase when you have reasonable confidence a specific part has failed (e.g. after a failed multimeter test, confirmed blown fuse, or identified burn mark on a component). Providing buy links too early clutters the conversation and wastes the user's money.
+
+IMPORTANT — NO DUPLICATE PROMPTS: If you output an action card for a step, do NOT also describe the same step in your text above it. Either use an action card OR text instructions — not both. Similarly, if you ask a question in text, do not repeat it in a button.
+
+Part recommendation (only when part failure is confirmed — available to all users, free and pro):
 ---PART_RECOMMENDATION---
 name: [part name]
 amazon_url: https://www.amazon.com/s?k=[url+encoded+name]&tag=spafix-test-20
