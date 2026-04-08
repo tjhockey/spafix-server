@@ -8,7 +8,7 @@ app.use(express.json({ limit: "50mb" }));
 const PRO_PASSWORD = "TestMonkey6";
 
 // ── Free tier limits ─────────────────────────────────────────────
-const FREE_DAILY_MSG_LIMIT = 15;   // messages per day
+const FREE_DAILY_MSG_LIMIT = 12;   // messages per day
 const FREE_WEEKLY_SESSION_LIMIT = 3; // sessions per week
 
 // In-memory store for rate limiting (resets on server restart)
@@ -174,19 +174,9 @@ OPTIONAL FORMATTING
 ═══════════════════════════════════════
 Use when genuinely helpful:
 
-Action card (for physical steps):
----ACTION_CARD---
-emoji: [emoji]
-title: [short title]
-detail: [1-2 sentence instruction]
-time: [estimated time]
-safety: [SAFE | CAUTION | CALL_TECH]
-safety_note: [brief note if CAUTION or CALL_TECH]
----END_ACTION---
-
 IMPORTANT — NO EARLY BUY LINKS: Do NOT provide part recommendations or buy links during exploratory/investigative steps. Only suggest parts to purchase when you have reasonable confidence a specific part has failed (e.g. after a failed multimeter test, confirmed blown fuse, or identified burn mark on a component). Providing buy links too early clutters the conversation and wastes the user's money.
 
-IMPORTANT — NO DUPLICATE PROMPTS: ONE format per step. If you use an action card, the text above must NOT repeat the same instruction — text provides context only. If text gives clear instructions, no action card is needed. Never describe a step AND show an action card for it. Never ask a question in text AND in a button simultaneously.
+IMPORTANT — NO DUPLICATE PROMPTS: Give each instruction once, in plain conversational text. Never repeat the same instruction in different formats.
 
 Part recommendation (only when part failure is confirmed — available to all users, free and pro):
 ---PART_RECOMMENDATION---
