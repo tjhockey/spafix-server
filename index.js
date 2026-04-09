@@ -176,6 +176,11 @@ Use when genuinely helpful:
 
 IMPORTANT — NO EARLY BUY LINKS: Do NOT provide part recommendations or buy links during exploratory/investigative steps. Only suggest parts to purchase when you have reasonable confidence a specific part has failed (e.g. after a failed multimeter test, confirmed blown fuse, or identified burn mark on a component). Providing buy links too early clutters the conversation and wastes the user's money.
 
+IMPORTANT — PURCHASE QUESTIONS ALWAYS GET LINKS: When the user asks where to buy ANYTHING (test kits, chemicals, tools, accessories, parts, or any product), ALWAYS provide clickable Amazon and SpaDepot search links. Never just name a store. Format as:
+🛒 Amazon: https://www.amazon.com/s?k=[product+name]&tag=spafix-test-20
+🏪 SpaDepot: https://www.spadepot.com/search?q=[product+name]
+If the item is spa-specific, include the make/model in the search query. This applies to ALL purchase-related questions, not just confirmed failures.
+
 IMPORTANT — NO DUPLICATE PROMPTS: Give each instruction once, in plain conversational text. Never repeat the same instruction in different formats.
 
 When you auto-correct spa details (typo in make, plural model name, etc.), emit a correction block so the UI updates the spa details banner:
@@ -520,14 +525,39 @@ app.get("/", (req, res) => res.send("SpaFix API v4 running ✓"));
 // ── PARTS LIST (cached in memory by year-make-model) ─────────────
 const partsCache = {};
 
-const PARTS_SYSTEM_PROMPT = `You are a hot tub parts expert. When given a spa year, make, and model, return a JSON array of common parts. Each item must have:
+const PARTS_SYSTEM_PROMPT = `You are a hot tub parts expert. When given a spa year, make, and model, return a comprehensive JSON array of parts for that specific model. Each item must have:
 - name: part name (string)
 - category: one of: "Filtration", "Heating", "Pumps & Jets", "Controls & Sensors", "Plumbing & Seals", "Chemicals & Consumables", "Covers & Accessories"
-- part_number: OEM part number if known (string or null)
-- interval: replacement interval e.g. "Every 1-2 years" or "As needed"
+- part_number: OEM part number if known for that specific model (string or null)
+- interval: replacement interval e.g. "Every 1-2 years", "As needed", "5-10 years"
 - notes: brief note, max 10 words
 
-Return ONLY a valid JSON array. No markdown, no backticks, no preamble. Include 15-25 parts covering all major categories. Focus on wear items and consumables.`;
+CRITICAL: Do NOT limit to consumables. Include ALL major serviceable and replaceable components. You must include:
+- Filter cartridge(s) with correct part number for that model
+- Circulation pump (with HP rating)
+- Jet pump(s) (1-speed and/or 2-speed, with HP rating)
+- Heater element and heater assembly
+- Main control board / circuit board
+- Topside control panel
+- Flow sensor / flow switch
+- Pressure switch
+- Hi-limit temperature sensor
+- Water temperature sensor
+- GFCI breaker
+- Spa jets (standard diverter jets, directional jets)
+- Jet bodies and jet inserts
+- Diverter valves and gate valves
+- Union fittings (2" and 1.5")
+- Pump wet end / impeller
+- Pump seal kit
+- O-rings and gasket kit
+- Ozonator (if applicable to model)
+- Air blower (if applicable)
+- Filter lid / weir door
+- Cover lifter hardware
+- Chemicals: pH up, pH down, chlorine/bromine, shock, alkalinity increaser
+
+Return ONLY a valid JSON array. No markdown, no backticks, no preamble. Include 25-35 parts minimum.`;
 
 app.post('/api/parts-list', async (req, res) => {
   const { year, make, model, cacheKey } = req.body;
