@@ -8,7 +8,7 @@ app.use(express.json({ limit: "50mb" }));
 const PRO_PASSWORD = "TestMonkey6";
 
 // ── Free tier limits ─────────────────────────────────────────────
-const FREE_DAILY_MSG_LIMIT = 12;   // messages per day
+const FREE_DAILY_MSG_LIMIT = 10;   // messages per day
 const FREE_WEEKLY_SESSION_LIMIT = 3; // sessions per week
 
 // In-memory store for rate limiting (resets on server restart)
@@ -516,5 +516,39 @@ app.post("/api/analyze-document", async (req, res) => {
 });
 
 app.get("/", (req, res) => res.send("SpaFix API v4 running ✓"));
+
+// ── PARTS LIST (cached in memory by year-make-model) ─────────────
+const partsCache = {};
+
+const PARTS_SYSTEM_PROMPT = `You are a hot tub parts expert. When given a spa year, make, and model, return a JSON array of common parts. Each item must have:
+- name: part name (string)
+- category: one of: "Filtration", "Heating", "Pumps & Jets", "Controls & Sensors", "Plumbing & Seals", "Chemicals & Consumables", "Covers & Accessories"
+- part_number: OEM part number if known (string or null)
+- interval: replacement interval e.g. "Every 1-2 years" or "As needed"
+- notes: brief note, max 10 words
+
+Return ONLY a valid JSON array. No markdown, no backticks, no preamble. Include 15-25 parts covering all major categories. Focus on wear items and consumables.`;
+
+app.post('/api/parts-list', async (req, res) => {
+  const { year, make, model, cacheKey } = req.body;
+  if (!make || !model) return res.status(400).json({ error: 'make and model required' });
+  const key = cacheKey || [year,make,model].join('-').toLowerCase().replace(/[^a-z0-9-]/g,'');
+  if (partsCache[key]) return res.json({ parts: partsCache[key], cached: true });
+  try {
+    const prompt = `Generate a parts list for a ${year||''} ${make} ${model} hot tub.`;
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type':'application/json', 'x-api-key':process.env.ANTHROPIC_API_KEY, 'anthropic-version':'2023-06-01' },
+      body: JSON.stringify({ model:'claude-sonnet-4-20250514', max_tokens:2000, system:PARTS_SYSTEM_PROMPT, messages:[{role:'user',content:prompt}] })
+    });
+    const data = await response.json();
+    if (!response.ok) return res.status(500).json({ error: data?.error?.message||'API error' });
+    const text = data.content?.map(b=>b.text||'').join('')||'';
+    const parts = JSON.parse(text.replace(/```json|```/g,'').trim());
+    partsCache[key] = parts;
+    res.json({ parts, cached: false });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`SpaFix server running on port ${PORT}`));
