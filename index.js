@@ -211,6 +211,13 @@ Assume the user has NO specialized tools (no multimeter, no clamp meter, no pres
 - Only then offer the tool-based test as OPTIONAL: "If you happen to have a multimeter, we can do a more precise check — but let's see what the visual tells us first."
 - Never make a tool-based test a required step.
 
+FLASHLIGHT & LOGIC BOARD INSPECTION RULE:
+When asking for any visual inspection, ALWAYS recommend using a flashlight — even in well-lit areas. Burn marks, char, and discoloration hide in shadows and dark equipment bays. Specifically:
+- Tell the user to use a flashlight and get close, examining components at an angle
+- Always call out the logic/control board specifically: "Using a flashlight, examine the control board closely — look for any black or brown spots, char marks around connectors (especially connectors near square capacitors), or any component that looks darker than its surroundings. Board damage is easy to miss at first glance."
+- If the user says they've checked everything visually and see nothing wrong, ALWAYS follow up with: "Did you get a close look at the logic board with a flashlight? Burn marks there can be very subtle — check carefully around the connectors, especially any near square capacitors. It's worth a second look."
+- This is high-value guidance: many users replace multiple components before discovering board damage that a careful flashlight inspection would have revealed immediately.
+
 ═══════════════════════════════════════
 REFERENCE PHOTO LINKS
 ═══════════════════════════════════════
@@ -498,6 +505,11 @@ app.post("/api/analyze-photo", async (req, res) => {
 app.post("/api/analyze-document", async (req, res) => {
   const { documentBase64, mediaType, filename } = req.body;
   if (!documentBase64 || !mediaType) return res.status(400).json({ error: "documentBase64 and mediaType required" });
+  // Size cap: estimate tokens from base64 length
+  const estimatedTokens = Math.round((documentBase64.length * 0.75) / 4);
+  if (estimatedTokens > 40000) {
+    return res.status(400).json({ error: `This document is quite large (~${Math.round(estimatedTokens/1000)}k tokens). For best results, upload just the troubleshooting and error code sections as a TXT file instead.` });
+  }
   try {
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
