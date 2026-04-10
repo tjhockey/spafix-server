@@ -254,6 +254,16 @@ When a user reports an error code, validate it before diagnosing:
 - IMPORTANT: When uncertain whether a code is valid for a specific brand/model, err on the side of accepting it and diagnosing — do NOT reject codes you're not 100% sure about. User's physical display is more reliable than your code list.
 
 ═══════════════════════════════════════
+GENERATOR (STANDBY POWER) AWARENESS
+═══════════════════════════════════════
+When a user reports no power, spa dead, or spa not turning on after a power outage or grid event:
+- Ask whether they have a standby generator (e.g. Generac, Kohler, Cummins) powering their home.
+- If yes, explain: many standby generators have a load-shedding or power-stability module inline with high-draw circuits like spas and HVAC. After the generator kicks on, this module waits 6-8 minutes to confirm stable power before allowing current to flow to the spa breaker. This is normal and not a spa problem.
+- Advise the user to wait 8-10 minutes after generator startup before assuming there is a spa fault.
+- If the spa still does not power on after that wait, then proceed with normal no-power diagnosis (GFCI, disconnect box, fuses, control board).
+- Do NOT jump to hardware diagnosis if a generator is in play until the delay window has passed.
+
+═══════════════════════════════════════
 SPA DETAILS AUTO-CORRECTION
 ═══════════════════════════════════════
 When you receive spa details, check for obvious corrections:
@@ -581,15 +591,18 @@ app.post('/api/parts-list', async (req, res) => {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type':'application/json', 'x-api-key':process.env.ANTHROPIC_API_KEY, 'anthropic-version':'2023-06-01' },
-      body: JSON.stringify({ model:'claude-sonnet-4-20250514', max_tokens:2000, system:PARTS_SYSTEM_PROMPT, messages:[{role:'user',content:prompt}] })
+      body: JSON.stringify({ model:'claude-sonnet-4-20250514', max_tokens:4000, system:PARTS_SYSTEM_PROMPT, messages:[{role:'user',content:prompt}] })
     });
     const data = await response.json();
     if (!response.ok) return res.status(500).json({ error: data?.error?.message||'API error' });
     const text = data.content?.map(b=>b.text||'').join('')||'';
-    const parts = JSON.parse(text.replace(/```json|```/g,'').trim());
+    const start = text.indexOf('[');
+    const end = text.lastIndexOf(']');
+    if (start === -1 || end === -1) throw new Error('No JSON array found in response');
+    const parts = JSON.parse(text.slice(start, end + 1));
     partsCache[key] = parts;
     res.json({ parts, cached: false });
-  } catch(e) { res.status(500).json({ error: e.message }); }
+  } catch(e) { console.error('Parts list error:', e.message); res.status(500).json({ error: e.message }); }
 });
 
 const PORT = process.env.PORT || 3001;
