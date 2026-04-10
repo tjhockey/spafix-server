@@ -551,6 +551,7 @@ const PARTS_SYSTEM_PROMPT = `You are a hot tub parts expert. When given a spa ye
 - name: part name (string)
 - category: one of: "Filtration", "Heating", "Pumps & Jets", "Controls & Sensors", "Plumbing & Seals", "Chemicals & Consumables", "Covers & Accessories"
 - part_number: OEM part number if known for that specific model (string or null)
+- mfr_model: the manufacturer or aftermarket model name/number that buyers actually search for on Amazon (e.g. "Laing E-10", "Balboa VS501Z", "Gecko SSPA-1", "Waterway 310-4410", "Hayward SPX3400Z2"). This is NOT the OEM spa catalog number — it is the component maker's model. If unknown, use null.
 - interval: replacement interval e.g. "Every 1-2 years", "As needed", "5-10 years"
 - notes: brief note, max 10 words
 
