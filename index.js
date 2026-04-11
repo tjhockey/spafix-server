@@ -5,7 +5,37 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: "50mb" }));
 
-const PRO_PASSWORD = "TestMonkey6";
+// ── Test passwords (tester name → password) ──────────────────────
+const PRO_PASSWORD = "TestMonkey6"; // legacy master password — kept for admin use
+const TEST_PASSWORDS = {
+  "TestMonkey6":  "Admin",
+  "SpaTest-Alpha": "Tester-Alpha",
+  "SpaTest-Beta":  "Tester-Beta",
+  "SpaTest-Gamma": "Tester-Gamma",
+};
+const ADMIN_REPORT_PASSWORD = "SpaFixAdmin2024!";
+
+// ── Transcript log (in-memory, resets on restart) ─────────────────
+const transcriptLog = {}; // key: testerName, value: array of session objects
+
+function logTestSession(testerName, clientId) {
+  if (!transcriptLog[testerName]) transcriptLog[testerName] = [];
+  const existing = transcriptLog[testerName].find(s => s.clientId === clientId && s.active);
+  if (existing) return existing;
+  const session = { clientId, testerName, startTime: new Date().toISOString(), messages: [], active: true };
+  transcriptLog[testerName].push(session);
+  return session;
+}
+
+function getTestSession(testerName, clientId) {
+  if (!transcriptLog[testerName]) return null;
+  return transcriptLog[testerName].find(s => s.clientId === clientId && s.active) || null;
+}
+
+function appendToTranscript(testerName, clientId, role, content) {
+  const session = getTestSession(testerName, clientId);
+  if (session) session.messages.push({ role, content: content.slice(0, 500), time: new Date().toISOString() });
+}
 
 // ── Free tier limits ─────────────────────────────────────────────
 const FREE_DAILY_MSG_LIMIT = 10;   // messages per day
@@ -316,7 +346,31 @@ Keep the tone conversational. Use **bold** for the hot tub model name and key fi
 // ── Routes ───────────────────────────────────────────────────────
 app.post("/api/verify-pro", (req, res) => {
   const { password } = req.body;
-  res.json({ success: password === PRO_PASSWORD });
+  const testerName = TEST_PASSWORDS[password] || null;
+  const success = !!testerName;
+  if (success) {
+    const clientId = getClientId(req);
+    logTestSession(testerName, clientId);
+  }
+  res.json({ success, testerName });
+});
+
+// ── Admin report endpoint ─────────────────────────────────────────
+app.get("/api/admin/report", (req, res) => {
+  const { key } = req.query;
+  if (key !== ADMIN_REPORT_PASSWORD) return res.status(401).json({ error: "Unauthorized" });
+  const report = Object.entries(transcriptLog).map(([tester, sessions]) => ({
+    tester,
+    sessionCount: sessions.length,
+    totalMessages: sessions.reduce((n, s) => n + s.messages.length, 0),
+    sessions: sessions.map(s => ({
+      clientId: s.clientId,
+      startTime: s.startTime,
+      messageCount: s.messages.length,
+      transcript: s.messages
+    }))
+  }));
+  res.json({ generated: new Date().toISOString(), testers: report });
 });
 
 // Get current usage stats (called by frontend on load)
@@ -417,7 +471,7 @@ async function isValidMessage(text) {
 // ─────────────────────────────────────────────────────────────────
 
 app.post("/api/chat", async (req, res) => {
-  const { messages, isPro } = req.body;
+  const { messages, isPro, testerName } = req.body;
   if (!messages || !Array.isArray(messages)) return res.status(400).json({ error: "messages array required" });
 
   // Validate the latest user message
@@ -478,8 +532,15 @@ app.post("/api/chat", async (req, res) => {
     // Return updated usage counts with the reply
     const clientId = getClientId(req);
     const u = getUsage(clientId);
+    const reply = data.content?.map((b) => b.text || "").join("") || "";
+    // Log to transcript if this is a test session
+    if (testerName && TEST_PASSWORDS[Object.keys(TEST_PASSWORDS).find(k => TEST_PASSWORDS[k] === testerName) || '']) {
+      const lastMsg = messages[messages.length - 1];
+      if (lastMsg?.role === 'user') appendToTranscript(testerName, clientId, 'user', typeof lastMsg.content === 'string' ? lastMsg.content : '');
+      appendToTranscript(testerName, clientId, 'assistant', reply);
+    }
     res.json({
-      reply: data.content?.map((b) => b.text || "").join("") || "",
+      reply,
       usage: isPro ? null : { dailyMsgs: u.dailyMsgs, dailyLimit: FREE_DAILY_MSG_LIMIT, weeklySessions: u.weeklySessions, weeklyLimit: FREE_WEEKLY_SESSION_LIMIT },
     });
   } catch (err) {
@@ -551,7 +612,7 @@ const PARTS_SYSTEM_PROMPT = `You are a hot tub parts expert. When given a spa ye
 - name: part name (string)
 - category: one of: "Filtration", "Heating", "Pumps & Jets", "Controls & Sensors", "Plumbing & Seals", "Chemicals & Consumables", "Covers & Accessories"
 - part_number: OEM part number if known for that specific model (string or null)
-- mfr_model: the manufacturer or aftermarket model name/number that buyers actually search for on Amazon (e.g. "Laing E-10", "Balboa VS501Z", "Gecko SSPA-1", "Waterway 310-4410", "Hayward SPX3400Z2"). This is NOT the OEM spa catalog number — it is the component maker's model. If unknown, use null.
+- mfr_model: the SHORT base manufacturer or aftermarket model name that buyers actually search for on Amazon (e.g. "Laing E-10", "Balboa VS501Z", "Gecko SSPA", "Waterway Executive 48"). Use ONLY the base model name — do NOT include full part suffixes, revision codes, or long alphanumeric strings after the base name (e.g. use "Laing E-10" NOT "Laing E10-NSHNDNN1W-02"). This is NOT the OEM spa catalog number — it is the component maker's short searchable model name. If unknown, use null.
 - interval: replacement interval e.g. "Every 1-2 years", "As needed", "5-10 years"
 - notes: brief note, max 10 words
 
