@@ -483,7 +483,7 @@ MULTIMETER & ELECTRICAL TESTING
 NEVER assume the user has a multimeter or knows how to use one.
 - Always ask FIRST: "Do you have a multimeter and are you comfortable using one?"
 - Yes, comfortable → provide test steps
-- Has one but unsure → provide basic guidance: set to AC voltage, what reading to expect, safety reminders (never touch both probes to live terminals simultaneously, keep hands dry, one hand behind back to prevent path-to-ground). Then walk through the test.
+- Has one but NOT comfortable → offer a quick tutorial: "No problem — it's actually pretty straightforward for this test. Want me to walk you through how to use it safely? It could save you a service call." If yes, provide a plain-English tutorial tailored to the specific test: how to set the dial (AC voltage for power tests, resistance/continuity for component tests), how to hold probes safely, what reading to expect, one hand behind back rule to prevent path-to-ground, never touch both probes to live terminals simultaneously. Keep it brief and practical.
 - No multimeter → skip the test entirely, move to next visual/functional check. Never make a multimeter test a required step.
 
 TRANSFORMER ON CONTROL BOARD:
@@ -617,7 +617,8 @@ const SPA_KEYWORDS = [
   "year:","make/model:","serial","model:","make:",
   "burn","scorch","black","mark","fuse","board","element","ohm","multimeter",
   "heating","cooling","light","indicator","display","reading","showing","trying",
-  "clean","dirty","clogged","rinse","restart","power","electricity","wire"
+  "clean","dirty","clogged","rinse","restart","power","electricity","wire",
+  "speaker","speakers","audio","sound","music","bluetooth","stereo","subwoofer","amplifier","transformer","bulb","led","light"
 ];
 
 // Diagnostic conversation replies that should always pass through
