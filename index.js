@@ -712,8 +712,9 @@ app.post("/api/chat", async (req, res) => {
     // Always allow spa detail form submissions
     const isSpaForm = content.includes('Year:') || content.includes('Make/Model:') || content.includes('Serial#:');
     const spaSubmitted = req.body.spaSubmitted === true;
-    // Bypass junk filter entirely once spa details have been submitted — all messages are in-context
-    const check = (isSpaForm || spaSubmitted) ? { valid: true } : await isValidMessage(content);
+    // Bypass junk filter if: spa form submitted, spa details already provided, or conversation already in progress (2+ messages)
+    const conversationInProgress = messages.filter(m => m.role === 'user').length > 1;
+    const check = (isSpaForm || spaSubmitted || conversationInProgress) ? { valid: true } : await isValidMessage(content);
     if (!check.valid) {
       const msgs = {
         too_short: "Please describe your hot tub issue in a bit more detail.",
