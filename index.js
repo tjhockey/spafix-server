@@ -763,7 +763,8 @@ app.post("/api/chat", async (req, res) => {
     // Return updated usage counts with the reply
     const clientId = getClientId(req);
     const u = getUsage(clientId);
-    const reply = data.content?.map((b) => b.text || "").join("") || "";
+    const rawReply = data.content?.map((b) => b.text || "").join("") || "";
+    const reply = rawReply.replace(/<br\s*\/?>/gi, "\n"); // strip any <br> tags Jet outputs
     // Log to transcript if this is a test session
     if (testerName && TEST_PASSWORDS[Object.keys(TEST_PASSWORDS).find(k => TEST_PASSWORDS[k] === testerName) || '']) {
       const lastMsg = messages[messages.length - 1];
