@@ -799,7 +799,8 @@ app.post("/api/analyze-photo", async (req, res) => {
     });
     const data = await response.json();
     if (!response.ok) return res.status(response.status).json({ error: data?.error?.message || "API error" });
-    res.json({ reply: data.content?.map((b) => b.text || "").join("") || "" });
+    const photoReply = (data.content?.map((b) => b.text || "").join("") || "").replace(/<br\s*\/?>/gi, "\n");
+    res.json({ reply: photoReply });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -829,7 +830,8 @@ app.post("/api/analyze-document", async (req, res) => {
     });
     const data = await response.json();
     if (!response.ok) return res.status(response.status).json({ error: data?.error?.message || "API error" });
-    res.json({ summary: data.content?.map((b) => b.text || "").join("") || "" });
+    const docSummary = (data.content?.map((b) => b.text || "").join("") || "").replace(/<br\s*\/?>/gi, "\n");
+    res.json({ summary: docSummary });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
