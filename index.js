@@ -542,7 +542,7 @@ When Jet presents the user with a numbered list of options to choose from (e.g. 
 Adjust the number of buttons to match the options presented. This makes selection easy on mobile.
 
 Keep responses focused, warm, and free of excessive blank lines. Use **bold** for important terms.
-NEVER output <br> or <br/> tags in responses. Use plain line breaks only. HTML tags in responses render as literal text and are not processed.`;
+NEVER output <br> or <br/> or &lt;br&gt; tags in responses — not before questions, not between paragraphs, never. Use plain newlines only (press Enter). If you output a <br> tag it will appear as visible literal text like "<br>What do you see?" which breaks the UI.`;
 
 const PHOTO_SYSTEM_PROMPT = `You are SpaFix AI, an expert hot tub and spa repair assistant with deep knowledge of hot tub parts, components, and repair.
 
@@ -769,7 +769,9 @@ app.post("/api/chat", async (req, res) => {
     const clientId = getClientId(req);
     const u = getUsage(clientId);
     const rawReply = data.content?.map((b) => b.text || "").join("") || "";
-    const reply = rawReply.replace(/<br\s*\/?>/gi, "\n"); // strip any <br> tags Jet outputs
+    const reply = rawReply
+      .replace(/&lt;br\s*\/?&gt;/gi, "\n")  // strip HTML-escaped &lt;br&gt; entities
+      .replace(/<br\s*\/?>/gi, "\n");        // strip literal <br> tags Jet outputs
     // Log to transcript if this is a test session
     if (testerName && TEST_PASSWORDS[Object.keys(TEST_PASSWORDS).find(k => TEST_PASSWORDS[k] === testerName) || '']) {
       const lastMsg = messages[messages.length - 1];
