@@ -623,6 +623,17 @@ app.get("/api/admin/report", (req, res) => {
 });
 
 // Get current usage stats (called by frontend on load)
+app.post("/api/increment-msg", (req, res) => {
+  const clientId = getClientId(req);
+  const u = getUsage(clientId);
+  resetDailyIfNeeded(u);
+  if (u.dailyMsgs >= FREE_DAILY_MSG_LIMIT) {
+    return res.json({ limitReached: true, dailyMsgs: u.dailyMsgs, dailyLimit: FREE_DAILY_MSG_LIMIT });
+  }
+  u.dailyMsgs++;
+  res.json({ limitReached: false, dailyMsgs: u.dailyMsgs, dailyLimit: FREE_DAILY_MSG_LIMIT });
+});
+
 app.get("/api/usage", (req, res) => {
   const clientId = getClientId(req);
   const u = getUsage(clientId);
