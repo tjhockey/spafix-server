@@ -391,6 +391,7 @@ amazon_broad_url: https://www.amazon.com/s?k=[make+url+encoded+part+name]&tag=sp
 supplier_broad_url: https://www.spadepot.com/search?q=[make+url+encoded+part+name]
 price_range: [$XX - $XX]
 notes: [compatibility notes]
+spa_agnostic: [true if product does not require spa make/model to find correct item — e.g. chemicals, test kits, tools, accessories, hoses, covers, lifters; false or omit for spa-specific parts]
 ---END_PART---
 
 ═══════════════════════════════════════
