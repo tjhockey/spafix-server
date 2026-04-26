@@ -1,19 +1,281 @@
+require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
+const crypto = require("crypto");
+const fs = require("fs");
+const path = require("path");
+
+let cachedEnvLoadState = null;
+
+function loadServerEnv() {
+  if (cachedEnvLoadState) return cachedEnvLoadState;
+
+  const envPath = path.join(__dirname, ".env");
+  let dotenvInitialized = false;
+  let envFileLoaded = false;
+
+  try {
+    require("dotenv").config({ path: envPath });
+    dotenvInitialized = true;
+    envFileLoaded = true;
+  } catch (error) {
+    if (!fs.existsSync(envPath)) {
+      return { dotenvInitialized, envFileLoaded, envPath };
+    }
+
+    const rawEnv = fs.readFileSync(envPath, "utf8");
+    for (const line of rawEnv.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+
+      const match = trimmed.match(/^([\w.-]+)\s*=\s*(.*)$/);
+      if (!match) continue;
+
+      const [, key, rawValue] = match;
+      if (Object.prototype.hasOwnProperty.call(process.env, key)) continue;
+
+      let value = rawValue.trim();
+      if (
+        (value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'"))
+      ) {
+        value = value.slice(1, -1);
+      }
+
+      process.env[key] = value;
+      envFileLoaded = true;
+    }
+  }
+
+  cachedEnvLoadState = { dotenvInitialized, envFileLoaded, envPath };
+  return cachedEnvLoadState;
+}
+
+const envLoadState = loadServerEnv();
+if (!envLoadState.dotenvInitialized && envLoadState.envFileLoaded) {
+  console.warn("[auth] dotenv was not available at startup; loaded server/.env with the fallback parser.");
+}
+
+const DEFAULT_ALLOWED_ORIGINS = [
+  "http://localhost:9000",
+  "https://spafix.app",
+  "https://www.spafix.app",
+];
+
+function normalizeOrigin(origin) {
+  if (typeof origin !== "string") return "";
+  const trimmed = origin.trim();
+  if (!trimmed) return "";
+
+  try {
+    return new URL(trimmed).origin;
+  } catch {
+    return trimmed.replace(/\/+$/, "");
+  }
+}
+
+const allowedOrigins = new Set(
+  [
+    ...DEFAULT_ALLOWED_ORIGINS,
+    process.env.FRONTEND_ORIGIN || "",
+    ...(process.env.ALLOWED_ORIGINS || "").split(","),
+  ]
+    .map(normalizeOrigin)
+    .filter(Boolean)
+);
+
+function isAllowedOrigin(origin) {
+  return allowedOrigins.has(normalizeOrigin(origin));
+}
+
+function enforceAllowedOrigin(req, res, next) {
+  const origin = req.get("origin");
+
+  // Allow non-browser/internal requests that do not send an Origin header.
+  if (!origin) return next();
+  if (isAllowedOrigin(origin)) return next();
+
+  return res.status(403).json({ error: "Origin not allowed." });
+}
+
+const corsOptions = {
+  origin(origin, callback) {
+    if (!origin) return callback(null, true);
+    return callback(null, isAllowedOrigin(origin));
+  },
+};
+
+const GLOBAL_JSON_LIMIT = "5mb";
+const UPLOAD_JSON_LIMIT = "10mb";
+const uploadJsonParser = express.json({ limit: UPLOAD_JSON_LIMIT });
+const defaultJsonParser = express.json({ limit: GLOBAL_JSON_LIMIT });
 
 const app = express();
-app.use(cors());
-app.use(express.json({ limit: "50mb" }));
+app.use((req, res, next) => {
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  next();
+});
+app.use("/api", enforceAllowedOrigin, cors(corsOptions));
+app.use(["/api/analyze-photo", "/api/analyze-document"], uploadJsonParser);
+app.use(defaultJsonParser);
+
+const DIAGNOSIS_FIELD_NAMES = new Set(["diagnosis"]);
+const DIAGNOSIS_TYPO_FIXES = [
+  [/\bteh\b/gi, "the"],
+  [/\bhte\b/gi, "the"],
+  [/\bdont\b/gi, "don't"],
+  [/\bdoesnt\b/gi, "doesn't"],
+  [/\bcant\b/gi, "can't"],
+  [/\bwont\b/gi, "won't"],
+  [/\btheres\b/gi, "there's"],
+];
+
+function normalizeDiagnosis(text) {
+  if (typeof text !== "string" || !text) return text;
+
+  // Plain-string normalization is already idempotent, so we keep returning
+  // a normal string instead of wrapping/tagging it.
+  let cleaned = text
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/\s([.,!?])/g, "$1");
+
+  for (const [pattern, replacement] of DIAGNOSIS_TYPO_FIXES) {
+    cleaned = cleaned.replace(pattern, replacement);
+  }
+
+  if (cleaned) {
+    cleaned = cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+  }
+
+  return cleaned;
+}
+
+function normalizeDiagnosisFields(value) {
+  if (!value || typeof value !== "object") return value;
+
+  if (Array.isArray(value)) {
+    for (const item of value) normalizeDiagnosisFields(item);
+    return value;
+  }
+
+  for (const [key, fieldValue] of Object.entries(value)) {
+    if (typeof fieldValue === "string" && DIAGNOSIS_FIELD_NAMES.has(key)) {
+      value[key] = normalizeDiagnosis(fieldValue);
+      continue;
+    }
+
+    if (fieldValue && typeof fieldValue === "object") {
+      normalizeDiagnosisFields(fieldValue);
+    }
+  }
+
+  return value;
+}
+
+function normalizeDiagnosisPayload(req, res, next) {
+  normalizeDiagnosisFields(req.body);
+  next();
+}
+
+function normalizeDiagnosisResponse(req, res, next) {
+  const originalJson = res.json.bind(res);
+  res.json = (body) => {
+    normalizeDiagnosisFields(body);
+    return originalJson(body);
+  };
+  next();
+}
+
+app.use("/api", normalizeDiagnosisPayload, normalizeDiagnosisResponse);
+
+const ANTHROPIC_API_KEY = (process.env.ANTHROPIC_API_KEY || "").trim();
+if (!ANTHROPIC_API_KEY) {
+  console.error("Missing required environment variable: ANTHROPIC_API_KEY. Set it before starting the SpaFix server.");
+  process.exit(1);
+}
+
+const nativeFetch = globalThis.fetch.bind(globalThis);
+const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
+const ANTHROPIC_TIMEOUT_MS = 15000;
+const ANTHROPIC_TIMEOUT_MESSAGE = "Anthropic API request timed out. Please try again.";
+
+function getRequestUrl(input) {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.toString();
+  return input?.url || "";
+}
+
+function createAnthropicTimeoutResponse() {
+  return new Response(
+    JSON.stringify({
+      error: {
+        type: "request_timeout",
+        message: ANTHROPIC_TIMEOUT_MESSAGE,
+      },
+    }),
+    {
+      status: 504,
+      headers: { "Content-Type": "application/json; charset=utf-8" },
+    }
+  );
+}
+
+async function fetch(input, init) {
+  if (getRequestUrl(input) !== ANTHROPIC_API_URL) {
+    return nativeFetch(input, init);
+  }
+
+  const controller = new AbortController();
+  const upstreamSignal = init?.signal;
+  const abortFromUpstream = () => controller.abort();
+
+  if (upstreamSignal) {
+    if (upstreamSignal.aborted) controller.abort();
+    else upstreamSignal.addEventListener("abort", abortFromUpstream, { once: true });
+  }
+
+  const timeoutId = setTimeout(() => controller.abort(), ANTHROPIC_TIMEOUT_MS);
+
+  try {
+    return await nativeFetch(input, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (error?.name === "AbortError" && !upstreamSignal?.aborted) {
+      return createAnthropicTimeoutResponse();
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+    if (upstreamSignal) upstreamSignal.removeEventListener("abort", abortFromUpstream);
+  }
+}
 
 // ── Test passwords (tester name → password) ──────────────────────
-const PRO_PASSWORD = "TestMonkey6"; // legacy master password — kept for admin use
-const TEST_PASSWORDS = {
-  "TestMonkey6":  "Admin",
-  "SpaTest-Alpha": "Tester-Alpha",
-  "SpaTest-Beta":  "Tester-Beta",
-  "SpaTest-Gamma": "Tester-Gamma",
-};
-const ADMIN_REPORT_PASSWORD = "SpaFixAdmin2024!";
+function normalizeAccessCode(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeAccessCodeForComparison(value) {
+  return normalizeAccessCode(value).toLowerCase();
+}
+
+function parseAccessCodeList(value) {
+  return String(value || "")
+    .split(",")
+    .map(normalizeAccessCode)
+    .filter(Boolean);
+}
+
+const CLIENT_ADMIN_CODE = normalizeAccessCode("spafix-admin");
+const CLIENT_TESTER_CODE = normalizeAccessCode("spafix-test");
+const ADMIN_KEY = normalizeAccessCode(process.env.ADMIN_KEY);
+const TESTER_KEYS = parseAccessCodeList(process.env.TESTER_KEYS);
+const PRO_SECRET = normalizeAccessCode(process.env.PRO_SECRET || process.env.PRO_ACCESS_KEY);
+console.log("[env] dotenv initialized:", envLoadState.dotenvInitialized);
+console.log("TESTER_KEYS count:", TESTER_KEYS.length);
+console.log("ADMIN_KEY set:", !!ADMIN_KEY);
+const PRO_SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7 days
+const proSessions = new Map(); // token -> { testerName, clientId, expiresAt }
 
 // ── Transcript log (in-memory, resets on restart) ─────────────────
 const transcriptLog = {}; // key: testerName, value: array of session objects
@@ -35,6 +297,140 @@ function getTestSession(testerName, clientId) {
 function appendToTranscript(testerName, clientId, role, content) {
   const session = getTestSession(testerName, clientId);
   if (session) session.messages.push({ role, content: content.slice(0, 500), time: new Date().toISOString() });
+}
+
+function secureCompare(a, b) {
+  const left = Buffer.from(a);
+  const right = Buffer.from(b);
+  if (left.length !== right.length) return false;
+  return crypto.timingSafeEqual(left, right);
+}
+
+function accessCodesMatch(provided, expected) {
+  const left = normalizeAccessCodeForComparison(provided);
+  const right = normalizeAccessCodeForComparison(expected);
+  if (!left || !right) return false;
+  return secureCompare(left, right);
+}
+
+function getProvidedProToken(req) {
+  const headerToken = req.headers["x-spafix-pro-token"];
+  if (typeof headerToken === "string" && headerToken.trim()) return headerToken.trim();
+  return "";
+}
+
+function getProvidedAccessCode(req) {
+  const headerCode = req.headers["x-spafix-access-code"];
+  if (typeof headerCode === "string" && headerCode.trim()) return headerCode.trim();
+  return "";
+}
+
+function hasPremiumAccess(req) {
+  const rawHeader = req.headers["x-spafix-access-code"];
+  console.log("Access header:", rawHeader);
+  const code = String(rawHeader || "")
+    .trim()
+    .toLowerCase();
+  console.log("Checking premium access:", {
+    header: req.headers["x-spafix-access-code"],
+    result: code === "spafix-admin" || code === "spafix-test"
+  });
+
+  return code === "spafix-admin" || code === "spafix-test";
+}
+
+function pruneExpiredProSessions() {
+  const now = Date.now();
+  for (const [token, session] of proSessions.entries()) {
+    if (!session?.expiresAt || session.expiresAt <= now) proSessions.delete(token);
+  }
+}
+
+function resolveProAccess(rawCode) {
+  const provided = normalizeAccessCode(rawCode);
+  if (!provided) return { success: false, error: "Access code required." };
+
+  const adminCandidates = [ADMIN_KEY, CLIENT_ADMIN_CODE].filter(Boolean);
+  const testerCandidates = Array.from(new Set([...TESTER_KEYS, CLIENT_TESTER_CODE].filter(Boolean)));
+  const adminMatch = adminCandidates.some((key) => accessCodesMatch(provided, key));
+  const proMatch = Boolean(PRO_SECRET) && accessCodesMatch(provided, PRO_SECRET);
+  const testerIndex = testerCandidates.findIndex((key) => accessCodesMatch(provided, key));
+  const testerMatch = testerIndex !== -1;
+
+  console.log(
+    `[auth] Access code comparison: adminMatch=${adminMatch} testerMatch=${testerMatch} proMatch=${proMatch}`
+  );
+
+  if (adminMatch) {
+    return { success: true, testerName: null, role: "admin" };
+  }
+
+  if (proMatch) {
+    return { success: true, testerName: null, role: "pro" };
+  }
+
+  if (testerMatch) {
+    return { success: true, testerName: `Tester-${testerIndex + 1}`, role: "tester" };
+  }
+
+  return { success: false, error: "Invalid access code." };
+}
+
+function createProSession(clientId, testerName = null) {
+  pruneExpiredProSessions();
+  const token = crypto.randomBytes(32).toString("hex");
+  proSessions.set(token, {
+    clientId,
+    testerName,
+    expiresAt: Date.now() + PRO_SESSION_TTL_MS,
+  });
+  return token;
+}
+
+function getProAuth(req) {
+  const token = getProvidedProToken(req);
+  if (token) {
+    pruneExpiredProSessions();
+    const session = proSessions.get(token) || null;
+    if (session) {
+      if (session.expiresAt <= Date.now()) {
+        proSessions.delete(token);
+      } else {
+        return { provided: true, session };
+      }
+    }
+  }
+
+  const directAccessCode = getProvidedAccessCode(req);
+  if (directAccessCode) {
+    const access = resolveProAccess(directAccessCode);
+    if (!access.success) return { provided: true, session: null };
+    return {
+      provided: true,
+      session: {
+        clientId: getClientId(req),
+        testerName: access.testerName || null,
+        role: access.role,
+        directAccess: true,
+        expiresAt: Date.now() + PRO_SESSION_TTL_MS,
+      },
+    };
+  }
+
+  if (token) return { provided: true, session: null };
+  return { provided: false, session: null };
+}
+
+function requireProSession(req, res) {
+  const auth = getProAuth(req);
+  if (!auth.session) {
+    const message = auth.provided
+      ? "Your Premium session expired. Please enter your access code again."
+      : "Premium access required. Please enter a valid access code.";
+    res.status(401).json({ error: message });
+    return null;
+  }
+  return auth.session;
 }
 
 // ── Free tier limits ─────────────────────────────────────────────
@@ -61,6 +457,27 @@ function getTodayStr() {
   return new Date().toISOString().split("T")[0];
 }
 
+function resetDailyIfNeeded(u) {
+  if (!u) return u;
+
+  const today = getTodayStr();
+  const weekStart = getWeekStart();
+
+  if (u.dailyDate !== today) {
+    u.dailyMsgs = 0;
+    u.dailyDate = today;
+    u.sessionActive = false;
+  }
+
+  if (u.weekStart !== weekStart) {
+    u.weeklySessions = 0;
+    u.weekStart = weekStart;
+    u.sessionActive = false;
+  }
+
+  return u;
+}
+
 function getUsage(clientId) {
   if (!usageStore[clientId]) {
     usageStore[clientId] = {
@@ -71,20 +488,7 @@ function getUsage(clientId) {
       sessionActive: false,
     };
   }
-  const u = usageStore[clientId];
-  // Reset daily count if it's a new day
-  if (u.dailyDate !== getTodayStr()) {
-    u.dailyMsgs = 0;
-    u.dailyDate = getTodayStr();
-    u.sessionActive = false;
-  }
-  // Reset weekly count if it's a new week
-  if (u.weekStart !== getWeekStart()) {
-    u.weeklySessions = 0;
-    u.weekStart = getWeekStart();
-    u.sessionActive = false;
-  }
-  return u;
+  return resetDailyIfNeeded(usageStore[clientId]);
 }
 
 function checkFreeLimits(clientId) {
@@ -357,6 +761,8 @@ IMPORTANT — RETURN POLICY REMINDER: Any time Jet suggests ordering multiple ve
 
 IMPORTANT — PURCHASE QUESTIONS ALWAYS GET PART CARDS: When the user asks where to buy ANYTHING (test kits, chemicals, tools, accessories, parts, cover lifters, or any product), ALWAYS emit a ---PART_RECOMMENDATION--- block for each item. Never output raw text URLs. Never just name a store. The PART_RECOMMENDATION block renders a proper card with buy buttons — use it for ALL product recommendations, not just confirmed part failures. For accessories and non-repair products with no spa-specific fit, use the product name alone in the URL (no make/model needed).
 
+IMPORTANT — GUIDE SHOP BUTTON RESPONSES: When a user sends a message that starts with 'I need help finding parts', 'I need help finding water care products', 'I need help finding safety equipment', or 'Can you help me find', respond with a brief, natural, personable intro (1 sentence max, vary the phrasing — don't always say the same thing) then immediately emit the relevant PART_RECOMMENDATION block(s). Do NOT ask clarifying questions first. Examples of good intros: 'On it — here are your options:', 'Sure thing, here's what you need:', 'Let me pull that up for you:', 'Got you covered:', 'Here's what I'd recommend:'. Keep it short and get straight to the card.
+
 IMPORTANT — NO DUPLICATE PROMPTS: Give each instruction once, in plain conversational text. Never repeat the same instruction in different formats.
 
 IMPORTANT — REPLACEMENT INSTRUCTIONS FORMAT: Any time Jet provides step-by-step replacement or installation instructions for any component (pump, sensor, board, flow switch, heater, etc.), present them as a clean bulleted list grouped into logical sections (e.g. Before you start / Removal / Installation / Before you test / Test). Never present replacement steps as a wall of prose — users need to follow along physically and bullets are essential.
@@ -418,6 +824,8 @@ When asking the user to locate or inspect a component, offer reference links to 
 Format EXACTLY as follows (plain text links on separate lines, no buttons):
 🎯 Specific: https://www.amazon.com/s?k=[year]+[make]+[model]+[component]&tag=spafix-20
 🔍 Broader: https://www.amazon.com/s?k=[make]+[component]&tag=spafix-20
+🎯 Easy Spa Parts Specific: https://www.easyspaparts.com/search?search=[year]+[make]+[model]+[component]
+🔍 Easy Spa Parts Broader: https://www.easyspaparts.com/search?search=[make]+[component]
 Only include year/make/model if known. Never omit both links — always provide at least the broader search.
 
 SAFETY FOR LIGHT CIRCUIT WORK:
@@ -573,6 +981,8 @@ The user has uploaded a photo of a hot tub part or issue. Your job is to:
 name: [exact part name]
 amazon_url: https://www.amazon.com/s?k=[url+encoded+part+name]&tag=spafix-20
 supplier_url: https://www.spadepot.com/search?q=[url+encoded+part+name]
+easy_spa_parts_url: https://www.easyspaparts.com/search?search=[url+encoded+part+name]
+easy_spa_parts_broad_url: https://www.easyspaparts.com/search?search=[make+url+encoded+part+name]
 price_range: [$XX - $XX typical price range]
 notes: [compatibility notes or what to look for when buying]
 ---END_PART---
@@ -594,21 +1004,132 @@ Your job is to:
 Keep the tone conversational. Use **bold** for the hot tub model name and key findings.`;
 
 // ── Routes ───────────────────────────────────────────────────────
-app.post("/api/verify-pro", (req, res) => {
-  const { password } = req.body;
-  const testerName = TEST_PASSWORDS[password] || null;
-  const success = !!testerName;
-  if (success) {
-    const clientId = getClientId(req);
-    logTestSession(testerName, clientId);
+const CHAT_INPUT_FIELDS = ["message", "text", "prompt", "input", "query"];
+const GUIDED_CONTEXT_PATTERNS = [
+  /\bserial number\b/i,
+  /\bmodel number\b/i,
+  /\bwhat does (it|the label|the sticker|the plate)\s+say\b/i,
+  /\bcan you (check|look|confirm|tell|share|read|find)\b/i,
+  /\bplease (check|look|confirm|tell|share|read|find)\b/i,
+  /\bdo you (see|have|know)\b/i,
+  /\breply with\b/i,
+  /\banswer with\b/i,
+  /\bjust say\b/i,
+  /\byes or no\b/i,
+  /\bwhich\b/i,
+  /\bwhere\b/i,
+  /\bwhat happens\b/i,
+];
+const GUIDED_SHORT_REPLY_PATTERNS = [
+  /^(yes|no|yeah|yep|nope|nah|ok|okay|done|still|maybe)$/i,
+  /^(not sure|unsure|unknown|i don'?t know|dont know)$/i,
+  /^(working|not working|heating|not heating|running|not running|tripped|reset)$/i,
+  /^[a-z0-9][a-z0-9-]{1,31}$/i,
+];
+
+function getChatInputField(body) {
+  if (!body || typeof body !== "object") return "";
+  return CHAT_INPUT_FIELDS.find((field) => typeof body[field] === "string") || "";
+}
+
+function pushTextSnippet(value, snippets) {
+  if (typeof value !== "string") return;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.startsWith("data:")) return;
+  snippets.push(trimmed.slice(0, 500));
+}
+
+function collectGuidedContext(value, snippets, depth = 0) {
+  if (!value || depth > 4) return;
+  if (typeof value === "string") {
+    pushTextSnippet(value, snippets);
+    return;
   }
-  res.json({ success, testerName });
+  if (Array.isArray(value)) {
+    for (const item of value.slice(-8)) collectGuidedContext(item, snippets, depth + 1);
+    return;
+  }
+  if (typeof value !== "object") return;
+
+  const roleHints = [value.role, value.sender, value.type].filter((entry) => typeof entry === "string");
+  const isAssistantLike = roleHints.some((entry) => /assistant|bot|system/i.test(entry));
+  const textKeys = ["content", "text", "message", "prompt", "question", "reply"];
+
+  if (isAssistantLike) {
+    for (const key of textKeys) pushTextSnippet(value[key], snippets);
+    return;
+  }
+
+  for (const key of ["assistant", "bot", "system", "lastAssistantMessage", "lastBotMessage"]) {
+    collectGuidedContext(value[key], snippets, depth + 1);
+  }
+
+  if (depth < 2) {
+    for (const key of ["messages", "conversation", "history", "chatHistory", "transcript"]) {
+      collectGuidedContext(value[key], snippets, depth + 1);
+    }
+  }
+}
+
+function getGuidedConversationContext(body) {
+  const snippets = [];
+  for (const key of [
+    "messages",
+    "conversation",
+    "history",
+    "chatHistory",
+    "transcript",
+    "assistantMessage",
+    "lastAssistantMessage",
+    "lastBotMessage",
+    "botMessage",
+  ]) {
+    collectGuidedContext(body?.[key], snippets);
+  }
+  return snippets.slice(-6).join("\n");
+}
+
+function isShortGuidedReply(text) {
+  const trimmed = typeof text === "string" ? text.trim() : "";
+  if (!trimmed || trimmed.length > 40) return false;
+  if (GUIDED_SHORT_REPLY_PATTERNS.some((pattern) => pattern.test(trimmed))) return true;
+  return trimmed.split(/\s+/).length <= 4 && /^[a-z0-9\s-]+$/i.test(trimmed);
+}
+
+function maybeNormalizeGuidedChatInput(req, res, next) {
+  const field = getChatInputField(req.body);
+  if (!field) return next();
+
+  const original = req.body[field].trim();
+  if (!isShortGuidedReply(original)) return next();
+
+  const guidedContext = getGuidedConversationContext(req.body);
+  if (!guidedContext) return next();
+  if (!GUIDED_CONTEXT_PATTERNS.some((pattern) => pattern.test(guidedContext))) return next();
+
+  req.body.originalUserMessage = req.body.originalUserMessage || original;
+  req.body[field] = `Spa troubleshooting follow-up reply: ${original}`;
+  return next();
+}
+
+app.use("/api/chat", maybeNormalizeGuidedChatInput);
+
+app.post("/api/verify-pro", (req, res) => {
+  const accessCode = req.body?.code ?? req.body?.password ?? "";
+  const access = resolveProAccess(accessCode);
+  if (!access.success) return res.status(401).json({ success: false, error: access.error });
+
+  const clientId = getClientId(req);
+  if (access.role === "tester" && access.testerName) logTestSession(access.testerName, clientId);
+
+  const proToken = createProSession(clientId, access.testerName);
+  res.json({ success: true, testerName: access.testerName, role: access.role, proToken });
 });
 
 // ── Admin report endpoint ─────────────────────────────────────────
 app.get("/api/admin/report", (req, res) => {
   const { key } = req.query;
-  if (key !== ADMIN_REPORT_PASSWORD) return res.status(401).json({ error: "Unauthorized" });
+  if (!ADMIN_KEY || key !== ADMIN_KEY) return res.status(401).json({ error: "Unauthorized" });
   const report = Object.entries(transcriptLog).map(([tester, sessions]) => ({
     tester,
     sessionCount: sessions.length,
@@ -625,6 +1146,14 @@ app.get("/api/admin/report", (req, res) => {
 
 // Get current usage stats (called by frontend on load)
 app.post("/api/increment-msg", (req, res) => {
+  if (hasPremiumAccess(req)) {
+    console.log("Premium bypass — skipping limiter");
+    return res.json({ limitReached: false, dailyMsgs: 0, dailyLimit: FREE_DAILY_MSG_LIMIT, isPro: true });
+  }
+  const proAuth = getProAuth(req);
+  if (proAuth.session) {
+    return res.json({ limitReached: false, dailyMsgs: 0, dailyLimit: FREE_DAILY_MSG_LIMIT, isPro: true });
+  }
   const clientId = getClientId(req);
   const u = getUsage(clientId);
   resetDailyIfNeeded(u);
@@ -649,11 +1178,18 @@ app.get("/api/usage", (req, res) => {
 
 // Start a new session (called when user opens chat)
 app.post("/api/start-session", (req, res) => {
-  const { isPro } = req.body;
-  if (isPro) return res.json({ allowed: true });
+  if (hasPremiumAccess(req)) {
+    console.log("Premium bypass — skipping limiter");
+    return res.json({ allowed: true, isPro: true });
+  }
+  const proAuth = getProAuth(req);
+  if (proAuth.provided && !proAuth.session) {
+    return res.status(401).json({ error: "Your Premium session expired. Please enter your access code again." });
+  }
+  if (proAuth.session) return res.json({ allowed: true, isPro: true });
   const clientId = getClientId(req);
   const check = checkFreeLimits(clientId);
-  res.json(check);
+  res.json({ ...check, isPro: false });
 });
 
 // ── Junk filter ──────────────────────────────────────────────────
@@ -733,8 +1269,18 @@ async function isValidMessage(text) {
 // ─────────────────────────────────────────────────────────────────
 
 app.post("/api/chat", async (req, res) => {
-  const { messages, isPro, testerName } = req.body;
+  console.log("Incoming request headers:", {
+    access: req.headers["x-spafix-access-code"]
+  });
+  const { messages } = req.body;
   if (!messages || !Array.isArray(messages)) return res.status(400).json({ error: "messages array required" });
+  const premiumAccess = hasPremiumAccess(req);
+  const proAuth = getProAuth(req);
+  if (proAuth.provided && !proAuth.session) {
+    return res.status(401).json({ error: "Your Premium session expired. Please enter your access code again." });
+  }
+  const isPro = !!proAuth.session || premiumAccess;
+  const testerName = proAuth.session?.testerName || null;
 
   // Validate the latest user message
   const lastMsg = messages[messages.length - 1];
@@ -759,7 +1305,9 @@ app.post("/api/chat", async (req, res) => {
   }
 
   // Enforce free limits
-  if (!isPro) {
+  if (premiumAccess) {
+    console.log("Premium chat request — bypassing limits");
+  } else if (!isPro) {
     const clientId = getClientId(req);
     const u = getUsage(clientId);
     if (u.dailyMsgs >= FREE_DAILY_MSG_LIMIT) {
@@ -800,7 +1348,7 @@ app.post("/api/chat", async (req, res) => {
       .replace(/&lt;br\s*\/?&gt;/gi, "\n")  // strip HTML-escaped &lt;br&gt; entities
       .replace(/<br\s*\/?>/gi, "\n");        // strip literal <br> tags Jet outputs
     // Log to transcript if this is a test session
-    if (testerName && TEST_PASSWORDS[Object.keys(TEST_PASSWORDS).find(k => TEST_PASSWORDS[k] === testerName) || '']) {
+    if (testerName) {
       const lastMsg = messages[messages.length - 1];
       if (lastMsg?.role === 'user') appendToTranscript(testerName, clientId, 'user', typeof lastMsg.content === 'string' ? lastMsg.content : '');
       appendToTranscript(testerName, clientId, 'assistant', reply);
@@ -815,8 +1363,9 @@ app.post("/api/chat", async (req, res) => {
 });
 
 app.post("/api/analyze-photo", async (req, res) => {
-  const { imageBase64, mediaType, messages, isPro } = req.body;
+  const { imageBase64, mediaType, messages } = req.body;
   if (!imageBase64 || !mediaType) return res.status(400).json({ error: "imageBase64 and mediaType required" });
+  if (!requireProSession(req, res)) return;
   // Photo analysis is Pro-only — no rate limiting needed here
   try {
     const allMessages = [
@@ -843,6 +1392,7 @@ app.post("/api/analyze-photo", async (req, res) => {
 app.post("/api/analyze-document", async (req, res) => {
   const { documentBase64, mediaType, filename } = req.body;
   if (!documentBase64 || !mediaType) return res.status(400).json({ error: "documentBase64 and mediaType required" });
+  if (!requireProSession(req, res)) return;
   // Size cap: estimate tokens from base64 length
   const estimatedTokens = Math.round((documentBase64.length * 0.75) / 4);
   if (estimatedTokens > 40000) {
@@ -871,7 +1421,7 @@ app.post("/api/analyze-document", async (req, res) => {
   }
 });
 
-app.get("/", (req, res) => res.send("SpaFix API v4 running ✓"));
+app.get("/", (req, res) => res.json({ message: "SpaFix API v4 running ✓" }));
 
 // ── PARTS LIST (cached in memory by year-make-model) ─────────────
 const partsCache = {};
@@ -914,6 +1464,7 @@ Return ONLY a valid JSON array. No markdown, no backticks, no preamble. Include 
 app.post('/api/parts-list', async (req, res) => {
   const { year, make, model, cacheKey } = req.body;
   if (!make || !model) return res.status(400).json({ error: 'make and model required' });
+  if (!requireProSession(req, res)) return;
   const key = cacheKey || [year,make,model].join('-').toLowerCase().replace(/[^a-z0-9-]/g,'');
   if (partsCache[key]) return res.json({ parts: partsCache[key], cached: true });
   try {
@@ -933,6 +1484,13 @@ app.post('/api/parts-list', async (req, res) => {
     partsCache[key] = parts;
     res.json({ parts, cached: false });
   } catch(e) { console.error('Parts list error:', e.message); res.status(500).json({ error: e.message }); }
+});
+
+app.use((err, req, res, next) => {
+  if (err?.type === "entity.too.large") {
+    return res.status(413).json({ error: "Request body too large." });
+  }
+  return next(err);
 });
 
 const PORT = process.env.PORT || 3001;

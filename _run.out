@@ -1,0 +1,11 @@
+◇ injected env (0) from .env // tip: ⌘ override existing { override: true }
+◇ injected env (3) from server\.env // tip: ⌘ enable debugging { debug: true }
+[env] dotenv initialized: true
+TESTER_KEYS count: 3
+ADMIN_KEY set: true
+SpaFix server running on port 3002
+Incoming request headers: { access: 'spafix-admin' }
+Access header: spafix-admin
+Checking premium access: { header: 'spafix-admin', result: true }
+[auth] Access code comparison: adminMatch=true testerMatch=false proMatch=false
+Premium chat request — bypassing limits
