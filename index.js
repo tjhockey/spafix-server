@@ -1349,53 +1349,72 @@ function maybeNormalizeGuidedChatInput(req, res, next) {
 
 app.use("/api/chat", maybeNormalizeGuidedChatInput);
 
-app.post("/api/correct-spa", async (req, res) => {
-  const { raw } = req.body;
-  if (!raw) return res.status(400).json({ error: "raw text required" });
-
+// Primary spa normalization endpoint — used by client for typo correction
+app.post("/api/normalize-spa", async (req, res) => {
+  const raw = req.body.input || req.body.raw || '';
+  if (!raw) return res.status(400).json({ error: "input required" });
   try {
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": process.env.ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01"
-      },
+      headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
       body: JSON.stringify({
         model: "claude-haiku-4-5-20251001",
         max_tokens: 200,
         messages: [{
           role: "user",
-          content: `You are a spa brand/model name corrector. Given raw user input, extract and correct the spa year, make, model, and serial number. Fix ALL typos aggressively.
+          content: `You are a spa brand/model name corrector. Extract and aggressively correct typos in spa make/model names.
 
-Common corrections:
-- Brand: "subnace", "subdance", "subnance", "sundnce" → Sundance; "jacuzi" → Jacuzzi; "hotspring" → Hot Spring; "caldara" → Caldera
-- Model: "caymn", "kayman", "cayman", "caymen", "caymam" → Cayman; "optema" → Optima; "marrin" → Marin
-- Use context clues: year 2006 + brand Sundance → model is likely one of: Cayman, Optima, Marin, Altamar, Cameo, etc.
-- If model sounds phonetically similar to a known model for that brand, correct it
+Common corrections (not exhaustive — use your language knowledge):
+- "subnance", "sunsbance", "subnfance", "sujndamce", "sunsbance" → Sundance
+- "kayman", "caymn", "caymam", "caymen" → Cayman
+- "jacuzi", "jaccuzzi" → Jacuzzi
+- "hotspring", "hot springs" → Hot Spring
 
-Return ONLY valid JSON, no other text, no markdown:
-{"year":"2006","make":"Sundance","model":"Cayman","sn":"Unknown","corrected":true}
+Return ONLY valid JSON, no markdown, no explanation:
+{"year":"2006","make":"Sundance","model":"Cayman","sn":"Unknown","normalized":"2006 Sundance Cayman"}
 
 Rules:
-- Use "Unknown" for any field not provided or truly unrecognizable
-- Set "corrected" to true if you changed anything from the raw input
-- Never invent a year or serial number
+- "Unknown" for missing/unrecognizable fields
 - Model should be title case
+- normalized = full corrected string
 
 Raw input: ${raw}`
         }]
       })
     });
-
     const data = await response.json();
-    const text = data.content?.[0]?.text || '{}';
-    const clean = text.replace(/```json|```/g, '').trim();
-    const parsed = JSON.parse(clean);
-    res.json(parsed);
+    const text = (data.content?.[0]?.text || '{}').replace(/```json|```/g, '').trim();
+    res.json(JSON.parse(text));
   } catch (err) {
-    console.error('correct-spa error:', err);
-    // Fallback — return Unknown so client can handle gracefully
+    console.error('normalize-spa error:', err);
+    res.json({ year: 'Unknown', make: 'Unknown', model: 'Unknown', sn: 'Unknown', normalized: null });
+  }
+});
+
+app.post("/api/correct-spa", async (req, res) => {
+  // Alias for normalize-spa for backwards compatibility
+  req.body.input = req.body.raw || req.body.input;
+  const raw = req.body.input || '';
+  if (!raw) return res.status(400).json({ error: "input required" });
+  try {
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 200,
+        messages: [{
+          role: "user",
+          content: `You are a spa brand/model name corrector. Extract and aggressively correct typos.
+Return ONLY valid JSON: {"year":"2006","make":"Sundance","model":"Cayman","sn":"Unknown","corrected":true}
+Use "Unknown" for missing fields. Raw input: ${raw}`
+        }]
+      })
+    });
+    const data = await response.json();
+    const text = (data.content?.[0]?.text || '{}').replace(/```json|```/g, '').trim();
+    res.json(JSON.parse(text));
+  } catch (err) {
     res.json({ year: 'Unknown', make: 'Unknown', model: 'Unknown', sn: 'Unknown', corrected: false });
   }
 });
