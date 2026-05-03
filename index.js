@@ -519,10 +519,8 @@ function checkFreeLimits(clientId) {
 }
 
 // ── System prompts ───────────────────────────────────────────────
-const DISCLAIMER = `
+const DISCLAIMER = ``; // Removed generic disclaimer — safety notes are inline and context-specific only
 
-IMPORTANT: Always end responses that involve electrical components, gas systems, or structural repairs with this disclaimer on its own line:
-⚠️ *SpaFix provides general guidance only. Always proceed safely, know your limits, and never work on a spa with power on unless specifically instructed for an observation-only step.*`;
 
 const TEXT_SYSTEM_PROMPT = `You are Jet, SpaFix's hot tub repair assistant. You're the knowledgeable friend who's fixed dozens of spas — confident, direct, and genuinely helpful. SpaFix's tagline is "Skip the repairman" — you are here to empower DIY users to fix their own spa. Never suggest calling a technician unless the task falls under absolute safety limits.
 
@@ -551,11 +549,12 @@ NEVER output "Year: [year]", "Make: [manufacturer]", or any template fields in y
 When you receive a message starting with "[Spa confirmed: X]" — the client has corrected and confirmed the spa details. You MUST:
 1. Start your response with: "Got it — I've noted your spa as a **[exact year/make/model from the message]**."
 2. If "Already tried: X" is in the message, acknowledge it briefly
-3. If the message also contains [CONFIRM_PART:X], immediately continue with the confirm flow for that part
-4. If the message contains a topic (e.g. "The user's issue is: Won't heat up"), continue with that topic
+3. If the message contains "The user's issue is: X" — immediately continue diagnosing that issue. Do NOT ask "What's going on?" or "What can I help you with?" — you already know the issue.
+4. If the message also contains [CONFIRM_PART:X], immediately continue with the confirm flow for that part
 5. NEVER say "as confirmed" or "your spa as confirmed" — always echo the actual make and model
 6. NEVER ask for spa details again — they are confirmed
 7. NEVER ask "Does that look right?"
+8. NEVER ask "What's going on?" if the issue is already stated in the message
 
 If the user can't provide details or skips them: acknowledge it, note that you'll help as best you can, and proceed normally. Never repeat the request mid-conversation unless the spa model would materially change the answer — and even then, make it a soft ask, not a gate.
 
@@ -968,9 +967,17 @@ OPTIONAL FORMATTING
 ═══════════════════════════════════════
 Use when genuinely helpful:
 
-IMPORTANT — NO RAW URLS EVER: Jet must NEVER output raw URLs in response text under any circumstances. All purchase links go through the ---PART_RECOMMENDATION--- card format only. Reference links to help identify a part are only offered when a specific part is suspected as the fault and the user needs help locating it visually — never during general inspection steps. When offered, they go through the part card format, not as plain text URLs.
+IMPORTANT — NO RAW URLS EVER: Jet must NEVER output raw URLs in response text under any circumstances. All purchase links go through the ---PART_RECOMMENDATION--- card format only.
 
-IMPORTANT — COMPONENT LOCATIONS & DIAGRAMS: When asked about the exact location of a component in the spa (gate valves, unions, drain location, wiring connections, sensor positions), Jet describes what it knows generally and directs the user to their owner's manual for diagram-based location details: "For the exact location in your spa, refer to the diagram in your owner's manual — tap the Manual button to find and download yours." If the user has uploaded their manual, Jet references it directly.
+IMPORTANT — NO MARKDOWN LINKS EVER: Never output markdown hyperlinks like [text](url) in chat responses. Never use [Parts], [Guides], [Manual] as clickable link syntax. Plain text only in all conversational responses. Say "the Guides section" or "the Parts button" — never as a markdown link. Violation of this rule causes teal/blue colored text that confuses users.
+
+GUIDE CONTEXT MESSAGES:
+When you receive a message starting with "[From guide: X]" — the user just came from reading that guide. Respond with ONE brief, friendly sentence acknowledging the guide topic, then ask what they need help with. 
+
+NEVER generate part recommendation cards, shopping lists, or part cards in response to a guide context message. NEVER assume the user wants to buy something. NEVER infer they have already completed any diagnostic steps. The guide tells you what topic they were reading — nothing more.
+
+Example good response: "Great — I can help with anything from the Heater Not Working guide. What's going on with your spa?"
+Example bad response: [generates part cards for 6 different heater components] When asked about the exact location of a component in the spa (gate valves, unions, drain location, wiring connections, sensor positions), Jet describes what it knows generally and directs the user to their owner's manual for diagram-based location details: "For the exact location in your spa, refer to the diagram in your owner's manual — tap the Manual button to find and download yours." If the user has uploaded their manual, Jet references it directly.
 
 IMPORTANT — NO DISCLAIMER ON LOW-RISK STEPS: The safety disclaimer ("SpaFix provides general guidance only...") must NOT be appended to every response. Only include safety reminders when the step genuinely warrants it — equipment bay access, electrical components, power-on observation steps. Low-risk steps like filter inspection, water level check, or general visual checks do NOT need a disclaimer.
 
@@ -1672,7 +1679,7 @@ app.post("/api/chat", async (req, res) => {
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1024, system: TEXT_SYSTEM_PROMPT, messages }),
+      body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 1024, system: TEXT_SYSTEM_PROMPT, messages }),
     });
     const data = await response.json();
     if (!response.ok) return res.status(response.status).json({ error: data?.error?.message || "API error" });
@@ -1701,7 +1708,7 @@ app.post("/api/chat", async (req, res) => {
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1024, system: TEXT_SYSTEM_PROMPT, messages }),
+      body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 1024, system: TEXT_SYSTEM_PROMPT, messages }),
     });
     const data = await response.json();
     if (!response.ok) return res.status(response.status).json({ error: data?.error?.message || "API error" });
@@ -1735,7 +1742,7 @@ app.post("/api/analyze-photo", async (req, res) => {
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 2048, system: PHOTO_SYSTEM_PROMPT, messages: allMessages }),
+      body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 2048, system: PHOTO_SYSTEM_PROMPT, messages: allMessages }),
     });
     const data = await response.json();
     if (!response.ok) return res.status(response.status).json({ error: data?.error?.message || "API error" });
@@ -1760,7 +1767,7 @@ app.post("/api/analyze-document", async (req, res) => {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
       body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         max_tokens: 1024,
         system: DOCUMENT_SUMMARY_PROMPT,
         messages: [{ role: "user", content: [
@@ -1783,61 +1790,39 @@ app.get("/", (req, res) => res.json({ message: "SpaFix API v4 running ✓" }));
 // ── PARTS LIST (cached in memory by year-make-model) ─────────────
 const partsCache = {};
 
-const PARTS_SYSTEM_PROMPT = `You are a hot tub parts expert. When given a spa year, make, and model, return a comprehensive JSON array of parts for that specific model. Each item must have:
+const PARTS_SYSTEM_PROMPT = `You are a hot tub parts expert. When given a spa year, make, and model, return a JSON array of the 20 most commonly replaced parts for that specific model. Each item must have:
 - name: part name (string)
 - category: one of: "Filtration", "Heating", "Pumps & Jets", "Controls & Sensors", "Plumbing & Seals", "Chemicals & Consumables", "Covers & Accessories"
-- part_number: OEM part number if known for that specific model (string or null)
-- mfr_model: the SHORT base manufacturer or aftermarket model name that buyers actually search for on Amazon (e.g. "Laing E-10", "Balboa VS501Z", "Gecko SSPA", "Waterway Executive 48"). Use ONLY the base model name — do NOT include full part suffixes, revision codes, or long alphanumeric strings after the base name (e.g. use "Laing E-10" NOT "Laing E10-NSHNDNN1W-02"). This is NOT the OEM spa catalog number — it is the component maker's short searchable model name. If unknown, use null.
-- interval: replacement interval e.g. "Every 1-2 years", "As needed", "5-10 years"
-- notes: brief note, max 10 words
+- part_number: OEM part number if known (string or null)
+- mfr_model: SHORT searchable component model name e.g. "Laing E-10", "Balboa VS501Z" (string or null)
+- interval: replacement interval e.g. "Every 1-2 years", "As needed"
+- notes: brief note, max 8 words
 
-CRITICAL: Do NOT limit to consumables. Include ALL major serviceable and replaceable components. You must include:
-- Filter cartridge(s) with correct part number for that model
-- Circulation pump (with HP rating)
-- Jet pump(s) (1-speed and/or 2-speed, with HP rating)
-- Heater element and heater assembly
-- Main control board / circuit board
-- Topside control panel
-- Flow sensor / flow switch
-- Pressure switch
-- Hi-limit temperature sensor
-- Water temperature sensor
-- GFCI breaker
-- Spa jets (standard diverter jets, directional jets)
-- Jet bodies and jet inserts
-- Diverter valves and gate valves
-- Union fittings (2" and 1.5")
-- Pump wet end / impeller
-- Pump seal kit
-- O-rings and gasket kit
-- Ozonator (if applicable to model)
-- Air blower (if applicable)
-- Filter lid / weir door
-- Cover lifter hardware
-- Chemicals: pH up, pH down, chlorine/bromine, shock, alkalinity increaser
+Include a mix of: filter, pumps, heater, sensors, control board, seals, jets, chemicals.
 
-Return ONLY a valid JSON array. No markdown, no backticks, no preamble. Include 25-35 parts minimum.`;
+CRITICAL: Return ONLY a raw JSON array. No markdown. No backticks. No preamble. Start your response with [ and end with ].`;
 
 app.post('/api/parts-list', async (req, res) => {
   const { year, make, model, cacheKey } = req.body;
   if (!make || !model) return res.status(400).json({ error: 'make and model required' });
-  if (!requireProSession(req, res)) return;
+  const session = requireProSession(req, res);
+  if (!session) return;
   const key = cacheKey || [year,make,model].join('-').toLowerCase().replace(/[^a-z0-9-]/g,'');
   if (partsCache[key]) return res.json({ parts: partsCache[key], cached: true });
   try {
-    const prompt = `Generate a parts list for a ${year||''} ${make} ${model} hot tub.`;
+    const prompt = `Generate a concise parts list for a ${year||''} ${make} ${model} hot tub. Include only the 15 most commonly replaced parts. Return a JSON array only, no markdown fences, no explanation.`;
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type':'application/json', 'x-api-key':process.env.ANTHROPIC_API_KEY, 'anthropic-version':'2023-06-01' },
-      body: JSON.stringify({ model:'claude-sonnet-4-20250514', max_tokens:4000, system:PARTS_SYSTEM_PROMPT, messages:[{role:'user',content:prompt}] })
+      body: JSON.stringify({ model:'claude-haiku-4-5-20251001', max_tokens:3000, system:PARTS_SYSTEM_PROMPT, messages:[{role:'user',content:prompt}] })
     });
     const data = await response.json();
     if (!response.ok) return res.status(500).json({ error: data?.error?.message||'API error' });
-    const text = data.content?.map(b=>b.text||'').join('')||'';
-    const start = text.indexOf('[');
-    const end = text.lastIndexOf(']');
+    const rawText = data.content?.map(b=>b.text||'').join('')||'';
+    const start = rawText.indexOf('[');
+    const end = rawText.lastIndexOf(']');
     if (start === -1 || end === -1) throw new Error('No JSON array found in response');
-    const parts = JSON.parse(text.slice(start, end + 1));
+    const parts = JSON.parse(rawText.slice(start, end + 1));
     partsCache[key] = parts;
     res.json({ parts, cached: false });
   } catch(e) { console.error('Parts list error:', e.message); res.status(500).json({ error: e.message }); }
