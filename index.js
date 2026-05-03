@@ -433,7 +433,12 @@ function requireProSession(req, res) {
   return auth.session;
 }
 
-// ── Free tier limits ─────────────────────────────────────────────
+// ── Debug logging ─────────────────────────────────────────────────
+// Set DEBUG=true in .env to enable verbose logging for troubleshooting
+const DEBUG = process.env.DEBUG === 'true';
+const dbg = (...args) => { if (DEBUG) console.log('[SpaFix DEBUG]', ...args); };
+
+
 const FREE_DAILY_MSG_LIMIT = 10;   // messages per day
 const FREE_WEEKLY_SESSION_LIMIT = 3; // sessions per week
 
@@ -594,7 +599,7 @@ Help me confirm it | I'm sure — show me [part name] links
 Button behavior:
 - "Help me confirm it" → The client sends [CONFIRM_PART:part name].
 
-First — if spa details haven't been provided yet, ask for them before proceeding.
+When you receive [CONFIRM_PART:heater assembly] or [CONFIRM_PART:heater element] — the part type has ALREADY been determined client-side. NEVER ask "does your spa use an element or assembly?" — that decision is already made. Proceed directly.
 
 Once spa details are confirmed:
 1. Acknowledge the spa naturally: "Got it — I've noted your spa as a **[Year Make Model]**" and acknowledge what they've already tried if provided.
@@ -602,6 +607,15 @@ Once spa details are confirmed:
 3. Ask ONLY the first diagnostic question (step 1: filter condition). ONE QUESTION. Stop there. Wait for the user's answer.
 4. Do NOT include the restart/skip instructions in this first message — add them after the user answers the first question.
 5. ONE STEP AT A TIME from this point forward — never combine multiple steps or instructions in a single message.
+
+DIAGNOSTIC STEP STATES:
+- User says "skip" / "skip this step" / "can't do that right now" → Move to the next step. Mark as ⏭️ skipped — this means UNDIAGNOSED, still a possible cause. Never mark skipped steps as confirmed good.
+- User says "already checked that" / "it's fine" / "confirmed good" → Mark as ✅ confirmed good and move to next step.
+- User says "restart diagnosis" → Start from step 1, reset all step states.
+
+PURCHASE LINK TRIGGERS — if user says any of these during diagnosis, immediately deliver purchase links for the current suspected part, no more questions:
+"show me parts", "show me the parts", "show me links", "show me purchase links", "buy it", "just show me where to buy", "skip to purchase", "I want to order it"
+Use: ---PART_RECOMMENDATION--- format for the part currently being diagnosed.
 
 - "I'm sure — show me [part name] links" → The client sends [SHOW_LINKS:part name]. Immediately deliver purchase links for that part, no further questions.
 
@@ -1790,17 +1804,34 @@ app.get("/", (req, res) => res.json({ message: "SpaFix API v4 running ✓" }));
 // ── PARTS LIST (cached in memory by year-make-model) ─────────────
 const partsCache = {};
 
-const PARTS_SYSTEM_PROMPT = `You are a hot tub parts expert. When given a spa year, make, and model, return a JSON array of the 20 most commonly replaced parts for that specific model. Each item must have:
+const PARTS_SYSTEM_PROMPT = `You are a hot tub parts expert. When given a spa year, make, and model, return a JSON array of commonly replaced parts for that specific model. Each item must have:
 - name: part name (string)
 - category: one of: "Filtration", "Heating", "Pumps & Jets", "Controls & Sensors", "Plumbing & Seals", "Chemicals & Consumables", "Covers & Accessories"
-- part_number: OEM part number if known (string or null)
-- mfr_model: SHORT searchable component model name e.g. "Laing E-10", "Balboa VS501Z" (string or null)
-- interval: replacement interval e.g. "Every 1-2 years", "As needed"
+- part_number: OEM part number if known for that specific model (string or null)
+- mfr_model: SHORT base manufacturer/aftermarket model name buyers search for e.g. "Laing E-10", "Balboa VS501Z", "Gecko SSPA" — NOT the full part number with suffixes (string or null)
+- interval: replacement interval e.g. "Every 1-2 years", "As needed", "5-10 years"
 - notes: brief note, max 8 words
 
-Include a mix of: filter, pumps, heater, sensors, control board, seals, jets, chemicals.
+Include these categories of parts where applicable to the model:
+- Filter cartridge(s) with correct part number — if the model has multiple filters, list each separately with specific identification
+- Circulation pump with HP rating
+- Jet pump(s) with HP rating — only include if the model has them
+- Heater assembly OR heater element — not both, whichever applies to this model
+- Main control board / circuit board
+- Topside control panel
+- Flow switch or flow sensor
+- Hi-limit temperature sensor
+- Water temperature sensor
+- Pump seal kit
+- O-ring kit
+- Jet inserts — only list specific types that apply to this model
+- Ozonator — only if this model comes with one
+- Air blower — only if this model has one
+- Diverter valves — only if this model has them
 
-CRITICAL: Return ONLY a raw JSON array. No markdown. No backticks. No preamble. Start your response with [ and end with ].`;
+Do NOT include: spa covers, test kits, chemicals, generic accessories, or any item that requires manual verification to confirm applicability.
+
+CRITICAL: Return ONLY a raw JSON array. Start with [ and end with ]. No markdown, no backticks, no explanation. Keep total response under 2500 tokens.`;
 
 app.post('/api/parts-list', async (req, res) => {
   const { year, make, model, cacheKey } = req.body;
