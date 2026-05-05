@@ -4,6 +4,7 @@ const cors = require("cors");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
+const rateLimit = require("express-rate-limit");
 
 let cachedEnvLoadState = null;
 
@@ -115,6 +116,32 @@ app.use((req, res, next) => {
   res.setHeader("Content-Type", "application/json; charset=utf-8");
   next();
 });
+
+// ── RATE LIMITING ──────────────────────────────────────────────
+// Protect /api/chat from bot spam — applied before all other chat middleware
+const chatRateLimiter = rateLimit({
+  windowMs: 60 * 1000,        // 1 minute window
+  max: 20,                     // max 20 requests per IP per minute
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.headers["x-forwarded-for"]?.split(",")[0].trim() || req.socket.remoteAddress || "unknown",
+  handler: (req, res) => {
+    res.status(429).json({ error: "Too many requests — please slow down.", limitReached: false });
+  }
+});
+
+// Minimum interval: no more than 1 chat request per 2 seconds per IP
+const lastChatRequest = {};
+function minIntervalGuard(req, res, next) {
+  const ip = req.headers["x-forwarded-for"]?.split(",")[0].trim() || req.socket.remoteAddress || "unknown";
+  const now = Date.now();
+  if (lastChatRequest[ip] && now - lastChatRequest[ip] < 2000) {
+    return res.status(429).json({ error: "Slow down — Jet needs a moment between messages.", limitReached: false });
+  }
+  lastChatRequest[ip] = now;
+  next();
+}
+// ──────────────────────────────────────────────────────────────
 app.use("/api", enforceAllowedOrigin, cors(corsOptions));
 app.use(["/api/analyze-photo", "/api/analyze-document"], uploadJsonParser);
 app.use(defaultJsonParser);
@@ -1470,7 +1497,7 @@ function maybeNormalizeGuidedChatInput(req, res, next) {
   return next();
 }
 
-app.use("/api/chat", maybeNormalizeGuidedChatInput);
+app.use("/api/chat", chatRateLimiter, minIntervalGuard, maybeNormalizeGuidedChatInput);
 
 // Primary spa normalization endpoint — used by client for typo correction
 app.post("/api/normalize-spa", async (req, res) => {
