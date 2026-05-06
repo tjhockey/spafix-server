@@ -1509,21 +1509,37 @@ app.post("/api/normalize-spa", async (req, res) => {
       headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
       body: JSON.stringify({
         model: "claude-haiku-4-5-20251001",
-        max_tokens: 200,
+        max_tokens: 400,
         messages: [{
           role: "user",
-          content: `You are a spa brand/model name corrector. Extract and aggressively correct ALL typos in spa year, make, and model. Use phonetic similarity and your knowledge of spa brands.
+          content: `You are a hot tub / spa brand and model name corrector. Extract and aggressively correct ALL typos in spa year, make, and model. Use phonetic similarity and your knowledge of spa brands.
 
-Known Sundance models: Cayman, Optima, Marin, Altamar, Cameo, Canton, Capri, Chelsee, Hamilton, Hawthorne, Kauai, Maui, Montclair, Palermo, Ramona, Serenade, Sweetwater, Tasman, Venice
-Known Jacuzzi models: J-235, J-245, J-275, J-315, J-325, J-335, J-345, J-355, J-365, J-375, J-385, J-415, J-425, J-435, J-445, J-465, J-495
-Known Hot Spring models: Ace, Aria, Envoy, Flair, Grandee, Highlight, Jetsetter, Prodigy, Rhythm, Soprano, Surge, Tempo, Vanguard
+BRAND ALIASES (always normalize to canonical name):
+- D1, D-1, Dimension 1, Dimension-1, Dimension-One → Dimension One
+- Hot Spring, HotSpring, Hot-Spring → Hot Spring
+- Master Spa, Master-Spas → Master Spas
+- Arctic Spa → Arctic Spas
 
-Fix both brand AND model typos. If model sounds phonetically like a known model for that brand, correct it (e.g. "kalman" → Cayman for Sundance, "kayman" → Cayman, "caymn" → Cayman).
+KNOWN BRANDS AND MODELS:
+Sundance: Cayman, Optima, Marin, Altamar, Cameo, Canton, Capri, Chelsee, Hamilton, Hawthorne, Kauai, Maui, Montclair, Palermo, Ramona, Serenade, Sweetwater, Tasman, Venice
+Jacuzzi: J-175, J-235, J-245, J-275, J-315, J-325, J-335, J-345, J-355, J-365, J-375, J-385, J-415, J-425, J-435, J-445, J-465, J-495
+Hot Spring: Ace, Aria, Beam, Envoy, Flair, Flash, Grandee, Highlight, Jetsetter, Prodigy, Rhythm, Shine, Soprano, Stride, Surge, Tempo, Triumph, Vanguard
+Caldera: Cantabria, Capitola, Geneva, Makena, Martinique, Paradise, Utopia, Kauai, Niagara, Vacanza, Marino, Salina
+Dimension One: Reflection, Eclipse, Genesis, La Scala, Amore Bay, Grand Bahama, Oceans Lounge
+Bullfrog: A6, A7, A8, A9, R5, R6, R7, X6, X7, X8
+Master Spas: Twilight, Legend, Michael Phelps LSX, Clarity, Healthy Living, TidalFit
+Marquis: Celebrity, Euphoria, Elite, Reward, Vector21, Resort, Glamour, Prestige
+Arctic Spas: Yukon, Tundra, Summit, Ice Cap, Cub, Wolf
+Hydropool: Executive 570, Executive 670, Select 4.3, Titanium 595, Aquatrainer 15
+Beachcomber: 300, 400, 500, 520, 540, 720
+Coast Spas: Prestige, Luxe, Expedition, Whitewater
+
+Fix both brand AND model typos using phonetic similarity. For unrecognized brands, preserve what was entered as-is (do not set to Unknown).
 
 Return ONLY valid JSON, no markdown:
 {"year":"2006","make":"Sundance","model":"Cayman","sn":"Unknown","normalized":"2006 Sundance Cayman"}
 
-Rules: "Unknown" for truly unrecognizable fields. Model in title case.
+Rules: "Unknown" only for fields that are truly absent or unrecognizable. Model in title case. Year as 4-digit string.
 
 Raw input: ${raw}`
         }]
@@ -1958,6 +1974,18 @@ app.use((err, req, res, next) => {
     return res.status(413).json({ error: "Request body too large." });
   }
   return next(err);
+});
+
+// ── DEV ONLY: reset usage for current IP (localhost only) ─────────
+app.post("/api/dev/reset-usage", (req, res) => {
+  const host = req.hostname || '';
+  const ip = req.socket.remoteAddress || '';
+  const isLocal = host === 'localhost' || host === '127.0.0.1' || ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+  if (!isLocal) return res.status(403).json({ error: "Dev endpoint — localhost only" });
+  const clientId = getClientId(req);
+  delete usageStore[clientId];
+  console.log(`[DEV] Usage reset for ${clientId}`);
+  res.json({ ok: true, message: `Usage reset for ${clientId}` });
 });
 
 const PORT = process.env.PORT || 3001;
