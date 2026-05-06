@@ -1,4 +1,4 @@
-// SpaFix Server v4.9.8d — server-side Anthropic retry, remove minIntervalGuard — rate limit 60/min, air lock procedure fix
+// SpaFix Server v4.9.8e — formatText line break fixes, Step 3 filter guidance, air lock warning fix — server-side Anthropic retry, remove minIntervalGuard — rate limit 60/min, air lock procedure fix
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -766,7 +766,11 @@ Foam and air in water mimics air lock. Scale buildup clogs flow switch, impeller
 Both must be explicitly confirmed before marking Step 2 complete and moving to Step 3.
 
 3. RUN WITHOUT FILTER & SUCTION TEST
-Remove the filter(s) entirely and run the spa. Place your hand over the water intake — do you feel strong suction? This confirms the pump is working and water is moving through the system.
+The filters should already be out from Step 1. If they were reinstalled, ask the user to remove them again.
+
+While the filters are out during this testing process, keep them submerged in water — do not let them dry out or trap air. They will be reinstalled after the air lock procedure is complete.
+
+With filters out, run the spa and place your hand over each water intake — do you feel strong suction? This confirms the pump is working and water is moving through the system.
 If user reported a flow error code: also ask if the error clears with filter removed.
 If user reported heating issue only (no error code): ask if the spa begins heating with filter removed.
 Ask suction question first. Wait for answer. Then ask about error/heating as a separate follow-up.
@@ -787,7 +791,9 @@ Perform externally first — no equipment bay access needed.
 - Remove the filter(s).
 
 Present the following as numbered steps — written as clear instructions, NOT as questions:
-1. Wrap a towel around the end of a plain garden hose and prepare to create a seal against the filter inlet opening. ⚠️ Use a standard plain hose end only — no sprayer, nozzle, or any attachment that would force air or a hard stream through the system and potentially damage the internal components.
+1. Wrap a towel around the end of a plain garden hose and prepare to create a seal against the filter inlet opening.
+
+⚠️ Use a standard plain hose end only — no sprayer, nozzle, or any attachment that would force air or a hard stream through the system and potentially damage the internal components.
 2. Have someone turn the water on fully and wait until only water is coming out of the hose.
 3. Place the hose and towel firmly over the water inlet and force water through the spa for 30–60 seconds.
 4. You may see air bubbling up from the jets — that's normal. Keep going until only water flows with no bubbles.
