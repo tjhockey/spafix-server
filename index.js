@@ -1,3 +1,4 @@
+// SpaFix Server v4.9.5 — version comment, tester codes (Alpha-Epsilon), rate limit 30/min
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -298,6 +299,15 @@ const CLIENT_TESTER_CODE = normalizeAccessCode("spafix-test");
 const ADMIN_KEY = normalizeAccessCode(process.env.ADMIN_KEY);
 const TESTER_KEYS = parseAccessCodeList(process.env.TESTER_KEYS);
 const PRO_SECRET = normalizeAccessCode(process.env.PRO_SECRET || process.env.PRO_ACCESS_KEY);
+
+// Named tester codes — Premium tier, fully tracked in admin report
+const NAMED_TESTER_CODES = [
+  { code: normalizeAccessCode("Tester-Alpha1"),   name: "Tester-Alpha1"   },
+  { code: normalizeAccessCode("Tester-Beta2"),    name: "Tester-Beta2"    },
+  { code: normalizeAccessCode("Tester-Gamma3"),   name: "Tester-Gamma3"   },
+  { code: normalizeAccessCode("Tester-Delta4"),   name: "Tester-Delta4"   },
+  { code: normalizeAccessCode("Tester-Epsilon5"), name: "Tester-Epsilon5" },
+];
 console.log("[env] dotenv initialized:", envLoadState.dotenvInitialized);
 console.log("TESTER_KEYS count:", TESTER_KEYS.length);
 console.log("ADMIN_KEY set:", !!ADMIN_KEY);
@@ -383,9 +393,10 @@ function resolveProAccess(rawCode) {
   const proMatch = Boolean(PRO_SECRET) && accessCodesMatch(provided, PRO_SECRET);
   const testerIndex = testerCandidates.findIndex((key) => accessCodesMatch(provided, key));
   const testerMatch = testerIndex !== -1;
+  const namedTester = NAMED_TESTER_CODES.find(t => accessCodesMatch(provided, t.code));
 
   console.log(
-    `[auth] Access code comparison: adminMatch=${adminMatch} testerMatch=${testerMatch} proMatch=${proMatch}`
+    `[auth] Access code comparison: adminMatch=${adminMatch} testerMatch=${testerMatch} proMatch=${proMatch} namedTester=${namedTester?.name || 'none'}`
   );
 
   if (adminMatch) {
@@ -394,6 +405,10 @@ function resolveProAccess(rawCode) {
 
   if (proMatch) {
     return { success: true, testerName: null, role: "pro" };
+  }
+
+  if (namedTester) {
+    return { success: true, testerName: namedTester.name, role: "plus" };
   }
 
   if (testerMatch) {
