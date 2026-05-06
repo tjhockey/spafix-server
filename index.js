@@ -1,4 +1,4 @@
-// SpaFix Server v4.9.7 — rate limit 60/min, air lock procedure fix
+// SpaFix Server v4.9.8 — rate limit 60/min, air lock procedure fix
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -671,7 +671,9 @@ Use: ---PART_RECOMMENDATION--- format for the part currently being diagnosed.
 
 [START_DIAGNOSIS] intent: Begin full diagnostic sequence from step 1. Spa details already confirmed — do NOT acknowledge or repeat the spa details again. Do NOT say "Got it — I've noted your spa as X." 
 
-FIRST — before Step 1, ask ONCE: "Before we start — are you seeing any error codes on your topside panel, such as FL1, FL2, FLO, or FLOW?"
+FIRST — before Step 1:
+- If the user's message indicates they are already seeing an error code (e.g. topic was "Error code displayed", or they mentioned FL1/FL2/FLO/etc.), do NOT ask if they are seeing an error code. Instead ask immediately: "What error code are you seeing on your topside panel?"
+- If the user's message does NOT mention an error code (e.g. topic was "Won't heat up" with no code mentioned), ask ONCE: "Before we start — are you seeing any error codes on your topside panel, such as FL1, FL2, FLO, or FLOW?"
 - If YES → note the code, use flow-error language throughout ("does the error clear?")
 - If NO → use heating-specific language throughout ("is the spa heating up?", "does the spa start heating?") — NEVER say "does the flow error clear?" if no error code was reported
 - If unsure → describe what to look for, then proceed based on their answer
