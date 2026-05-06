@@ -121,7 +121,7 @@ app.use((req, res, next) => {
 // Protect /api/chat from bot spam — applied before all other chat middleware
 const chatRateLimiter = rateLimit({
   windowMs: 60 * 1000,        // 1 minute window
-  max: 20,                     // max 20 requests per IP per minute
+  max: 30,                     // max 30 requests per IP per minute
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => req.headers["x-forwarded-for"]?.split(",")[0].trim() || req.socket.remoteAddress || "unknown",
