@@ -1,4 +1,4 @@
-// SpaFix Server v4.9.8 — rate limit 60/min, air lock procedure fix
+// SpaFix Server v4.9.8a — rate limit 60/min, air lock procedure fix
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -1375,6 +1375,11 @@ FORMATTING RULES
 - No excessive blank lines
 - No robotic resets ("Let's start over", "To summarize what we've covered")
 - No restating what the user just said before asking the next question
+- ALWAYS put a blank line between an instruction sentence and the question that follows it
+- ALWAYS put a blank line between numbered steps — never run steps together
+- ALWAYS put a space after the period in numbered list items: "1. Step one" not "1.Step one"
+- When a step header (e.g. "Step 3 — Run without filters:") is followed by instructions, put a blank line between the header and the instruction
+- Questions must be on their own line, separated from preceding text by a blank line
 
 ${DISCLAIMER}`;
 
