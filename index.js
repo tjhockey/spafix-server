@@ -1,4 +1,4 @@
-// SpaFix Server v4.9.8a — rate limit 60/min, air lock procedure fix
+// SpaFix Server v4.9.8d — server-side Anthropic retry, remove minIntervalGuard — rate limit 60/min, air lock procedure fix
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -1527,7 +1527,7 @@ function maybeNormalizeGuidedChatInput(req, res, next) {
   return next();
 }
 
-app.use("/api/chat", chatRateLimiter, minIntervalGuard, maybeNormalizeGuidedChatInput);
+app.use("/api/chat", chatRateLimiter, maybeNormalizeGuidedChatInput);
 
 // Primary spa normalization endpoint — used by client for typo correction
 app.post("/api/normalize-spa", async (req, res) => {
@@ -1829,12 +1829,29 @@ app.post("/api/chat", async (req, res) => {
     }
     u.dailyMsgs++;
 
+  // Helper: call Anthropic API with retry on 429
+  async function callAnthropicWithRetry(payload, maxRetries = 3) {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      if (attempt > 0) {
+        const delay = attempt * 4000; // 4s, 8s, 12s
+        console.log(`[Anthropic] 429 received, retrying in ${delay}ms (attempt ${attempt}/${maxRetries})`);
+        await new Promise(r => setTimeout(r, delay));
+      }
+      const response = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
+        body: JSON.stringify(payload),
+      });
+      if (response.status === 429) continue; // retry
+      return response; // success or non-429 error — return as-is
+    }
+    // All retries exhausted
+    console.log(`[Anthropic] All retries exhausted after ${maxRetries} attempts`);
+    return { ok: false, status: 503, json: async () => ({ error: { message: "Service temporarily unavailable — please try again in a moment." } }) };
+  }
+
   try {
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 1024, system: TEXT_SYSTEM_PROMPT, messages }),
-    });
+    const response = await callAnthropicWithRetry({ model: "claude-sonnet-4-6", max_tokens: 1024, system: TEXT_SYSTEM_PROMPT, messages });
     const data = await response.json();
     if (!response.ok) return res.status(response.status).json({ error: data?.error?.message || "API error" });
 
