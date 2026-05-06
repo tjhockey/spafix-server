@@ -1,4 +1,4 @@
-// SpaFix Server v4.9.5 — version comment, tester codes (Alpha-Epsilon), rate limit 30/min
+// SpaFix Server v4.9.7 — rate limit 60/min, air lock procedure fix
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -122,7 +122,7 @@ app.use((req, res, next) => {
 // Protect /api/chat from bot spam — applied before all other chat middleware
 const chatRateLimiter = rateLimit({
   windowMs: 60 * 1000,        // 1 minute window
-  max: 30,                     // max 30 requests per IP per minute
+  max: 60,                     // max 60 requests per IP per minute
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => req.headers["x-forwarded-for"]?.split(",")[0].trim() || req.socket.remoteAddress || "unknown",
@@ -783,12 +783,20 @@ Do NOT immediately conclude the filter needs replacing. First:
 Perform externally first — no equipment bay access needed.
 - Cycle pumps on/off repeatedly to attempt to purge trapped air.
 - Remove the filter(s).
-- Wrap a towel around the end of a plain garden hose to create a seal against the filter inlet opening.
-- ⚠️ Use ONLY a plain hose end — no sprayer, jet nozzle, or any accessory. These inject air and can damage internal components and seals.
-- Have someone turn the water on fully. Force water through the spa for 30–60 seconds.
-- Air bubbling up from submerged jets or intakes is normal — confirms air is being purged. Continue until only water flows with no bubbles.
-- When no more bubbles: air lock is cleared.
-- Before reinstalling filter: keep it fully submerged right up until installation. A filter reinstalled dry immediately reintroduces air lock.
+
+Present the following as numbered steps — written as clear instructions, NOT as questions:
+1. Wrap a towel around the end of a plain garden hose and prepare to create a seal against the filter inlet opening. ⚠️ Use a standard plain hose end only — no sprayer, nozzle, or any attachment that would force air or a hard stream through the system and potentially damage the internal components.
+2. Have someone turn the water on fully and wait until only water is coming out of the hose.
+3. Place the hose and towel firmly over the water inlet and force water through the spa for 30–60 seconds.
+4. You may see air bubbling up from the jets — that's normal. Keep going until only water flows with no bubbles.
+5. Stop and check if the error has cleared. If not cleared, repeat the process one more time.
+6. If the error clears, reinstall both filters — ensure there is no air trapped inside the filters and keep them fully submerged during installation.
+7. Run the spa and confirm the error is still cleared.
+
+Then ask: "Tell me the results of your test."
+- Error cleared and stays cleared → air lock was the cause. Confirm resolved.
+- Error returns → filter is a possible contributor but air lock is clearing. Proceed to next step.
+- Error never cleared → air lock is not the cause. Proceed to next step.
 ⚠️ NEVER recommend loosening union fittings as a diagnostic or air lock clearing step. NEVER recommend lowering the water level.
 
 5. HEATER INDICATOR CHECK
