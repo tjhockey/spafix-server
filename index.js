@@ -1,4 +1,4 @@
-// SpaFix Server v4.9.8e — formatText line break fixes, Step 3 filter guidance, air lock warning fix — server-side Anthropic retry, remove minIntervalGuard — rate limit 60/min, air lock procedure fix
+// SpaFix Server v4.9.8g — equipment bay sequence fix, air purge valve, circ pump context, flow switch paddle dependency — formatText line break fixes, Step 3 filter guidance, air lock warning fix — server-side Anthropic retry, remove minIntervalGuard — rate limit 60/min, air lock procedure fix
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -819,6 +819,8 @@ If they have → acknowledge and proceed to equipment bay.
 
 ━━━ EQUIPMENT BAY CHECKS (Bay Access Required) ━━━
 
+CRITICAL SEQUENCE RULE: Always work through bay steps IN ORDER. Never skip ahead to burn marks, visual inspection, or control board until all earlier steps are completed. After air lock phase 1 fails, the next step is ALWAYS gate/isolation valves, then air purge valve, then air lock phase 2, then circ pump, etc.
+
 EQUIPMENT BAY INTRODUCTION:
 - Free users: always explain what the equipment bay is before any bay instructions.
 - Premium users with Brief Mode OFF: explain the equipment bay.
@@ -829,27 +831,37 @@ Introduction text: "Open the equipment bay — that's the internal compartment b
 6. GATE/ISOLATION VALVES (if equipped — not all spas have these)
 Some spas have gate valves or ball valves in the equipment bay. If present, verify ALL are fully open. A partially closed valve completely mimics pump or flow switch failure. Check owner's manual to confirm if your spa has them (tap Manual button). If unsure, skip this step.
 
+6b. AIR PURGE VALVE (if equipped — some spas only)
+Some spas have a dedicated air purge valve (bleeder valve) near the pump or heater assembly. If present, briefly open it to release any trapped air. Refer to the manual for location — tap the Manual button. If unsure whether the spa has one, skip this step.
+
 7. AIR LOCK — PHASE 2 (Equipment Bay Open)
-If flow error persists after Phase 1 air lock clearing, repeat the garden hose purge with the equipment bay open. Now the user can visually observe the flow switch housing and tubing while purging — air bubbles visible moving through the lines or flow switch housing confirms air lock is the cause.
+Repeat the garden hose purge with the equipment bay open. This time, have someone watch the flow switch housing and clear tubing/plumbing while purging. They should also cycle the jets pumps on and off repeatedly during the purge.
+- Air bubbles visible moving through the lines or flow switch housing = air lock confirmed as cause. Continue purging until no more bubbles appear.
+- No bubbles seen after thorough purge = air lock conclusively ruled out. Move to next step.
 
 8. CIRCULATION PUMP & FLOW SWITCH (power ON)
 ⚠️ Spa is powered on for this step. Touch pump housing only — keep hands away from all wires, terminals, and connectors.
 
 PART A — Circ pump check
-Is the circ pump running? Some spas have more than one circ pump — check all of them.
-Signs of a working pump: quiet hum, slight vibration on pump body, warm (not hot) housing.
+IMPORTANT: Not all spas have a dedicated circ pump, and those that do may not run continuously — some only run during filtration cycles or when jets are activated. Before checking for hum/vibration, confirm:
+- Does this spa model have a dedicated circ pump? (Check manual if unsure — tap Manual button)
+- Is the spa currently in a mode where the circ pump should be running?
+If the spa does not have a dedicated circ pump, or if the circ pump should not be running in the current mode, skip to the flow switch check but note that without active flow, the paddle test will not be meaningful.
+
+Signs of a working circ pump: quiet hum, slight vibration on pump body, warm (not hot) housing.
 Signs of failure:
-- Completely silent (dead motor — most common)
+- Completely silent when it SHOULD be running (dead motor)
 - Loud grinding or intermittent stuttering
 - Seized — dead silent, may be hot to touch
 - Leaking around the seal
 - Burn marks or discoloration on motor housing
-If circ pump shows any failure signs: replace the entire pump unit. Circ pump: $150–300.
+If circ pump shows failure signs: replace the entire pump unit. Circ pump: $150–300.
 
 PART B — Flow switch visual check (power ON)
-Locate the flow switch — small inline device with two wires to the logic board. Check the flow direction arrow on the switch body — most flow switches are marked with an arrow indicating correct water flow direction. If installed backwards it will not function properly.
-With spa running, watch the paddle inside — it should move and make firm contact when water flows.
-Sluggish or inconsistent movement = likely fault. BUT normal movement does NOT rule out a faulty switch — proceed to jumper test.
+IMPORTANT: The flow switch paddle only moves when water is actively flowing through it. Before checking the paddle, confirm that either the circ pump is running OR the jets are turned on. Without active flow, a stationary paddle tells us nothing.
+Locate the flow switch — small inline device with two wires to the logic board. Check the flow direction arrow on the switch body — if installed backwards it will not function properly.
+With active flow confirmed, watch the paddle inside — it should move and make firm contact.
+Sluggish or inconsistent movement = likely fault. Normal movement does NOT rule out a faulty switch — proceed to jumper test.
 
 PART C — Flow switch jumper test
 Present safety check first:
