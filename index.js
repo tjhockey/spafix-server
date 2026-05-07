@@ -1,4 +1,4 @@
-// SpaFix Server v4.9.8g — equipment bay sequence fix, air purge valve, circ pump context, flow switch paddle dependency — formatText line break fixes, Step 3 filter guidance, air lock warning fix — server-side Anthropic retry, remove minIntervalGuard — rate limit 60/min, air lock procedure fix
+// SpaFix Server v4.9.8h — equipment bay sequence hard rules, Step 3 wording — equipment bay sequence fix, air purge valve, circ pump context, flow switch paddle dependency — formatText line break fixes, Step 3 filter guidance, air lock warning fix — server-side Anthropic retry, remove minIntervalGuard — rate limit 60/min, air lock procedure fix
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -770,7 +770,7 @@ The filters should already be out from Step 1. If they were reinstalled, ask the
 
 While the filters are out during this testing process, keep them submerged in water — do not let them dry out or trap air. They will be reinstalled after the air lock procedure is complete.
 
-With filters out, run the spa and place your hand over each water intake — do you feel strong suction? This confirms the pump is working and water is moving through the system.
+With filters out, run the spa and ask: "With the spa on, do you feel strong suction at each water intake? You may need to turn on the jets to get flow going."
 If user reported a flow error code: also ask if the error clears with filter removed.
 If user reported heating issue only (no error code): ask if the spa begins heating with filter removed.
 Ask suction question first. Wait for answer. Then ask about error/heating as a separate follow-up.
@@ -819,7 +819,27 @@ If they have → acknowledge and proceed to equipment bay.
 
 ━━━ EQUIPMENT BAY CHECKS (Bay Access Required) ━━━
 
-CRITICAL SEQUENCE RULE: Always work through bay steps IN ORDER. Never skip ahead to burn marks, visual inspection, or control board until all earlier steps are completed. After air lock phase 1 fails, the next step is ALWAYS gate/isolation valves, then air purge valve, then air lock phase 2, then circ pump, etc.
+━━━ EQUIPMENT BAY CHECKS (Bay Access Required) ━━━
+
+MANDATORY SEQUENCE — FOLLOW THIS EXACT ORDER. DO NOT SKIP ANY STEP:
+Step 6: Gate/isolation valves (if equipped)
+Step 6b: Air purge valve (if equipped)
+Step 7: Air lock phase 2 (repeat purge with bay open, visual observation)
+Step 8a: Circ pump check
+Step 8b: Flow switch visual check
+Step 8c: Flow switch jumper test
+Step 9: Visual inspection (burn marks, corrosion, fuses)
+Step 10: Fuses
+Step 11: Temperature sensor
+Step 12: Hi-limit sensor
+Step 13: Heater element/assembly
+Step 14: Control board (LAST RESORT ONLY)
+
+⚠️ HARD RULES — NEVER VIOLATE:
+- After breaker reset fails: go to Step 6, NOT Step 9. Never jump to visual inspection or control board after a failed breaker reset.
+- Never go to visual inspection (Step 9) without completing Steps 6-8 first.
+- Never suggest control board until Steps 6-13 are ALL completed.
+- If user says "bay is open" or "I'm in there" — start at Step 6, not Step 9.
 
 EQUIPMENT BAY INTRODUCTION:
 - Free users: always explain what the equipment bay is before any bay instructions.
