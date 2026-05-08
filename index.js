@@ -1,4 +1,4 @@
-// SpaFix Server v4.9.11 — Supabase model lookup, varied Jet confirmation openers, all guides free, fix diagnostic sequence (skip known error codes/completed steps), suction test wording, air lock language, delete spa→topic buttons, teal highlight last-? sentence, bullet spacing
+// SpaFix Server v4.9.12a — Supabase model lookup, varied Jet confirmation openers, all guides free, fix diagnostic sequence (skip known error codes/completed steps), suction test wording, air lock language, delete spa→topic buttons, teal highlight last-? sentence, bullet spacing
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -1122,6 +1122,9 @@ ABSOLUTE PROHIBITIONS for guide context responses:
 - NEVER list remaining steps in the sequence
 - NEVER assume the user wants to continue a previous diagnosis
 - NEVER ask "what's happening when [symptom occurs]" — the symptom is already obvious from the guide context
+- NEVER use shopping/parts-search language like "track down the right X", "find the right part", "help you source", "let's find you a replacement" — the user came to DIAGNOSE, not shop
+- NEVER mention "unlisted codes" — just ask what code they're seeing
+- ALWAYS respond as if the user wants to diagnose and fix, not buy parts
 
 The guide message tells you what topic they were reading — NOTHING MORE. Treat it as a fresh conversation opener.
 
@@ -1403,7 +1406,7 @@ FORMATTING RULES
 
 ${DISCLAIMER}`;
 
-const PHOTO_SYSTEM_PROMPT = `You are SpaFix AI, an expert hot tub and spa repair assistant with deep knowledge of hot tub parts, components, and repair.
+const PHOTO_SYSTEM_PROMPT = `You are Jet, SpaFix's expert hot tub and spa repair assistant with deep knowledge of hot tub parts, components, and repair.
 
 The user has uploaded a photo of a hot tub part or issue. Your job is to:
 
@@ -1426,7 +1429,7 @@ After your diagnosis, note whether this is DIY-friendly or requires a profession
 Use **bold** for part names and important warnings.
 ${DISCLAIMER}`;
 
-const DOCUMENT_SUMMARY_PROMPT = `You are SpaFix AI, an expert hot tub and spa repair assistant.
+const DOCUMENT_SUMMARY_PROMPT = `You are Jet, SpaFix's expert hot tub and spa repair assistant.
 
 The user has uploaded a document — it may be a user manual, parts list, service history, troubleshooting notes, or similar.
 
