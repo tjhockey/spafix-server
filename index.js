@@ -1,4 +1,4 @@
-// SpaFix Server v4.9.12a — Supabase model lookup, varied Jet confirmation openers, all guides free, fix diagnostic sequence (skip known error codes/completed steps), suction test wording, air lock language, delete spa→topic buttons, teal highlight last-? sentence, bullet spacing
+// SpaFix Server v4.9.12e — Supabase model lookup, varied Jet confirmation openers, all guides free, fix diagnostic sequence (skip known error codes/completed steps), suction test wording, air lock language, delete spa→topic buttons, teal highlight last-? sentence, bullet spacing
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -215,7 +215,7 @@ if (!ANTHROPIC_API_KEY) {
 
 const nativeFetch = globalThis.fetch.bind(globalThis);
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
-const ANTHROPIC_TIMEOUT_MS = 15000;
+const ANTHROPIC_TIMEOUT_MS = 10000; // 10s per individual call — retries handle transient failures
 const ANTHROPIC_TIMEOUT_MESSAGE = "Anthropic API request timed out. Please try again.";
 
 function getRequestUrl(input) {
@@ -1852,7 +1852,7 @@ async function isValidMessage(text) {
 async function callAnthropicWithRetry(payload, maxRetries = 3) {
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     if (attempt > 0) {
-      const delay = attempt * 4000; // 4s, 8s, 12s
+      const delay = attempt * 2000; // 2s, 4s, 6s — total max 12s well under client timeout
       console.log(`[Anthropic] 429 received, retrying in ${delay}ms (attempt ${attempt}/${maxRetries})`);
       await new Promise(r => setTimeout(r, delay));
     }
@@ -1864,9 +1864,9 @@ async function callAnthropicWithRetry(payload, maxRetries = 3) {
     if (response.status === 429) continue; // retry
     return response; // success or non-429 error — return as-is
   }
-  // All retries exhausted
+  // All retries exhausted — return friendly water break message
   console.log(`[Anthropic] All retries exhausted after ${maxRetries} attempts`);
-  return { ok: false, status: 503, json: async () => ({ error: { message: "Service temporarily unavailable — please try again in a moment." } }) };
+  return { ok: false, status: 429, json: async () => ({ error: { message: "rate_limit_exhausted" } }) };
 }
 // ─────────────────────────────────────────────────────────────────
 
