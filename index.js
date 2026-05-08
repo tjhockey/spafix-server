@@ -1,4 +1,4 @@
-// SpaFix Server v4.9.10b — Supabase model lookup, varied Jet confirmation openers, all guides free, fix diagnostic sequence (skip known error codes/completed steps), suction test wording, air lock language, delete spa→topic buttons, teal highlight last-? sentence, bullet spacing
+// SpaFix Server v4.9.10c — Supabase model lookup, varied Jet confirmation openers, all guides free, fix diagnostic sequence (skip known error codes/completed steps), suction test wording, air lock language, delete spa→topic buttons, teal highlight last-? sentence, bullet spacing
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -1558,6 +1558,7 @@ async function supabaseGet(table, params = {}) {
   // Note: do NOT encode * in filter values — PostgREST requires literal * for ilike wildcards
   const qs = Object.entries(params).map(([k, v]) => `${k}=${String(v).replace(/[^*]/g, c => encodeURIComponent(c))}`).join('&');
   const url = `${SUPABASE_URL}/rest/v1/${table}?${qs}`;
+  console.log('[Supabase] GET:', url);
   try {
     const res = await fetch(url, {
       headers: {
@@ -1590,6 +1591,8 @@ app.get("/api/model/:year/:make/:model", async (req, res) => {
   });
 
   if (!rows || rows.length === 0) {
+    // Debug — log what we actually queried
+    console.log('[model lookup] No rows found for:', { year, make, model });
     return res.json({ found: false });
   }
 
