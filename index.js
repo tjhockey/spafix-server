@@ -1,4 +1,4 @@
-// SpaFix Server v4.9.8h — equipment bay sequence hard rules, Step 3 wording — equipment bay sequence fix, air purge valve, circ pump context, flow switch paddle dependency — formatText line break fixes, Step 3 filter guidance, air lock warning fix — server-side Anthropic retry, remove minIntervalGuard — rate limit 60/min, air lock procedure fix
+// SpaFix Server v4.9.10 — Supabase model lookup, varied Jet confirmation openers, all guides free, fix diagnostic sequence (skip known error codes/completed steps), suction test wording, air lock language, delete spa→topic buttons, teal highlight last-? sentence, bullet spacing
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -131,17 +131,7 @@ const chatRateLimiter = rateLimit({
   }
 });
 
-// Minimum interval: no more than 1 chat request per 2 seconds per IP
-const lastChatRequest = {};
-function minIntervalGuard(req, res, next) {
-  const ip = req.headers["x-forwarded-for"]?.split(",")[0].trim() || req.socket.remoteAddress || "unknown";
-  const now = Date.now();
-  if (lastChatRequest[ip] && now - lastChatRequest[ip] < 2000) {
-    return res.status(429).json({ error: "Slow down — Jet needs a moment between messages.", limitReached: false });
-  }
-  lastChatRequest[ip] = now;
-  next();
-}
+// minIntervalGuard removed v4.9.9 — was causing legitimate 429s
 // ──────────────────────────────────────────────────────────────
 app.use("/api", enforceAllowedOrigin, cors(corsOptions));
 app.use(["/api/analyze-photo", "/api/analyze-document"], uploadJsonParser);
@@ -294,23 +284,27 @@ function parseAccessCodeList(value) {
     .filter(Boolean);
 }
 
-const CLIENT_ADMIN_CODE = normalizeAccessCode("spafix-admin");
-const CLIENT_TESTER_CODE = normalizeAccessCode("spafix-test");
+// ── Access codes — env only, no hardcoded fallbacks ───────────────
+// To add/remove testers: edit TESTER_KEYS in Railway Variables (comma-separated)
 const ADMIN_KEY = normalizeAccessCode(process.env.ADMIN_KEY);
 const TESTER_KEYS = parseAccessCodeList(process.env.TESTER_KEYS);
 const PRO_SECRET = normalizeAccessCode(process.env.PRO_SECRET || process.env.PRO_ACCESS_KEY);
 
-// Named tester codes — Premium tier, fully tracked in admin report
-const NAMED_TESTER_CODES = [
-  { code: normalizeAccessCode("Tester-Alpha1"),   name: "Tester-Alpha1"   },
-  { code: normalizeAccessCode("Tester-Beta2"),    name: "Tester-Beta2"    },
-  { code: normalizeAccessCode("Tester-Gamma3"),   name: "Tester-Gamma3"   },
-  { code: normalizeAccessCode("Tester-Delta4"),   name: "Tester-Delta4"   },
-  { code: normalizeAccessCode("Tester-Epsilon5"), name: "Tester-Epsilon5" },
-];
-console.log("[env] dotenv initialized:", envLoadState.dotenvInitialized);
-console.log("TESTER_KEYS count:", TESTER_KEYS.length);
-console.log("ADMIN_KEY set:", !!ADMIN_KEY);
+// Tester name derived from the code itself — no hardcoding needed
+// e.g. "Tester-Alpha1" → testerName = "Tester-Alpha1"
+function getTesterName(normalizedCode) {
+  const match = TESTER_KEYS.find(k => k === normalizedCode);
+  if (!match) return null;
+  // Reconstruct display name from the raw TESTER_KEYS env string
+  const raw = String(process.env.TESTER_KEYS || "").split(",").map(s => s.trim());
+  return raw.find(r => normalizeAccessCode(r) === normalizedCode) || match;
+}
+
+if (process.env.NODE_ENV !== 'production') {
+  console.log("[env] dotenv initialized:", envLoadState.dotenvInitialized);
+  console.log("[env] TESTER_KEYS count:", TESTER_KEYS.length);
+  console.log("[env] ADMIN_KEY set:", !!ADMIN_KEY);
+}
 const PRO_SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7 days
 const proSessions = new Map(); // token -> { testerName, clientId, expiresAt }
 
@@ -363,17 +357,12 @@ function getProvidedAccessCode(req) {
 }
 
 function hasPremiumAccess(req) {
-  const rawHeader = req.headers["x-spafix-access-code"];
-  console.log("Access header:", rawHeader);
-  const code = String(rawHeader || "")
-    .trim()
-    .toLowerCase();
-  console.log("Checking premium access:", {
-    header: req.headers["x-spafix-access-code"],
-    result: code === "spafix-admin" || code === "spafix-test"
-  });
-
-  return code === "spafix-admin" || code === "spafix-test";
+  const provided = normalizeAccessCode(req.headers["x-spafix-access-code"]);
+  if (!provided) return false;
+  const isAdmin = !!ADMIN_KEY && accessCodesMatch(provided, ADMIN_KEY);
+  const isTester = TESTER_KEYS.some(k => accessCodesMatch(provided, k));
+  const isPro = !!PRO_SECRET && accessCodesMatch(provided, PRO_SECRET);
+  return isAdmin || isTester || isPro;
 }
 
 function pruneExpiredProSessions() {
@@ -387,17 +376,9 @@ function resolveProAccess(rawCode) {
   const provided = normalizeAccessCode(rawCode);
   if (!provided) return { success: false, error: "Access code required." };
 
-  const adminCandidates = [ADMIN_KEY, CLIENT_ADMIN_CODE].filter(Boolean);
-  const testerCandidates = Array.from(new Set([...TESTER_KEYS, CLIENT_TESTER_CODE].filter(Boolean)));
-  const adminMatch = adminCandidates.some((key) => accessCodesMatch(provided, key));
-  const proMatch = Boolean(PRO_SECRET) && accessCodesMatch(provided, PRO_SECRET);
-  const testerIndex = testerCandidates.findIndex((key) => accessCodesMatch(provided, key));
-  const testerMatch = testerIndex !== -1;
-  const namedTester = NAMED_TESTER_CODES.find(t => accessCodesMatch(provided, t.code));
-
-  console.log(
-    `[auth] Access code comparison: adminMatch=${adminMatch} testerMatch=${testerMatch} proMatch=${proMatch} namedTester=${namedTester?.name || 'none'}`
-  );
+  const adminMatch = !!ADMIN_KEY && accessCodesMatch(provided, ADMIN_KEY);
+  const proMatch = !!PRO_SECRET && accessCodesMatch(provided, PRO_SECRET);
+  const testerMatch = TESTER_KEYS.some(k => accessCodesMatch(provided, k));
 
   if (adminMatch) {
     return { success: true, testerName: null, role: "admin" };
@@ -407,12 +388,9 @@ function resolveProAccess(rawCode) {
     return { success: true, testerName: null, role: "pro" };
   }
 
-  if (namedTester) {
-    return { success: true, testerName: namedTester.name, role: "plus" };
-  }
-
   if (testerMatch) {
-    return { success: true, testerName: `Tester-${testerIndex + 1}`, role: "tester" };
+    const testerName = getTesterName(provided) || provided;
+    return { success: true, testerName, role: "tester" };
   }
 
   return { success: false, error: "Invalid access code." };
@@ -593,15 +571,18 @@ When starting a new conversation or when spa details are needed, ask conversatio
 
 NEVER output "Year: [year]", "Make: [manufacturer]", or any template fields in your response text — these belong in the input field only, never in the chat bubble.
 
-When you receive a message starting with "[Spa confirmed: X]" — the client has corrected and confirmed the spa details. You MUST:
-1. Start your response with: "Got it — I've noted your spa as a **[exact year/make/model from the message]**."
-2. If "Already tried: X" is in the message, acknowledge it briefly
-3. If the message contains "The user's issue is: X" — immediately continue diagnosing that issue. Do NOT ask "What's going on?" or "What can I help you with?" — you already know the issue.
-4. If the message also contains [CONFIRM_PART:X], immediately continue with the confirm flow for that part
-5. NEVER say "as confirmed" or "your spa as confirmed" — always echo the actual make and model
-6. NEVER ask for spa details again — they are confirmed
-7. NEVER ask "Does that look right?"
-8. NEVER ask "What's going on?" if the issue is already stated in the message
+When you receive a message starting with "My spa is a [Year Make Model]" — the client has normalized and confirmed the spa details. You MUST:
+1. Start your response with a VARIED opener — do not always say "Got it". Rotate naturally between: "Got it —", "Perfect —", "Understood —", "Thanks —", "Good to know —". Follow with "you have a **[exact year/make/model from the message]**."
+2. If "[MODEL_DATA_FOUND]" appears in the message — add: "I have detailed specs on your [spa] on file, which will help me give you more accurate guidance."
+3. If "[MODEL_DATA_NOT_FOUND]" appears in the message — add: "I don't have specific details on your [spa] on file yet — if you have your owner's manual handy, tap 📎 to upload it and I'll use it for more accurate guidance."
+4. If "Already tried: X" is in the message, acknowledge it briefly using clean, corrected language — fix any obvious typos (e.g. "tyb" → "tub", "watre" → "water") when echoing back what the user tried. Mark those steps as ✅ done.
+5. If the message contains "Issue: Error code X" — you already have the error code. Do NOT ask what code they're seeing. Start Step 1 immediately.
+6. If the message contains "Issue: X" (non-error-code) — immediately continue diagnosing that issue. Do NOT ask "What's going on?" or "What can I help you with?"
+7. If the message also contains [CONFIRM_PART:X], immediately continue with the confirm flow for that part
+8. NEVER say "as confirmed" or "your spa as confirmed" — always echo the actual make and model
+9. NEVER ask for spa details again — they are confirmed
+10. NEVER ask "Does that look right?"
+11. NEVER ask "What's going on?" if the issue is already stated in the message
 
 If the user can't provide details or skips them: acknowledge it, note that you'll help as best you can, and proceed normally. Never repeat the request mid-conversation unless the spa model would materially change the answer — and even then, make it a soft ask, not a gate.
 
@@ -672,7 +653,8 @@ Use: ---PART_RECOMMENDATION--- format for the part currently being diagnosed.
 [START_DIAGNOSIS] intent: Begin full diagnostic sequence from step 1. Spa details already confirmed — do NOT acknowledge or repeat the spa details again. Do NOT say "Got it — I've noted your spa as X." 
 
 FIRST — before Step 1:
-- If the user's message indicates they are already seeing an error code (e.g. topic was "Error code displayed", or they mentioned FL1/FL2/FLO/etc.), do NOT ask if they are seeing an error code. Instead ask immediately: "What error code are you seeing on your topside panel?"
+- If the user's message already contains a specific error code (e.g. "Issue: Error code FL1", "FL1", "FL2", "FLO", etc.) — you already have the code. Do NOT ask what error code they're seeing. Acknowledge it and go straight to Step 1 (filter condition).
+- If the user already tried something (e.g. "Already tried: replaced the filters") — mark that step as ✅ done and skip to the next unchecked step. Do NOT ask about it again.
 - If the user's message does NOT mention an error code (e.g. topic was "Won't heat up" with no code mentioned), ask ONCE: "Before we start — are you seeing any error codes on your topside panel, such as FL1, FL2, FLO, or FLOW?"
 - If YES → note the code, use flow-error language throughout ("does the error clear?")
 - If NO → use heating-specific language throughout ("is the spa heating up?", "does the spa start heating?") — NEVER say "does the flow error clear?" if no error code was reported
@@ -770,7 +752,7 @@ The filters should already be out from Step 1. If they were reinstalled, ask the
 
 While the filters are out during this testing process, keep them submerged in water — do not let them dry out or trap air. They will be reinstalled after the air lock procedure is complete.
 
-With filters out, run the spa and ask: "With the spa on, do you feel strong suction at each water intake? You may need to turn on the jets to get flow going."
+With filters still out, run the spa and ask: "With the spa running and the filters still out, do you feel strong suction at the main filter inlet (the opening where your filter sits)? You may need to turn on the jets to get flow going."
 If user reported a flow error code: also ask if the error clears with filter removed.
 If user reported heating issue only (no error code): ask if the spa begins heating with filter removed.
 Ask suction question first. Wait for answer. Then ask about error/heating as a separate follow-up.
@@ -804,7 +786,7 @@ Present the following as numbered steps — written as clear instructions, NOT a
 Then ask: "Tell me the results of your test."
 - Error cleared and stays cleared → air lock was the cause. Confirm resolved.
 - Error returns → filter is a possible contributor but air lock is clearing. Proceed to next step.
-- Error never cleared → air lock is not the cause. Proceed to next step.
+- Error never cleared → air lock doesn't appear to be the cause at this time. Proceed to next step.
 ⚠️ NEVER recommend loosening union fittings as a diagnostic or air lock clearing step. NEVER recommend lowering the water level.
 
 5. HEATER INDICATOR CHECK
@@ -857,7 +839,7 @@ Some spas have a dedicated air purge valve (bleeder valve) near the pump or heat
 7. AIR LOCK — PHASE 2 (Equipment Bay Open)
 Repeat the garden hose purge with the equipment bay open. This time, have someone watch the flow switch housing and clear tubing/plumbing while purging. They should also cycle the jets pumps on and off repeatedly during the purge.
 - Air bubbles visible moving through the lines or flow switch housing = air lock confirmed as cause. Continue purging until no more bubbles appear.
-- No bubbles seen after thorough purge = air lock conclusively ruled out. Move to next step.
+- No bubbles seen after thorough purge = air lock doesn't appear to be the cause at this time. Move to next step.
 
 8. CIRCULATION PUMP & FLOW SWITCH (power ON)
 ⚠️ Spa is powered on for this step. Touch pump housing only — keep hands away from all wires, terminals, and connectors.
@@ -1567,6 +1549,63 @@ function maybeNormalizeGuidedChatInput(req, res, next) {
 
 app.use("/api/chat", chatRateLimiter, maybeNormalizeGuidedChatInput);
 
+// ── Supabase REST helpers (no npm package — direct fetch) ─────────
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
+
+async function supabaseGet(table, params = {}) {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return null;
+  const qs = Object.entries(params).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
+  const url = `${SUPABASE_URL}/rest/v1/${table}?${qs}`;
+  try {
+    const res = await fetch(url, {
+      headers: {
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+        'Content-Type': 'application/json',
+      }
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch (e) {
+    console.error('[Supabase] GET error:', e.message);
+    return null;
+  }
+}
+
+// Model profile lookup endpoint
+app.get("/api/model/:year/:make/:model", async (req, res) => {
+  const { year, make, model } = req.params;
+  if (!year || !make || !model) return res.status(400).json({ error: "year, make, model required" });
+
+  const makeNorm = make.toLowerCase().trim();
+  const modelNorm = model.toLowerCase().trim();
+
+  const rows = await supabaseGet('spa_models', {
+    'select': 'make,model,year_start,year_end,control_system,common_failures,error_codes,pump_configs,verified',
+    'make': `ilike.${make}`,
+    'model': `ilike.${model}`,
+    'limit': 1
+  });
+
+  if (!rows || rows.length === 0) {
+    return res.json({ found: false });
+  }
+
+  const profile = rows[0];
+  // Only serve verified profiles OR include unverified with a flag
+  return res.json({
+    found: true,
+    verified: profile.verified || false,
+    make: profile.make,
+    model: profile.model,
+    control_system: profile.control_system || null,
+    common_failures: profile.common_failures || null,
+    error_codes: profile.error_codes || null,
+    pump_configs: profile.pump_configs || null,
+  });
+});
+
 // Primary spa normalization endpoint — used by client for typo correction
 app.post("/api/normalize-spa", async (req, res) => {
   const raw = req.body.input || req.body.raw || '';
@@ -1683,8 +1722,7 @@ app.get("/api/admin/report", (req, res) => {
 // Get current usage stats (called by frontend on load)
 app.post("/api/increment-msg", (req, res) => {
   if (hasPremiumAccess(req)) {
-    console.log("Premium bypass — skipping limiter");
-    return res.json({ limitReached: false, dailyMsgs: 0, dailyLimit: FREE_DAILY_MSG_LIMIT, isPro: true });
+      return res.json({ limitReached: false, dailyMsgs: 0, dailyLimit: FREE_DAILY_MSG_LIMIT, isPro: true });
   }
   const proAuth = getProAuth(req);
   if (proAuth.session) {
@@ -1715,8 +1753,7 @@ app.get("/api/usage", (req, res) => {
 // Start a new session (called when user opens chat)
 app.post("/api/start-session", (req, res) => {
   if (hasPremiumAccess(req)) {
-    console.log("Premium bypass — skipping limiter");
-    return res.json({ allowed: true, isPro: true });
+      return res.json({ allowed: true, isPro: true });
   }
   const proAuth = getProAuth(req);
   if (proAuth.provided && !proAuth.session) {
@@ -1802,12 +1839,29 @@ async function isValidMessage(text) {
   if (!related) return { valid: false, reason: "off_topic" };
   return { valid: true };
 }
+// ── Anthropic API helper — module scope so all routes can use it ──
+async function callAnthropicWithRetry(payload, maxRetries = 3) {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    if (attempt > 0) {
+      const delay = attempt * 4000; // 4s, 8s, 12s
+      console.log(`[Anthropic] 429 received, retrying in ${delay}ms (attempt ${attempt}/${maxRetries})`);
+      await new Promise(r => setTimeout(r, delay));
+    }
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify(payload),
+    });
+    if (response.status === 429) continue; // retry
+    return response; // success or non-429 error — return as-is
+  }
+  // All retries exhausted
+  console.log(`[Anthropic] All retries exhausted after ${maxRetries} attempts`);
+  return { ok: false, status: 503, json: async () => ({ error: { message: "Service temporarily unavailable — please try again in a moment." } }) };
+}
 // ─────────────────────────────────────────────────────────────────
 
 app.post("/api/chat", async (req, res) => {
-  console.log("Incoming request headers:", {
-    access: req.headers["x-spafix-access-code"]
-  });
   const { messages } = req.body;
   const isSilent = req.body.silent === true; // guide CTA sends — don't count against limits
   if (!messages || !Array.isArray(messages)) return res.status(400).json({ error: "messages array required" });
@@ -1843,8 +1897,7 @@ app.post("/api/chat", async (req, res) => {
 
   // Enforce free limits
   if (premiumAccess) {
-    console.log("Premium chat request — bypassing limits");
-  } else if (!isPro && !isSilent) {
+    } else if (!isPro && !isSilent) {
     const clientId = getClientId(req);
     const u = getUsage(clientId);
     if (u.dailyMsgs >= FREE_DAILY_MSG_LIMIT) {
@@ -1867,26 +1920,7 @@ app.post("/api/chat", async (req, res) => {
     }
     u.dailyMsgs++;
 
-  // Helper: call Anthropic API with retry on 429
-  async function callAnthropicWithRetry(payload, maxRetries = 3) {
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      if (attempt > 0) {
-        const delay = attempt * 4000; // 4s, 8s, 12s
-        console.log(`[Anthropic] 429 received, retrying in ${delay}ms (attempt ${attempt}/${maxRetries})`);
-        await new Promise(r => setTimeout(r, delay));
-      }
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
-        body: JSON.stringify(payload),
-      });
-      if (response.status === 429) continue; // retry
-      return response; // success or non-429 error — return as-is
-    }
-    // All retries exhausted
-    console.log(`[Anthropic] All retries exhausted after ${maxRetries} attempts`);
-    return { ok: false, status: 503, json: async () => ({ error: { message: "Service temporarily unavailable — please try again in a moment." } }) };
-  }
+
 
   try {
     const response = await callAnthropicWithRetry({ model: "claude-sonnet-4-6", max_tokens: 1024, system: TEXT_SYSTEM_PROMPT, messages });
@@ -1912,13 +1946,9 @@ app.post("/api/chat", async (req, res) => {
   return;
   }
 
-  // Pro path — no rate limiting
+  // Pro path — no rate limiting, uses same retry logic as free path
   try {
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 1024, system: TEXT_SYSTEM_PROMPT, messages }),
-    });
+    const response = await callAnthropicWithRetry({ model: "claude-sonnet-4-6", max_tokens: 1024, system: TEXT_SYSTEM_PROMPT, messages });
     const data = await response.json();
     if (!response.ok) return res.status(response.status).json({ error: data?.error?.message || "API error" });
     const clientId = getClientId(req);
