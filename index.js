@@ -1,4 +1,4 @@
-// SpaFix Server v4.9.10 — Supabase model lookup, varied Jet confirmation openers, all guides free, fix diagnostic sequence (skip known error codes/completed steps), suction test wording, air lock language, delete spa→topic buttons, teal highlight last-? sentence, bullet spacing
+// SpaFix Server v4.9.10a — Supabase model lookup, varied Jet confirmation openers, all guides free, fix diagnostic sequence (skip known error codes/completed steps), suction test wording, air lock language, delete spa→topic buttons, teal highlight last-? sentence, bullet spacing
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -1582,9 +1582,9 @@ app.get("/api/model/:year/:make/:model", async (req, res) => {
   const modelNorm = model.toLowerCase().trim();
 
   const rows = await supabaseGet('spa_models', {
-    'select': 'make,model,year_start,year_end,control_system,common_failures,error_codes,pump_configs,verified',
-    'make': `ilike.${make}`,
-    'model': `ilike.${model}`,
+    'select': 'brand,model_name,year_start,year_end,control_system,common_failures,error_codes,pump_configs,verified',
+    'brand': `ilike.*${make}*`,
+    'model_name': `ilike.*${model}*`,
     'limit': 1
   });
 
@@ -1593,16 +1593,21 @@ app.get("/api/model/:year/:make/:model", async (req, res) => {
   }
 
   const profile = rows[0];
-  // Only serve verified profiles OR include unverified with a flag
   return res.json({
     found: true,
     verified: profile.verified || false,
-    make: profile.make,
-    model: profile.model,
+    make: profile.brand,
+    model: profile.model_name,
     control_system: profile.control_system || null,
-    common_failures: profile.common_failures || null,
-    error_codes: profile.error_codes || null,
-    pump_configs: profile.pump_configs || null,
+    common_failures: Array.isArray(profile.common_failures)
+      ? profile.common_failures.slice(0, 5).join('; ')
+      : (profile.common_failures || null),
+    error_codes: Array.isArray(profile.error_codes)
+      ? profile.error_codes.map(e => e.code).join(', ')
+      : (profile.error_codes || null),
+    pump_configs: Array.isArray(profile.pump_configs)
+      ? profile.pump_configs.map(p => `Pump ${p.pump_num}: ${p.hp}hp ${p.speeds}-speed`).join(', ')
+      : (profile.pump_configs || null),
   });
 });
 
