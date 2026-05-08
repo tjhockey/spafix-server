@@ -1,4 +1,4 @@
-// SpaFix Server v4.9.10a — Supabase model lookup, varied Jet confirmation openers, all guides free, fix diagnostic sequence (skip known error codes/completed steps), suction test wording, air lock language, delete spa→topic buttons, teal highlight last-? sentence, bullet spacing
+// SpaFix Server v4.9.10b — Supabase model lookup, varied Jet confirmation openers, all guides free, fix diagnostic sequence (skip known error codes/completed steps), suction test wording, air lock language, delete spa→topic buttons, teal highlight last-? sentence, bullet spacing
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -1555,7 +1555,8 @@ const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 
 async function supabaseGet(table, params = {}) {
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return null;
-  const qs = Object.entries(params).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
+  // Note: do NOT encode * in filter values — PostgREST requires literal * for ilike wildcards
+  const qs = Object.entries(params).map(([k, v]) => `${k}=${String(v).replace(/[^*]/g, c => encodeURIComponent(c))}`).join('&');
   const url = `${SUPABASE_URL}/rest/v1/${table}?${qs}`;
   try {
     const res = await fetch(url, {
