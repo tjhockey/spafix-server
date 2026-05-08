@@ -1,4 +1,4 @@
-// SpaFix Server v4.9.10d — Supabase model lookup, varied Jet confirmation openers, all guides free, fix diagnostic sequence (skip known error codes/completed steps), suction test wording, air lock language, delete spa→topic buttons, teal highlight last-? sentence, bullet spacing
+// SpaFix Server v4.9.11 — Supabase model lookup, varied Jet confirmation openers, all guides free, fix diagnostic sequence (skip known error codes/completed steps), suction test wording, air lock language, delete spa→topic buttons, teal highlight last-? sentence, bullet spacing
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -783,7 +783,7 @@ Present the following as numbered steps — written as clear instructions, NOT a
 6. If the error clears, reinstall both filters — ensure there is no air trapped inside the filters and keep them fully submerged during installation.
 7. Run the spa and confirm the error is still cleared.
 
-Then ask: "Tell me the results of your test."
+Then ask: "Tell me the results of your test. Did the error clear?"
 - Error cleared and stays cleared → air lock was the cause. Confirm resolved.
 - Error returns → filter is a possible contributor but air lock is clearing. Proceed to next step.
 - Error never cleared → air lock doesn't appear to be the cause at this time. Proceed to next step.
@@ -795,7 +795,7 @@ This confirms the control board is commanding the heater to run. If no indicator
 
 BREAKER CYCLE — before opening equipment bay:
 Before any equipment bay access, have the user do a full breaker cycle:
-"Before we open the equipment bay — have you tried a full breaker reset? Not just the topside panel, but the dedicated circuit breaker. Flip it OFF, wait 15 seconds, then back ON. This can reset the control board and sometimes clears the issue entirely."
+"Before we open the equipment bay — have you tried a full breaker reset? Not just the topside panel, but the dedicated circuit breaker. Flip it OFF, wait 15 seconds, then back ON. This can reset the control board and sometimes clears the issue entirely. Does the error clear after the reset?"
 If they haven't done it → have them try it now and report back.
 If they have → acknowledge and proceed to equipment bay.
 
