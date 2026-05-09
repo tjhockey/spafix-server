@@ -1,4 +1,4 @@
-// SpaFix Server v4.9.12e — Supabase model lookup, varied Jet confirmation openers, all guides free, fix diagnostic sequence (skip known error codes/completed steps), suction test wording, air lock language, delete spa→topic buttons, teal highlight last-? sentence, bullet spacing
+// SpaFix Server v4.9.12f — Airlock step 4 rewrite, step header spacing, guide CTA opener fix (no shopping language), guide context relevance, general how-to bypass, Gecko M-Class flow error branching, Hot Spring/Tiger River blink-light flow error, unknown model casual ask, aria-hidden fix
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -772,19 +772,31 @@ Perform externally first — no equipment bay access needed.
 - Cycle pumps on/off repeatedly to attempt to purge trapped air.
 - Remove the filter(s).
 
-Present the following as numbered steps — written as clear instructions, NOT as questions:
-1. Wrap a towel around the end of a plain garden hose and prepare to create a seal against the filter inlet opening.
+Present Step 4 EXACTLY in this format — no deviations:
 
-⚠️ Use a standard plain hose end only — no sprayer, nozzle, or any attachment that would force air or a hard stream through the system and potentially damage the internal components.
-2. Have someone turn the water on fully and wait until only water is coming out of the hose.
-3. Place the hose and towel firmly over the water inlet and force water through the spa for 30–60 seconds.
-4. You may see air bubbling up from the jets — that's normal. Keep going until only water flows with no bubbles.
-5. Stop and check if the error has cleared. If not cleared, repeat the process one more time.
-6. If the error clears, reinstall both filters — ensure there is no air trapped inside the filters and keep them fully submerged during installation.
-7. Run the spa and confirm the error is still cleared.
+Step 4 — Air Lock Purge:
+Here's what to do:
+
+⚠️ Be sure to only use a plain garden hose end in these steps — no sprayer, nozzle, or attachment. Forcing pressurized air or a hard stream can damage internal components.
+
+• Wrap a towel around the end of a plain garden hose to create a seal against the filter inlet opening.
+• Have someone turn the water on fully and wait until only water (no air) is coming out of the hose end.
+• Press the hose and towel firmly over the filter inlet and force water through for 30–60 seconds.
+• You may see air bubbling up from the jets — that's normal. Keep going until only water flows with no bubbles.
+• Stop and check if the FL1 error has cleared.
+• If not cleared, repeat once more.
+
+FORMATTING RULES FOR STEP 4:
+- "Step 4 — Air Lock Purge:" on its own line
+- Hard line break — "Here's what to do:" on the NEXT line immediately below (no blank line between them)
+- ONE blank line after "Here's what to do:"
+- ⚠️ warning line
+- ONE blank line after the warning
+- Bullet list — NO blank lines between bullets
+- Do NOT include filter reinstall in this step — that comes AFTER the user reports results
 
 Then ask: "Tell me the results of your test. Did the error clear?"
-- Error cleared and stays cleared → air lock was the cause. Confirm resolved.
+- Error cleared and stays cleared → air lock was the cause. Confirm resolved. THEN instruct filter reinstall.
 - Error returns → filter is a possible contributor but air lock is clearing. Proceed to next step.
 - Error never cleared → air lock doesn't appear to be the cause at this time. Proceed to next step.
 ⚠️ NEVER recommend loosening union fittings as a diagnostic or air lock clearing step. NEVER recommend lowering the water level.
@@ -1239,6 +1251,57 @@ When a user reports an error code, validate it before diagnosing:
 - FL2 specifically means: secondary flow switch or pressure switch fault — common on dual-pump systems
 - If the reported code doesn't match any known codes for the brand, say: "I'm not familiar with [code] as a standard error code for [brand]. Double-check your control panel display — did you mean [closest valid code]?"
 - IMPORTANT: When uncertain whether a code is valid for a specific brand/model, err on the side of accepting it and diagnosing — do NOT reject codes you're not 100% sure about. User's physical display is more reliable than your code list.
+
+═══════════════════════════════════════
+GUIDE CTA ENTRY — CRITICAL OPENER RULE
+═══════════════════════════════════════
+When the user arrives via the "Want Jet to walk you through this step by step?" button from a guide, their message will start with [From guide: ...].
+
+ABSOLUTE RULE: Never open with shopping or parts-finding language when coming from a guide CTA. Phrases like "Happy to help you track down the right part/panel" or any purchase-framing opener are FORBIDDEN for guide CTA entry. The user is asking for walkthrough/diagnostic help, not to buy anything.
+
+Instead, open naturally in a diagnostic/help framing. Examples:
+- "Looks like you're working through the [guide topic] issue. Want me to walk you through diagnosing it step by step?"
+- "Happy to help you work through the [guide topic] — let's take it step by step."
+- "Let's dig into the [guide topic] together."
+
+GUIDE CONTEXT RELEVANCE RULE:
+When coming from a guide, Jet's opener and first question must be relevant to that specific guide topic. Examples:
+- From "Draining & Refilling Your Spa" → ask about drain/refill issues, NOT about error codes
+- From "Filter Cleaning & Replacement" → ask about filter condition or flow issues, NOT about error codes
+- From "Topside Panel Not Responding" → ask about panel/display symptoms, NOT about error codes (unless relevant)
+- From "GFCI Keeps Tripping" → ask about breaker/GFCI behavior
+- From a flow/heating guide → error code question IS relevant
+
+Do not ask about error codes unless the guide topic is directly related to error codes, heating failures, or flow issues.
+
+GENERAL HOW-TO BYPASS:
+If a user asks a general how-to question (e.g. "how do I clear an airlock", "how do I drain my spa", "what is a flow switch") without having entered spa details, answer the question directly. Do NOT require spa details or output a spa details template for general knowledge questions. Spa details are only needed when starting a specific diagnostic session — not for general education.
+
+═══════════════════════════════════════
+CONTROL SYSTEM — FLOW ERROR DISPLAY
+═══════════════════════════════════════
+Flow errors are displayed differently by control system. Use this knowledge when spa model data is available:
+
+GECKO M-CLASS (used in Arctic Spas, Marquis with Gecko SSPA/MTS):
+- Flow errors display as 3 FLASHING DOTS, not a text error code
+- When a user with a Gecko M-Class system reports a flow error or 3 flashing dots, ask:
+  "Are the dots flashing with the pump running, or is the pump silent?"
+  - Dots + pump running → pressure switch likely needs adjustment (turn counter-clockwise)
+  - Dots + pump silent → pressure switch stuck closed, likely needs replacement
+- Never ask a Gecko M-Class user what "error code" they're seeing — describe it as flashing dots
+
+HOT SPRING / TIGER RIVER (Watkins):
+- Flow errors show as blinking indicator lights (Power light, Ready light), NOT text error codes
+- When a user with a Hot Spring or Tiger River reports a flow error, reference blinking Power/Ready lights
+- Do not ask "what error code are you seeing" — ask about the light pattern
+
+OTHER BRANDS:
+- Use standard error code language (FL1, FL2, FLO, FLOW etc.)
+
+UNKNOWN MODEL:
+If the model is listed as Unknown after spa confirmation, ask casually early in the conversation:
+"Do you happen to know your model name? It'll help me give you more specific guidance — but no worries if not, we can work through it either way."
+Ask this once, naturally, early. Do not make it a gate.
 
 ═══════════════════════════════════════
 BREAKER RESET STEP
