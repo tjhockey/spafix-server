@@ -1,4 +1,4 @@
-// SpaFix Server v4.9.12i — Step 1 filter question reword, guide context ignore active diagnosis, unknown model casual ask fix, partial spa details ask only missing fields
+// SpaFix Server v4.9.13 — Diagnostic state block (replaces full history), server-side Anthropic timeout, request logging, OEM part numbers from Supabase, SPA_KEYWORDS expanded, haikusaysSpaRelated timeout, Step 3 one-question rule, robots.txt
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -466,6 +466,80 @@ const FREE_WEEKLY_SESSION_LIMIT = 3; // sessions per week
 // In production, replace with Redis or a database
 const usageStore = {}; // key: clientId, value: { dailyMsgs, dailyDate, weeklySessions, weekStart, sessionActive }
 
+// ── Diagnostic state store ────────────────────────────────────────
+// Compact per-client diagnostic state — replaces sending full history to Anthropic
+// Stores completed steps and current context so only last 3 messages need to be sent
+const diagStateStore = {}; // key: clientId, value: { spa, steps: [], currentStep, errorCode, lastUpdated }
+
+function getDiagState(clientId) {
+  return diagStateStore[clientId] || null;
+}
+
+function setDiagState(clientId, state) {
+  diagStateStore[clientId] = { ...state, lastUpdated: Date.now() };
+}
+
+function clearDiagState(clientId) {
+  delete diagStateStore[clientId];
+}
+
+function buildDiagStateBlock(state) {
+  if (!state || !state.steps || state.steps.length === 0) return null;
+  // Ultra-compact machine-readable format — ~15 tokens vs ~600 for full prose
+  // Format: [DS] 2006 Sundance Cayman FL2\n1✅2a✅2b✅3✅FL2persists 4✅FL2persists @5
+  const spa = state.spa || 'Unknown';
+  const err = state.errorCode ? ` ${state.errorCode}` : '';
+  const steps = state.steps.map(s => {
+    const num = s.label.replace(/Step\s*/i, '').replace(/\s*[—-].*/, '').trim();
+    const icon = s.result && s.result.includes('❌') ? '❌' : s.result && s.result.includes('⚠️') ? '⚠️' : '✅';
+    // Include key result only when it affects diagnosis
+    const keyResult = (s.result && s.result.toLowerCase().includes('persists')) ? 'persists'
+      : (s.result && s.result.toLowerCase().includes('cleared')) ? 'cleared'
+      : (s.result && s.result.toLowerCase().includes('fail')) ? 'fail'
+      : '';
+    return `${num}${icon}${keyResult ? keyResult : ''}`;
+  }).join('');
+  const current = state.currentStep ? ` @${state.currentStep.replace(/Step\s*/i, '').replace(/\s*[—-].*/, '').trim()}` : '';
+  return `[DS] ${spa}${err}\n${steps}${current}`;
+}
+
+// Parse completed steps from Jet's response
+function extractDiagStepFromResponse(reply, existingState) {
+  if (!reply) return null;
+  const state = existingState ? { ...existingState } : { steps: [] };
+  if (!state.steps) state.steps = [];
+
+  const stepPatterns = [
+    { pattern: /step\s*1.{0,30}filter/i, label: 'Step 1 — Filters' },
+    { pattern: /step\s*2a.{0,30}water\s*condition/i, label: 'Step 2a — Water condition' },
+    { pattern: /step\s*2b.{0,30}water\s*level/i, label: 'Step 2b — Water level' },
+    { pattern: /step\s*3.{0,30}suction/i, label: 'Step 3 — Suction test' },
+    { pattern: /step\s*4.{0,30}air\s*lock/i, label: 'Step 4 — Air lock purge' },
+    { pattern: /step\s*5.{0,30}heater\s*indicator/i, label: 'Step 5 — Heater indicator' },
+    { pattern: /step\s*6.{0,30}(gate|isolation)\s*valve/i, label: 'Step 6 — Gate valves' },
+    { pattern: /step\s*8a.{0,30}circ\s*pump/i, label: 'Step 8a — Circ pump' },
+    { pattern: /step\s*8b.{0,30}flow\s*switch/i, label: 'Step 8b — Flow switch' },
+  ];
+
+  // Detect which step Jet is currently presenting
+  for (const { pattern, label } of stepPatterns) {
+    if (pattern.test(reply)) {
+      state.currentStep = label;
+      // Mark previous step as complete if not already
+      const prev = state.steps[state.steps.length - 1];
+      if (prev && prev.label !== label && !prev.result.includes('→')) {
+        prev.result = prev.result || '✅ Completed';
+      }
+      // Add this step if not already there
+      if (!state.steps.find(s => s.label === label)) {
+        state.steps.push({ label, result: 'In progress' });
+      }
+      break;
+    }
+  }
+  return state;
+}
+
 function getClientId(req) {
   // Use IP address as anonymous client identifier
   return req.headers["x-forwarded-for"]?.split(",")[0].trim() || req.socket.remoteAddress || "unknown";
@@ -548,6 +622,11 @@ const DISCLAIMER = ``; // Removed generic disclaimer — safety notes are inline
 
 
 const TEXT_SYSTEM_PROMPT = `You are Jet, SpaFix's hot tub repair assistant. You're the knowledgeable friend who's fixed dozens of spas — confident, direct, and genuinely helpful. SpaFix's tagline is "Skip the repairman" — you are here to empower DIY users to fix their own spa. Never suggest calling a technician unless the task falls under absolute safety limits.
+
+DIAGNOSTIC STATE FORMAT:
+When a message starts with [DS], it contains the compact diagnostic state for this session. Format: [DS] {spa} {error}\n{steps}{@currentStep}
+Steps: number + ✅/❌/⚠️ + optional key result (persists/cleared/fail). Example: 1✅2a✅2b✅3✅persists 4✅persists @5
+Use this to know what's been ruled out and where we are. Never repeat completed steps. Never re-ask for information already captured here.
 
 PERSONALITY:
 - Confident and decisive — give clear answers, not "it could be this or that"
@@ -767,6 +846,12 @@ Both must be explicitly confirmed before marking Step 2 complete and moving to S
 The filters should already be out from Step 1. If they were reinstalled, ask the user to remove them again.
 
 While the filters are out during this testing process, keep them submerged in water — do not let them dry out or trap air. They will be reinstalled after the air lock procedure is complete.
+
+STEP 3 — ONE QUESTION AT A TIME:
+Ask ONLY: "With the filters still out, run the spa. Do you feel strong suction at the main filter inlet (the opening where your filter sits)?"
+Wait for the user's answer before asking anything else.
+Do NOT ask about error code clearing in the same message. That is a separate follow-up question asked AFTER the suction answer is received.
+NEVER use "Also —" to tack on a second question to a step.
 
 With filters still out, run the spa and ask: "With the spa running and the filters still out, do you feel strong suction at the main filter inlet (the opening where your filter sits)? You may need to turn on the jets to get flow going."
 If user reported a flow error code: also ask if the error clears with filter removed.
@@ -1681,7 +1766,7 @@ app.get("/api/model/:year/:make/:model", async (req, res) => {
   const modelNorm = model.toLowerCase().trim();
 
   const rows = await supabaseGet('spa_models', {
-    'select': 'brand,model_name,year_start,year_end,control_system,common_failures,error_codes,pump_configs,verified',
+    'select': 'brand,model_name,year_start,year_end,control_system,common_failures,error_codes,pump_configs,verified,key_part_numbers',
     'brand': `ilike.*${make}*`,
     'model_name': `ilike.*${model}*`,
     'limit': 1
@@ -1707,6 +1792,7 @@ app.get("/api/model/:year/:make/:model", async (req, res) => {
     pump_configs: Array.isArray(profile.pump_configs)
       ? profile.pump_configs.map(p => `Pump ${p.pump_num}: ${p.hp}hp ${p.speeds}-speed`).join(', ')
       : (profile.pump_configs || null),
+    key_part_numbers: profile.key_part_numbers || null,
   });
 });
 
@@ -1888,7 +1974,11 @@ const SPA_KEYWORDS = [
   "burn","scorch","black","mark","fuse","board","element","ohm","multimeter",
   "heating","cooling","light","indicator","display","reading","showing","trying",
   "clean","dirty","clogged","rinse","restart","power","electricity","wire",
-  "speaker","speakers","audio","sound","music","bluetooth","stereo","subwoofer","amplifier","transformer","bulb","led","light"
+  "speaker","speakers","audio","sound","music","bluetooth","stereo","subwoofer","amplifier","transformer","bulb","led","light",
+  // General how-to and airlock terms — must never fall through to Haiku validation
+  "air lock","airlock","air-lock","air lock","purge","bleed","how to","how do",
+  "clear","prime","prime the pump","trapped air","no flow","low flow","weak flow",
+  "show me","tell me","explain","walk me through","guide me","help me"
 ];
 
 // Diagnostic conversation replies that should always pass through
@@ -1915,6 +2005,8 @@ function looksSpaRelated(text) {
 
 async function haikusaysSpaRelated(text) {
   try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000); // 3s timeout — if Haiku hangs, let it through
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
@@ -1923,13 +2015,15 @@ async function haikusaysSpaRelated(text) {
         max_tokens: 10,
         system: "You are a content filter. Reply with only YES or NO. Does this message relate to hot tubs, spas, jacuzzis, pool equipment, water chemistry, or spa repair?",
         messages: [{ role: "user", content: text }]
-      })
+      }),
+      signal: controller.signal,
     });
+    clearTimeout(timeout);
     const data = await res.json();
     const reply = (data.content?.[0]?.text || "").trim().toUpperCase();
     return reply.startsWith("YES");
   } catch (e) {
-    return true; // if gate fails, let it through
+    return true; // if gate fails or times out, let it through
   }
 }
 
@@ -1947,19 +2041,33 @@ async function isValidMessage(text) {
 async function callAnthropicWithRetry(payload, maxRetries = 3) {
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     if (attempt > 0) {
-      const delay = attempt * 2000; // 2s, 4s, 6s — total max 12s well under client timeout
+      const delay = attempt * 2000;
       console.log(`[Anthropic] 429 received, retrying in ${delay}ms (attempt ${attempt}/${maxRetries})`);
       await new Promise(r => setTimeout(r, delay));
     }
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify(payload),
-    });
-    if (response.status === 429) continue; // retry
-    return response; // success or non-429 error — return as-is
+    // 25s server-side timeout — prevents silent hangs
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 25000);
+    try {
+      const response = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      if (response.status === 429) continue;
+      return response;
+    } catch (err) {
+      clearTimeout(timeout);
+      if (err.name === 'AbortError') {
+        console.error(`[Anthropic] Request timed out after 25s (attempt ${attempt})`);
+        if (attempt < maxRetries) continue;
+        return { ok: false, status: 504, json: async () => ({ error: { message: "upstream_timeout" } }) };
+      }
+      throw err;
+    }
   }
-  // All retries exhausted — return friendly water break message
   console.log(`[Anthropic] All retries exhausted after ${maxRetries} attempts`);
   return { ok: false, status: 429, json: async () => ({ error: { message: "rate_limit_exhausted" } }) };
 }
@@ -1967,7 +2075,13 @@ async function callAnthropicWithRetry(payload, maxRetries = 3) {
 
 app.post("/api/chat", async (req, res) => {
   const { messages } = req.body;
-  const isSilent = req.body.silent === true; // guide CTA sends — don't count against limits
+  const isSilent = req.body.silent === true;
+  const clientId = getClientId(req);
+  const diagStateIn = req.body.diagState || null;
+
+  // Request logging — visible in Railway Deploy Logs
+  console.log(`[/api/chat] ${new Date().toISOString()} clientId=${clientId} msgs=${messages?.length || 0}`);
+
   if (!messages || !Array.isArray(messages)) return res.status(400).json({ error: "messages array required" });
   const premiumAccess = hasPremiumAccess(req);
   const proAuth = getProAuth(req);
@@ -2002,7 +2116,6 @@ app.post("/api/chat", async (req, res) => {
   // Enforce free limits
   if (premiumAccess) {
     } else if (!isPro && !isSilent) {
-    const clientId = getClientId(req);
     const u = getUsage(clientId);
     if (u.dailyMsgs >= FREE_DAILY_MSG_LIMIT) {
       return res.status(429).json({
@@ -2026,8 +2139,25 @@ app.post("/api/chat", async (req, res) => {
 
 
 
+
+  // Build trimmed message list and inject diagnostic state block
+  // When diagnostic state exists: send only last 3 messages (massive token reduction)
+  // Otherwise: send last 6 messages
+  const hasDiagState = diagStateIn && diagStateIn.steps && diagStateIn.steps.length > 0;
+  const msgLimit = hasDiagState ? 3 : 6;
+  const trimmedMessages = messages.slice(-msgLimit);
+
+  // Build enriched system prompt with diagnostic state block prepended
+  let effectiveSystemPrompt = TEXT_SYSTEM_PROMPT;
+  if (hasDiagState) {
+    const stateBlock = buildDiagStateBlock(diagStateIn);
+    if (stateBlock) {
+      effectiveSystemPrompt = `${stateBlock}\n\n${TEXT_SYSTEM_PROMPT}`;
+    }
+  }
+
   try {
-    const response = await callAnthropicWithRetry({ model: "claude-sonnet-4-6", max_tokens: 1024, system: TEXT_SYSTEM_PROMPT, messages });
+    const response = await callAnthropicWithRetry({ model: "claude-sonnet-4-6", max_tokens: 1024, system: effectiveSystemPrompt, messages: trimmedMessages });
     const data = await response.json();
     if (!response.ok) return res.status(response.status).json({ error: data?.error?.message || "API error" });
 
@@ -2035,6 +2165,11 @@ app.post("/api/chat", async (req, res) => {
     const reply = rawReply
       .replace(/&lt;br\s*\/?&gt;/gi, "\n")
       .replace(/<br\s*\/?>/gi, "\n");
+
+    // Update diagnostic state based on Jet's response
+    const updatedDiagState = extractDiagStepFromResponse(reply, diagStateIn);
+    if (updatedDiagState) setDiagState(clientId, updatedDiagState);
+
     if (testerName) {
       const lastMsg = messages[messages.length - 1];
       if (lastMsg?.role === 'user') appendToTranscript(testerName, clientId, 'user', typeof lastMsg.content === 'string' ? lastMsg.content : '');
@@ -2042,6 +2177,7 @@ app.post("/api/chat", async (req, res) => {
     }
     res.json({
       reply,
+      diagState: updatedDiagState || diagStateIn || null,
       usage: isPro ? null : { dailyMsgs: u.dailyMsgs, dailyLimit: FREE_DAILY_MSG_LIMIT, weeklySessions: u.weeklySessions, weeklyLimit: FREE_WEEKLY_SESSION_LIMIT },
     });
   } catch (err) {
@@ -2051,19 +2187,33 @@ app.post("/api/chat", async (req, res) => {
   }
 
   // Pro path — no rate limiting, uses same retry logic as free path
+  // Build trimmed message list and inject diagnostic state block
+  const hasDiagStatePro = diagStateIn && diagStateIn.steps && diagStateIn.steps.length > 0;
+  const msgLimitPro = hasDiagStatePro ? 3 : 6;
+  const trimmedMessagesPro = messages.slice(-msgLimitPro);
+  let effectiveSystemPromptPro = TEXT_SYSTEM_PROMPT;
+  if (hasDiagStatePro) {
+    const stateBlock = buildDiagStateBlock(diagStateIn);
+    if (stateBlock) effectiveSystemPromptPro = `${stateBlock}\n\n${TEXT_SYSTEM_PROMPT}`;
+  }
+
   try {
-    const response = await callAnthropicWithRetry({ model: "claude-sonnet-4-6", max_tokens: 1024, system: TEXT_SYSTEM_PROMPT, messages });
+    const response = await callAnthropicWithRetry({ model: "claude-sonnet-4-6", max_tokens: 1024, system: effectiveSystemPromptPro, messages: trimmedMessagesPro });
     const data = await response.json();
     if (!response.ok) return res.status(response.status).json({ error: data?.error?.message || "API error" });
-    const clientId = getClientId(req);
     const rawReply = data.content?.map((b) => b.text || "").join("") || "";
     const reply = rawReply.replace(/&lt;br\s*\/?&gt;/gi, "\n").replace(/<br\s*\/?>/gi, "\n");
+
+    // Update diagnostic state
+    const updatedDiagStatePro = extractDiagStepFromResponse(reply, diagStateIn);
+    if (updatedDiagStatePro) setDiagState(clientId, updatedDiagStatePro);
+
     if (testerName) {
       const lastMsg = messages[messages.length - 1];
       if (lastMsg?.role === 'user') appendToTranscript(testerName, clientId, 'user', typeof lastMsg.content === 'string' ? lastMsg.content : '');
       appendToTranscript(testerName, clientId, 'assistant', reply);
     }
-    res.json({ reply, usage: null });
+    res.json({ reply, diagState: updatedDiagStatePro || diagStateIn || null, usage: null });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -2163,14 +2313,25 @@ Do NOT include: spa covers, test kits, chemicals, generic accessories, or any it
 CRITICAL: Return ONLY a raw JSON array. Start with [ and end with ]. No markdown, no backticks, no explanation. Keep total response under 2500 tokens.`;
 
 app.post('/api/parts-list', async (req, res) => {
-  const { year, make, model, cacheKey } = req.body;
+  const { year, make, model, cacheKey, keyPartNumbers } = req.body;
   if (!make || !model) return res.status(400).json({ error: 'make and model required' });
   const session = requireProSession(req, res);
   if (!session) return;
   const key = cacheKey || [year,make,model].join('-').toLowerCase().replace(/[^a-z0-9-]/g,'');
   if (partsCache[key]) return res.json({ parts: partsCache[key], cached: true });
   try {
-    const prompt = `Generate a concise parts list for a ${year||''} ${make} ${model} hot tub. Include only the 15 most commonly replaced parts. Return a JSON array only, no markdown fences, no explanation.`;
+    // Build OEM part numbers context if available
+    let oemContext = '';
+    if (keyPartNumbers && typeof keyPartNumbers === 'object' && Object.keys(keyPartNumbers).length > 0) {
+      const partLines = Object.entries(keyPartNumbers).map(([key, val]) => {
+        // Format: "heater_pdr_6kw: HQP-85-0131 (xref: 26-C3160-1S)"
+        const label = key.replace(/_/g, ' ');
+        return `  ${label}: ${val}`;
+      }).join('\n');
+      oemContext = `\n\nOEM PART NUMBERS FOR THIS SPA (use these exact SKUs in your output where applicable):\n${partLines}\n\nFor parts with OEM numbers: include the SKU in the part name field, e.g. "Heater element (4kW PDR) — HQP-85-8754". If the OEM data includes an xref value, add it in parentheses as "(OEM: XXXXXX)" only when it aids sourcing at other suppliers. For parts without OEM numbers, use generic descriptions as normal.`;
+    }
+
+    const prompt = `Generate a concise parts list for a ${year||''} ${make} ${model} hot tub. Include only the 15 most commonly replaced parts. Return a JSON array only, no markdown fences, no explanation.${oemContext}`;
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type':'application/json', 'x-api-key':process.env.ANTHROPIC_API_KEY, 'anthropic-version':'2023-06-01' },
@@ -2205,6 +2366,12 @@ app.post("/api/dev/reset-usage", (req, res) => {
   delete usageStore[clientId];
   console.log(`[DEV] Usage reset for ${clientId}`);
   res.json({ ok: true, message: `Usage reset for ${clientId}` });
+});
+
+// robots.txt — disallow all crawlers (this is a web app, not crawlable content)
+app.get('/robots.txt', (req, res) => {
+  res.type('text/plain');
+  res.send('User-agent: *\nDisallow: /\n');
 });
 
 const PORT = process.env.PORT || 3001;
