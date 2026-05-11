@@ -1,4 +1,4 @@
-// SpaFix Server v4.9.14a — normalize-spa/correct-spa JSON parse fix, skip haikusaysSpaRelated mid-conversation, remove pd-diagnosis endpoint, MODEL_DATA_FOUND single sentence
+// SpaFix Server v4.9.14b — Skip Haiku validation when spa context present, MODEL_DATA_NOT_FOUND no longer re-asks for spa details, Pro Diag uses standard spa template
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -653,7 +653,7 @@ NEVER output "Year: [year]", "Make: [manufacturer]", or any template fields in y
 When you receive a message starting with "My spa is a [Year Make Model]" — the client has normalized and confirmed the spa details. You MUST:
 1. Start your response with a VARIED opener — do not always say "Got it". Rotate naturally between: "Got it —", "Perfect —", "Understood —", "Thanks —", "Good to know —". Follow with "you have a **[exact year/make/model from the message]**."
 2. If "[MODEL_DATA_FOUND]" appears in the message — you MUST ALWAYS combine the spa confirmation and specs note into a single sentence: "Perfect — you have a **[exact year/make/model]** and I have detailed specs on file, which will help me give you the most relevant repair advice." NEVER repeat the spa name twice. NEVER use two separate sentences for this. This combined line is MANDATORY when MODEL_DATA_FOUND is present.
-3. If "[MODEL_DATA_NOT_FOUND]" appears AND model is known — simply confirm: "Perfect — you have a **[exact year/make/model]**." Then as a separate sentence if helpful: "I don't have specific details on file yet — if you have your owner's manual handy, tap 📎 to upload it."
+3. If "[MODEL_DATA_NOT_FOUND]" appears — spa IS confirmed, just not in our database. Simply confirm: "Got it — you have a **[exact year/make/model]**." Then proceed directly to diagnosis. Do NOT ask for spa details. Do NOT suggest entering details again. Optionally add: "I don't have specific specs on file for this model yet — if you have your manual handy, tap 📎 to upload it." but NEVER ask for year/make/model again.
 4. If model is Unknown — ask casually: "Do you happen to know the model name? It'll help me give you more specific guidance — but no worries if not, we can work through it either way." This replaces the MODEL_DATA_NOT_FOUND message when only model is unknown.
 5. If "Already tried: X" is in the message, acknowledge it briefly, fix typos, format echo as separate lines:
 Year: [year]
@@ -2111,11 +2111,14 @@ app.post("/api/chat", async (req, res) => {
     // Always allow spa detail form submissions
     const isSpaForm = content.includes('Year:') || content.includes('Make/Model:') || content.includes('Serial#:');
     const spaSubmitted = req.body.spaSubmitted === true;
-    // Bypass junk filter if: spa form submitted, spa details already provided, or conversation already in progress
-    // Skip Haiku validation whenever there's any prior exchange (assistant has already responded)
+    // Bypass junk filter if: spa form submitted, spa details already provided, conversation in progress,
+    // OR spa context header is present in messages (means spa is confirmed — definitively spa-related)
+    const hasSpaContext = messages.some(m =>
+      m.role === 'user' && typeof m.content === 'string' && m.content.startsWith('[Spa:')
+    );
     const conversationInProgress = messages.filter(m => m.role === 'user').length > 1 ||
                                    messages.some(m => m.role === 'assistant');
-    const check = (isSpaForm || spaSubmitted || conversationInProgress) ? { valid: true } : await isValidMessage(content);
+    const check = (isSpaForm || spaSubmitted || conversationInProgress || hasSpaContext) ? { valid: true } : await isValidMessage(content);
     if (!check.valid) {
       const msgs = {
         too_short: "Please describe your hot tub issue in a bit more detail.",
