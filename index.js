@@ -1,4 +1,4 @@
-// SpaFix Server v4.9.14b — Skip Haiku validation when spa context present, MODEL_DATA_NOT_FOUND no longer re-asks for spa details, Pro Diag uses standard spa template
+// SpaFix Server v4.9.14c — spaConfirmed bypass for Haiku validation, MODEL_DATA_NOT_FOUND no re-ask
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -2111,14 +2111,16 @@ app.post("/api/chat", async (req, res) => {
     // Always allow spa detail form submissions
     const isSpaForm = content.includes('Year:') || content.includes('Make/Model:') || content.includes('Serial#:');
     const spaSubmitted = req.body.spaSubmitted === true;
-    // Bypass junk filter if: spa form submitted, spa details already provided, conversation in progress,
-    // OR spa context header is present in messages (means spa is confirmed — definitively spa-related)
+    // Bypass junk filter if: spa form, spa submitted flag, conversation in progress,
+    // spa context header present, OR spa confirmed in diagState — all mean spa-related
     const hasSpaContext = messages.some(m =>
       m.role === 'user' && typeof m.content === 'string' && m.content.startsWith('[Spa:')
     );
+    const hasDiagState = !!(req.body.diagState && req.body.diagState.spa);
+    const spaConfirmed = req.body.spaConfirmed === true;
     const conversationInProgress = messages.filter(m => m.role === 'user').length > 1 ||
                                    messages.some(m => m.role === 'assistant');
-    const check = (isSpaForm || spaSubmitted || conversationInProgress || hasSpaContext) ? { valid: true } : await isValidMessage(content);
+    const check = (isSpaForm || spaSubmitted || spaConfirmed || conversationInProgress || hasSpaContext || hasDiagState) ? { valid: true } : await isValidMessage(content);
     if (!check.valid) {
       const msgs = {
         too_short: "Please describe your hot tub issue in a bit more detail.",
