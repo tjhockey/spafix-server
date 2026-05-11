@@ -1,4 +1,4 @@
-// SpaFix Server v4.9.14 — Parts table integration, Pro Diag mode, MODEL_DATA_FOUND hard rule, Step 3 one-question, general how-to bypass, control panel guide updates, error code template dynamic label
+// SpaFix Server v4.9.14a — normalize-spa/correct-spa JSON parse fix, skip haikusaysSpaRelated mid-conversation, remove pd-diagnosis endpoint, MODEL_DATA_FOUND single sentence
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -652,8 +652,8 @@ NEVER output "Year: [year]", "Make: [manufacturer]", or any template fields in y
 
 When you receive a message starting with "My spa is a [Year Make Model]" — the client has normalized and confirmed the spa details. You MUST:
 1. Start your response with a VARIED opener — do not always say "Got it". Rotate naturally between: "Got it —", "Perfect —", "Understood —", "Thanks —", "Good to know —". Follow with "you have a **[exact year/make/model from the message]**."
-2. If "[MODEL_DATA_FOUND]" appears in the message — you MUST ALWAYS include this exact line before proceeding to diagnosis: "I have detailed specs for your **[exact year/make/model]** on file, which will help me give you the most relevant repair advice." This line is MANDATORY — never skip it when MODEL_DATA_FOUND is present.
-3. If "[MODEL_DATA_NOT_FOUND]" appears AND model is known — add: "I don't have specific details on your [spa] on file yet — if you have your owner's manual handy, tap 📎 to upload it and I'll use it for more accurate guidance."
+2. If "[MODEL_DATA_FOUND]" appears in the message — you MUST ALWAYS combine the spa confirmation and specs note into a single sentence: "Perfect — you have a **[exact year/make/model]** and I have detailed specs on file, which will help me give you the most relevant repair advice." NEVER repeat the spa name twice. NEVER use two separate sentences for this. This combined line is MANDATORY when MODEL_DATA_FOUND is present.
+3. If "[MODEL_DATA_NOT_FOUND]" appears AND model is known — simply confirm: "Perfect — you have a **[exact year/make/model]**." Then as a separate sentence if helpful: "I don't have specific details on file yet — if you have your owner's manual handy, tap 📎 to upload it."
 4. If model is Unknown — ask casually: "Do you happen to know the model name? It'll help me give you more specific guidance — but no worries if not, we can work through it either way." This replaces the MODEL_DATA_NOT_FOUND message when only model is unknown.
 5. If "Already tried: X" is in the message, acknowledge it briefly, fix typos, format echo as separate lines:
 Year: [year]
@@ -1852,8 +1852,9 @@ Raw input: ${raw}`
       })
     });
     const data = await response.json();
-    const text = (data.content?.[0]?.text || '{}').replace(/```json|```/g, '').trim();
-    res.json(JSON.parse(text));
+    const raw2 = (data.content?.[0]?.text || '{}').replace(/```json|```/g, '').trim();
+    const jsonMatch = raw2.match(/\{[\s\S]*\}/);
+    res.json(JSON.parse(jsonMatch ? jsonMatch[0] : '{}'));
   } catch (err) {
     console.error('normalize-spa error:', err);
     res.json({ year: 'Unknown', make: 'Unknown', model: 'Unknown', sn: 'Unknown', normalized: null });
@@ -1881,8 +1882,9 @@ Use "Unknown" for missing fields. Raw input: ${raw}`
       })
     });
     const data = await response.json();
-    const text = (data.content?.[0]?.text || '{}').replace(/```json|```/g, '').trim();
-    res.json(JSON.parse(text));
+    const raw3 = (data.content?.[0]?.text || '{}').replace(/```json|```/g, '').trim();
+    const jsonMatch2 = raw3.match(/\{[\s\S]*\}/);
+    res.json(JSON.parse(jsonMatch2 ? jsonMatch2[0] : '{}'));
   } catch (err) {
     res.json({ year: 'Unknown', make: 'Unknown', model: 'Unknown', sn: 'Unknown', corrected: false });
   }
@@ -2109,8 +2111,10 @@ app.post("/api/chat", async (req, res) => {
     // Always allow spa detail form submissions
     const isSpaForm = content.includes('Year:') || content.includes('Make/Model:') || content.includes('Serial#:');
     const spaSubmitted = req.body.spaSubmitted === true;
-    // Bypass junk filter if: spa form submitted, spa details already provided, or conversation already in progress (2+ messages)
-    const conversationInProgress = messages.filter(m => m.role === 'user').length > 1;
+    // Bypass junk filter if: spa form submitted, spa details already provided, or conversation already in progress
+    // Skip Haiku validation whenever there's any prior exchange (assistant has already responded)
+    const conversationInProgress = messages.filter(m => m.role === 'user').length > 1 ||
+                                   messages.some(m => m.role === 'assistant');
     const check = (isSpaForm || spaSubmitted || conversationInProgress) ? { valid: true } : await isValidMessage(content);
     if (!check.valid) {
       const msgs = {
@@ -2390,34 +2394,6 @@ app.post('/api/parts-list', async (req, res) => {
     partsCache[key] = parts;
     res.json({ parts, cached: false });
   } catch(e) { console.error('Parts list error:', e.message); res.status(500).json({ error: e.message }); }
-});
-
-// Pro Diag — diagnosis checklist generation
-app.post('/api/pd-diagnosis', async (req, res) => {
-  const { year, make, model, issue, controlSystem } = req.body;
-  if (!make || !model) return res.status(400).json({ error: 'make and model required' });
-  try {
-    const spaContext = `${year||''} ${make} ${model}`.trim();
-    const issueContext = issue ? ` Reported issue: ${issue}.` : '';
-    const controlContext = controlSystem ? ` Control system: ${controlSystem}.` : '';
-    const prompt = `Generate a diagnostic checklist for a ${spaContext} hot tub.${issueContext}${controlContext} Return a JSON array of diagnostic steps. Each step must have: "step" (number), "label" (short name, max 4 words), "description" (what to check/do, max 20 words). Include 10-15 steps covering: filters, water level, pumps, flow, heating, electrical, sensors, error codes. Return ONLY a raw JSON array starting with [.`;
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'Content-Type':'application/json', 'x-api-key':process.env.ANTHROPIC_API_KEY, 'anthropic-version':'2023-06-01' },
-      body: JSON.stringify({ model:'claude-haiku-4-5-20251001', max_tokens:1500, messages:[{role:'user',content:prompt}] })
-    });
-    const data = await response.json();
-    if (!response.ok) return res.status(500).json({ error: data?.error?.message||'API error' });
-    const rawText = data.content?.map(b=>b.text||'').join('')||'';
-    const start = rawText.indexOf('[');
-    const end = rawText.lastIndexOf(']');
-    if (start === -1 || end === -1) throw new Error('No JSON array in response');
-    const steps = JSON.parse(rawText.slice(start, end + 1));
-    res.json({ steps });
-  } catch(e) {
-    console.error('PD diagnosis error:', e.message);
-    res.status(500).json({ error: e.message });
-  }
 });
 
 app.use((err, req, res, next) => {
