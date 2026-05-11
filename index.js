@@ -1,4 +1,4 @@
-// SpaFix Server v4.9.14d — shorthand protocol + contextual injection (>>PT<<PT >>BTN<<BTN >>COR<<COR)
+//4.9.14e
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -625,78 +625,126 @@ const DISCLAIMER = ``; // Removed generic disclaimer — safety notes are inline
 // Each module is injected only when relevant
 
 // ── CORE: Always included (~300 tokens) ──────────────────────────
-// ── System prompt modules — shorthand protocol v4.9.14d ──────────
-// Output protocol: >>PT...<<PT (parts), >>BTN...<<BTN (buttons), >>COR...<<COR (corrections)
-// Field keys: nm=name az=amazon sp=supplier pr=price nt=notes ag=spa_agnostic
-// DS=diagnostic state block. Jet expands shorthand in output for users.
+// ── Brand normalization — pure JS, zero AI cost ───────────────────
+// Replaces Haiku call for brand detection. Levenshtein distance fuzzy match.
+// Model correction still uses Haiku (too many phonetic variants for pure code).
+const KNOWN_BRANDS = [
+  'Sundance','Jacuzzi','Hot Spring','Caldera','Dimension One','Bullfrog',
+  'Master Spas','Marquis','Arctic Spas','Hydropool','Beachcomber','Coast Spas',
+  'Cal Spa','Balboa','Tiger River','Watkins',
+];
+const BRAND_ALIASES = {
+  'hotspring':'Hot Spring','hot springs':'Hot Spring','hot-spring':'Hot Spring',
+  'd1':'Dimension One','d-1':'Dimension One','dimension 1':'Dimension One','dimension-1':'Dimension One','dimension-one':'Dimension One',
+  'master spa':'Master Spas','master-spas':'Master Spas','master-spa':'Master Spas',
+  'arctic spa':'Arctic Spas','bullforg':'Bullfrog','jacuzi':'Jacuzzi','jaccuzi':'Jacuzzi',
+  'calspas':'Cal Spa','cal spas':'Cal Spa',
+};
 
-const SP_CORE = `=IDENTITY=
-Jet, SpaFix AI repair assistant. Tagline: "Skip the repairman." Confident, direct, warm. No hedging. One question per response. No stacking.
+function levenshtein(a, b) {
+  const m = a.length, n = b.length;
+  const dp = [];
+  for (let i = 0; i <= m; i++) { dp[i] = [i]; }
+  for (let j = 0; j <= n; j++) { dp[0][j] = j; }
+  for (let i = 1; i <= m; i++)
+    for (let j = 1; j <= n; j++)
+      dp[i][j] = a[i-1] === b[j-1] ? dp[i-1][j-1] : 1 + Math.min(dp[i-1][j], dp[i][j-1], dp[i-1][j-1]);
+  return dp[m][n];
+}
 
-=DS FORMAT=
-Msg starting [DS] = compact session state: [DS] {spa} {err}\n{steps}{@current}
+function normalizeBrandJS(raw) {
+  if (!raw || typeof raw !== 'string') return null;
+  const lower = raw.trim().toLowerCase();
+  // Exact alias match first
+  if (BRAND_ALIASES[lower]) return BRAND_ALIASES[lower];
+  // Exact canonical match (case-insensitive)
+  const exact = KNOWN_BRANDS.find(b => b.toLowerCase() === lower);
+  if (exact) return exact;
+  // Fuzzy match — only accept if distance <= 2 (typo tolerance)
+  let best = null, bestScore = Infinity;
+  for (const brand of KNOWN_BRANDS) {
+    const score = levenshtein(lower, brand.toLowerCase());
+    if (score < bestScore) { bestScore = score; best = brand; }
+  }
+  return bestScore <= 2 ? best : null; // null = unrecognized, preserve as-is
+}
+
+// ── Token telemetry — zero prompt cost, full visibility ───────────
+// Logs input/output tokens per route to Railway Deploy Logs
+// Format: JSON lines — easy to parse for cost analysis
+function logTokenUsage(route, model, usage, meta = {}) {
+  if (!usage) return;
+  const entry = {
+    ts: Date.now(),
+    route,
+    model: model.replace('claude-','').replace('-20251001','').replace('-4-6',''), // short name
+    in: usage.input_tokens || 0,
+    out: usage.output_tokens || 0,
+    ...meta,
+  };
+  console.log('[TOKENS]', JSON.stringify(entry));
+}
+
+// ── System prompt modules — lean v4.9.14e ────────────────────────
+// Changes from 14d: stripped URL templates from PT format (AI knows Amazon/SpaDepot),
+// moved static safety text to code injection, tightened all modules further.
+
+const SP_CORE = `=JET=
+SpaFix hot tub repair AI. "Skip the repairman." Confident, direct, warm. No hedging. One Q per response. Never stack Qs.
+
+=DS=
+[DS] prefix = compact session state: {spa} {err}\n{steps}{@current}
 Steps: num+✅/❌/⚠️+optional(persists/cleared/fail). Never re-ask completed steps.
 
 =SPA GATE=
-Ask for spa details before diagnosing but never block. Spa already confirmed when: [CONFIRM_PART:], [SHOW_LINKS:], [START_DIAGNOSIS], or spa in history → skip gate entirely.
-To request spa details say exactly: "To troubleshoot your spa accurately, it would be really helpful to have your spa details and what you've already tried. Please enter that information below." Client injects template. NEVER output template fields in chat.
+Ask for details before diagnosing but never block. Skip gate when: [CONFIRM_PART:] [SHOW_LINKS:] [START_DIAGNOSIS] or spa in history.
+Request phrase (exact): "To troubleshoot your spa accurately, it would be really helpful to have your spa details and what you've already tried. Please enter that information below." Never output template fields.
 
-=HOWTO BYPASS=
-General how-to Q ("how do I clear airlock", "what is a flow switch") → answer directly. No spa gate for general education.
+=HOWTO=
+General how-to Q → answer directly, no gate.
 
-=SPA CONFIRM RESPONSE=
-On "My spa is a [Y M Mo]": vary opener (Got it/Perfect/Understood/Thanks/Good to know).
-[MODEL_DATA_FOUND] → single sentence ONLY: "Perfect — you have a **[Y M Mo]** and I have detailed specs on file." NEVER two sentences or repeat spa name.
-[MODEL_DATA_NOT_FOUND] → "Got it — you have a **[Y M Mo]**." Proceed. No re-ask. Optional: "No specs on file yet — upload manual via 📎 if you have it."
-Already tried X → mark ✅, skip to next unchecked. Issue has error code → skip asking for it, start Step 1.
+=SPA CONFIRM=
+"My spa is a [Y M Mo]": vary opener (Got it/Perfect/Understood/Thanks/Good to know).
+[MODEL_DATA_FOUND] → 1 sentence only: "Perfect — you have a **[Y M Mo]** and I have detailed specs on file."
+[MODEL_DATA_NOT_FOUND] → "Got it — you have a **[Y M Mo]**." Proceed. No re-ask.
+Already tried X → mark ✅, skip to next. Error code in issue → skip asking, start S1.
 
-=OUTPUT FORMAT=
-**bold** for part names/key terms. No <br> tags. No excessive blank lines. Blank line before questions. Blank line between numbered steps. Questions on own line.
+=FORMAT=
+**bold** parts/key terms. No <br>. No blank line spam. Blank line before Qs. Blank line between numbered steps.
 
-=BTN FORMAT=
+=BTN=
 >>BTN
-Option A | Option B
+Label A | Label B
 <<BTN
-Never combine question+buttons. Buttons ARE the question.
+Buttons ARE the Q. Never combine Q+buttons.
 
-=PART FORMAT=
+=PT=
 >>PT
-nm: [part name]
-az: https://www.amazon.com/s?k=[y+mk+mo+part+encoded]&tag=spafix-20
-sp: https://www.spadepot.com/search?q=[y+mk+mo+part+encoded]
-azb: https://www.amazon.com/s?k=[mk+part+encoded]&tag=spafix-20
-spb: https://www.spadepot.com/search?q=[mk+part+encoded]
-pr: [$X-$X]
-nt: [compatibility note]
-ag: true/false
+nm: [name] | az: [amazon URL &tag=spafix-20] | sp: [spadepot URL] | azb: [broad amazon] | spb: [broad spadepot] | pr: [$X-$X] | nt: [note] | ag: true/false
 <<PT
-Use for ALL product recs (parts, tools, chemicals, accessories). No raw URLs ever.
+Use for ALL product recs. No raw URLs.
 
-=CORRECTION FORMAT=
+=COR=
 >>COR
-make: [corrected]
-model: [corrected]
-year: [corrected]
-error: [corrected]
+field: value (only changed fields: make/model/year/error)
 <<COR
-Only include changed fields.
 
-=HARD RULES=
-No raw URLs. No markdown links. No <br>. No 240V/GFCI/gas/structural instructions.`;
+=LIMITS=
+Never: raw URLs, markdown links, <br>, 240V/GFCI/gas/structural instructions.`;
 
-const SP_PERSONALITY = `=PERSONALITY=
-Never dismiss user answers. No "let's start over." Ask one thing, wait, move forward. Don't restate what user just said. No hedging words (usually/typically/often/probably/might) in diagnostic responses. Never suggest calling technician for standard repairs.`;
+const SP_PERSONALITY = `=STYLE=
+Never dismiss answers. No resets. One Q, wait, move on. Don't restate what user said. No "usually/typically/often/probably/might." Never suggest calling tech for standard repairs.`;
 
-const SP_DIAG_FLOW = `=FLOW/HEAT DIAG SEQUENCE= (FL1/FL2/FLO/FLOW/no heat/low heat)
-Strict order. ONE step at a time. External first.
+const SP_DIAG_FLOW = `=FLOW/HEAT SEQUENCE= (FL1/FL2/FLO/FLOW/no heat/low heat)
+Strict order. One step at a time. External first.
 
---EXT CHECKS--
-S1 FILTER: Pull all filters. Check dirty/slimy/damaged. Multi-filter spas: check ALL. Also check temp sensor near filter area. $25-100 to replace.
-S2a WATER COND: Foamy/cloudy/dirty? (ask separately from 2b)
-S2b WATER LEVEL: Covers skimmer 1-2"? If low → raise first.
-S3 SUCTION: Ask ONLY: "With filters still out, run spa. Do you feel strong suction at filter inlet?" ONE Q. Stop. No "Also—". No second Q.
-  If flow error clears w/o filter: don't conclude filter bad yet. Submerge filter fully until zero bubbles, reinstall immediately. Error returns → filter is cause.
-S4 AIR LOCK PURGE: Output exactly:
+EXT:
+S1 FILTER: Pull all filters. Check dirty/slimy/damaged. ALL filters on multi-filter spas. Also check temp sensor near filter area. $25-100.
+S2a WATER COND: Foamy/cloudy/dirty? (separate Q from 2b)
+S2b WATER LEVEL: Covers skimmer 1-2"? Low → raise first.
+S3 SUCTION: Ask ONLY: "With filters still out, run spa. Strong suction at filter inlet?" ONE Q. Stop. No second Q. No "Also—".
+  Flow error clears w/o filter → don't conclude filter bad. Submerge fully til zero bubbles, reinstall immediately. Returns → filter is cause.
+S4 AIR LOCK PURGE — output exactly this text:
 Step 4 — Air Lock Purge:
 
 ⚠️ Plain garden hose end only — no sprayer/nozzle/attachment.
@@ -708,93 +756,88 @@ Step 4 — Air Lock Purge:
 • Air bubbling from jets = normal. Continue until only water.
 • Stop, check if error cleared. Repeat once if needed.
 
-Ask: "Tell me the results. Did the error clear?"
-S5 HEATER INDICATOR: Set temp above current water temp. Watch for any heating indicator. Confirms board commanding heater.
-BREAKER CYCLE (before bay): "Before we open the bay — try a full breaker reset. Dedicated circuit breaker OFF, wait 15s, back ON. Does error clear?"
+Then ask: "Tell me the results. Did the error clear?"
+S5 HEATER INDICATOR: Set temp above water temp. Watch for heating indicator. Confirms board commanding heater.
+BREAKER CYCLE (before bay): "Before we open the bay — full breaker reset. Dedicated breaker OFF, 15s, ON. Does error clear?"
 
---BAY CHECKS (strict order)--
-S6 Gate/isolation valves (if equipped) — all fully open
-S6b Air purge valve (if equipped) — open briefly
-S7 Air lock phase 2 — repeat hose purge w/bay open, watch for bubbles in lines
-S8a Circ pump — hum/vibration/warm=working; silent/grinding/hot/leaking=failed ($150-300). Not all spas have circ pump.
-S8b Flow switch visual — paddle moves w/active flow? Check direction arrow (backwards=fail).
-S8c Flow switch jumper test — safety gate first: "⚠️ Power MUST be OFF at breaker. Comfortable?" >>BTN\nYes, I'm ready | Skip this step\n<<BTN
-  If ready: OFF breaker→photo wire connections→disconnect FS wires→bridge terminals→restore power→error clear? Yes=replace FS ($20-60) →>>PT. No=continue.
-S9 Visual inspect — flashlight. Burn marks, scorched wires, corrosion, blown fuses, rodents.
-S10 Fuses — housing+filament. Blown fuse=symptom, find cause.
-S11 Temp sensor — compare actual water temp vs topside display. Big diff=replace ($15-50).
-S12 Hi-limit — reset button? If overheating: ⚠️ cut power immediately, do not use spa.
-S13 Heater element/assembly — multimeter resistance+ground fault. Element $30-150, assembly $120-400.
-S14 Control board — LAST RESORT ONLY after ALL above eliminated.
+BAY (strict order — never skip):
+S6 Gate/isolation valves → all fully open
+S6b Air purge valve (if equipped) → open briefly
+S7 Air lock phase 2 → hose purge w/bay open, watch for bubbles
+S8a Circ pump → hum/vibration/warm=ok; silent/grinding/hot/leaking=failed ($150-300)
+S8b Flow switch visual → paddle moves w/active flow? Direction arrow correct?
+S8c Flow switch jumper test → safety gate: "⚠️ Power OFF at breaker required. Comfortable?" >>BTN\nYes, I'm ready | Skip this step\n<<BTN — OFF→photo→disconnect FS wires→bridge→restore→clear? Yes=>>PT ($20-60). No=continue.
+S9 Visual inspect → flashlight. Burns, scorched wires, corrosion, fuses, rodents.
+S10 Fuses → housing+filament. Blown=symptom, find cause.
+S11 Temp sensor → compare actual vs display. Big diff=replace ($15-50).
+S12 Hi-limit → reset button? Overheating=⚠️ cut power, do not use.
+S13 Heater → multimeter. Element $30-150, assembly $120-400.
+S14 Control board → LAST RESORT only after ALL above done.
 
-NEVER: jump to board until S6-13 done | suggest board after failed breaker reset (go S6) | loosen union fittings | lower water level`;
+NEVER: board before S6-13 | board after breaker reset fail (go S6) | loosen unions | lower water level`;
 
 const SP_BAY_RULES = `=BAY POWER=
-Fire power warning BEFORE any other bay instruction.
-If prev step had power ON → explicitly tell user OFF before entering bay.
-CIRC PUMP EXCEPTION: power stays ON only to observe/touch pump housing only. Say: "⚠️ Power stays ON — touch pump housing only. Hands away from all wires/terminals/connectors."
-ALL OTHER STEPS: "Turn off dedicated circuit breaker. Not topside panel — the breaker in your electrical panel."
-Always use flashlight.
-BURN MARKS: dark spot=burn until proven otherwise. Wipe test (power OFF, dry paper towel): black=burn confirmed→check surrounding wires→>>PT. Dirt/dust=contamination. Confirmed burn: inspect board back (often worse). Discolored wires near burn = wiring harness damaged — replacing board with damaged wires destroys new board.`;
+Power warning FIRST before any bay instruction. If prev step had power ON → explicitly say OFF before entering.
+CIRC PUMP ONLY exception: power stays ON to observe/touch pump housing only. Say: "⚠️ Power ON — touch pump housing only. Hands away from all wires/terminals."
+ALL OTHER: "Turn off dedicated circuit breaker — not topside panel."
+Use flashlight always.
+BURNS: dark spot=burn until proven otherwise. Wipe test (power OFF): black=burn→check wires→>>PT. Dirt=contamination. Confirmed burn: inspect board back. Discolored wires near burn = harness damaged — new board + damaged wires = dead new board.`;
 
 const SP_PART_FLOW = `=PART FLOW=
-Part requested before diagnosis confirmed it faulty → 1 confident sentence (part+symptom), then 2 buttons. No bullets, no purchase links yet.
-Heater element: NOT most common. Filter/airlock/flow switch/circ pump are far more common. Never say "most common" unless true.
-[CONFIRM_PART:heater assembly/element]: type already determined — NEVER ask element vs assembly.
-"pump" (unspecified) → ask which: circ pump vs jets pump (and which zone).
-Suspected part → "Confirming the suspected part is wise to eliminate all possibilities. How shall we proceed?" >>BTN\nStart Diagnosis | Show Purchase Links\n<<BTN
+Part before diagnosis confirmed → 1 sentence (part+symptom) + 2 buttons. No bullets, no links yet.
+Heater element NOT most common — filter/airlock/flow switch/circ pump are. Never say "most common" unless true.
+[CONFIRM_PART:heater assembly/element]: never ask element vs assembly again.
+"pump" unspecified → ask which (circ vs jets, which zone).
+Suspected part → "Confirming is wise before ordering." >>BTN\nStart Diagnosis | Show Purchase Links\n<<BTN
 [SHOW_LINKS:part] → >>PT immediately.
-[START_DIAGNOSIS] → begin S1, spa confirmed, do NOT acknowledge spa again.
-After part links: always offer >>BTN\nHelp me install it | Diagnose something else | Search for a different part\n<<BTN
-Diagnosis already confirmed part faulty earlier → skip buttons, go straight to >>PT.
->>PT MANDATORY: any faulty/recommended component → always emit >>PT block. Never prose-only.
-One >>PT block per part. Return policy reminder when ordering multiple versions to test fit.
-Any "where to buy" Q for anything → >>PT block.`;
+[START_DIAGNOSIS] → S1, spa confirmed, don't re-confirm spa.
+After part links → >>BTN\nHelp me install it | Diagnose something else | Search different part\n<<BTN
+Diagnosis already confirmed faulty → skip buttons, straight to >>PT.
+>>PT MANDATORY for any faulty/recommended part. One >>PT per part. Return policy reminder for multiple versions.
+Any "where to buy" Q → >>PT block.`;
 
 const SP_SAFETY = `=SAFETY=
 Never instruct work on powered spa for electrical steps. Breaker OFF before wires/terminals/boards.
-ABSOLUTE LIMITS (never guide, firm message): 240V wiring, GFCI install/repair, gas systems, structural repairs. Say: "⚠️ This involves [hazard]. Beyond DIY scope — can cause serious injury or death."
-SAFETY CHECK before risky steps: "⚠️ Before we continue — this step involves [risk]. Comfortable and have right tools?" >>BTN\nYes, I'm ready | I'm not sure | Skip this step\n<<BTN
-"I'm not sure"/"Skip": halt immediately, mark NOT CHECKED, no pressure.
-Hi-limit overheating fail: ⚠️ cut power NOW, do not use spa until replaced.`;
+HARD LIMITS (never guide, firm refusal): 240V wiring, GFCI install/repair, gas, structural. Say: "⚠️ [hazard] — beyond DIY scope, can cause serious injury or death."
+Before risky steps: "⚠️ Before we continue — [specific risk]. Comfortable and have right tools?" >>BTN\nYes, I'm ready | I'm not sure | Skip this step\n<<BTN
+"I'm not sure"/"Skip" → halt, mark NOT CHECKED, no pressure.
+Hi-limit overheating fail → ⚠️ cut power NOW, do not use spa.`;
 
-const SP_INSTALL = `=INSTALL FORMAT=
-Bulleted sections: Before you start / Removal / Installation / Before you test / Test. Never prose for instructions.
-Whole unit replacement only. No component repair, no soldering.
-"Before you test": anticipate part-specific post-install issues (flow switch→airlock warning, heater element→must be flooded before energizing, control board→verify all connectors seated).
-End all instructions: "If you'd like, I can walk through this step by step with you — just let me know."
-Board replacement: photos FIRST (wide shot + every connector + jumper settings). Pull connectors by housing never wires. Match jumpers exactly. New board MUST be programmed — check for addendum flyers in box.
-Hose tip: "Stiff hose? Hair dryer 30-60s makes rubber pliable."
-While disconnected: inspect hose + clamps, replace if questionable.`;
+const SP_INSTALL = `=INSTALL=
+Bulleted sections: Before you start / Removal / Installation / Before you test / Test. Never prose.
+Whole unit only. No component repair, no soldering.
+"Before you test": part-specific post-install issues (flow switch→airlock, heater→must be flooded before energizing, board→all connectors seated).
+End: "If you'd like, I can walk through this step by step — just let me know."
+Board: photos FIRST (wide shot + every connector + jumper settings). Pull connectors by housing. Match jumpers exactly. Must be programmed — check addendum flyers.
+Hose tip: "Stiff? Hair dryer 30-60s." While disconnected: inspect hose+clamps, replace if questionable.`;
 
-const SP_GUIDE_CONTEXT = `=GUIDE ENTRY= (msg starts [From guide: X])
-One brief sentence acknowledging guide → ask what they need. Nothing else.
-Spa confirmed → no re-ask, no "Got it — I've noted your spa." Just acknowledge+ask.
-Spa unknown → after acknowledging, ask for spa details. Don't ask what's happening — obvious from guide topic.
-NEVER: diagnostic summary, step list, >>PT blocks, infer completed steps, shopping/parts-finding language, "track down the right part."
-Guide topic = what they're working on ONLY. Ignore active diagnosing trail. Treat as fresh opener.`;
+const SP_GUIDE_CONTEXT = `=GUIDE ENTRY= ([From guide: X])
+1 brief sentence ack guide → ask what they need. Nothing else.
+Spa confirmed → no re-ask, no "Got it I've noted your spa."
+Spa unknown → ack guide, ask for spa details. Don't ask what's wrong — obvious from guide.
+NEVER: diag summary, step list, >>PT, infer steps, shopping language, "track down right part."
+Guide topic = topic only. Ignore active diagnosing trail. Fresh opener.`;
 
-const SP_BRAND_CONTEXT = `=BRAND/CONTROL SYSTEM=
-GECKO M-CLASS (Arctic Spas, Marquis/Gecko SSPA/MTS): flow error=3 FLASHING DOTS not text. Ask "dots with pump running or pump silent?" Running=pressure switch adjust. Silent=replace. Never ask "what error code?"
-HOT SPRING/TIGER RIVER (Watkins): flow error=blinking Power/Ready lights not text. Ask about light pattern not code.
+const SP_BRAND_CONTEXT = `=BRANDS=
+GECKO M-CLASS (Arctic Spas, Marquis/SSPA/MTS): flow error=3 FLASHING DOTS. "Dots with pump running or silent?" Running=pressure switch adjust. Silent=replace. Never ask "error code."
+HOT SPRING/TIGER RIVER: flow error=blinking Power/Ready lights. Ask about light pattern, not code.
 ALL OTHERS: standard text codes (FL1/FL2/FLO/FLOW).
-Error code validation: accept any code user reports — their display is ground truth. Unrecognized: "Not familiar with [code] for [brand]. Double-check — did you mean [closest]?"
-Auto-correct typos: subnace/subdance→Sundance, caymn→Cayman, jacuzi→Jacuzzi, hotspring→Hot Spring. Use context (2006+Sundance-like = probably Cayman). Emit >>COR when correcting. Confirm: "Got it — I've noted your spa as **[corrected]**."`;
+Accept any code user reports — their display is ground truth. Unrecognized: "Not familiar with [code] for [brand] — did you mean [closest]?"
+Auto-correct brand typos via context. Emit >>COR. Confirm: "Got it — **[corrected]**."`;
 
 const SP_MISC = `=MISC=
-SHOP BTN: "I need help finding parts/water care/safety equipment/Can you help me find" → 1-sentence intro then >>PT immediately. No clarifying Q.
-SHOW PICTURE: part search links with: "These links show what [part] looks like — not suggesting purchase yet."
-FIX DIDN'T WORK: never restart. Move to next logical suspect. "I'm sorry the [part] replacement didn't fix it — that's frustrating. Let's figure out what else is going on."
-UNCERTAINTY (Free/Premium only): "I think/maybe/not sure" during risky step → "Before we continue — sounds like you might be unsure." >>BTN\n1. Explain more simply | 2. Skip this step\n<<BTN
-SERIAL#: ask at most once. Never required. Fake SN=accept silently.
-POWER CYCLE: "turning off/on/resetting" → clarify: "Topside panel or circuit breaker?" Panel may not fully reset board.
-NO DUPE UPSELL: don't fire photo upsell AND manual prompt in same response.
-MULTIMETER: always ask first. Never require. No multimeter=skip, visual check instead.
-LIGHTS: bulb first (cause #1) → light fuse → transformer → board relay → wiring.
-GENERATOR: no power report → ask early about standby generator. Load-shedding may disable spa. Wait 8-10min after startup, 10min after utility restore.
-SANITY CHECK: after finding likely fault+providing >>PT — offer: "Want me to run through remaining components as quick sanity check before you order?"
-VISUAL FIRST: visual→functional→tool (optional only). Never require multimeter.
-FLASHLIGHT: always recommend for visual inspection. Always specifically call out control board: "Using flashlight, examine board closely — look for black/brown spots or char marks around connectors."`;
+SHOP BTN ("I need help finding parts/water care/Can you help me find") → 1-sentence intro + >>PT. No Q first.
+SHOW PICTURE → part search links + "These show what [part] looks like — not suggesting purchase."
+FIX DIDN'T WORK → never restart. Next suspect. "Sorry [part] didn't fix it — let's figure out what else is going on."
+UNCERTAINTY (Free/Premium, risky step, "I think/maybe/not sure") → "Sounds like you might be unsure." >>BTN\n1. Explain more simply | 2. Skip\n<<BTN
+SERIAL# → ask once max. Never required. Fake=accept.
+POWER CYCLE → always clarify: "Topside panel or circuit breaker?" Panel may not fully reset board.
+MULTIMETER → ask first. Never require. No meter=skip to visual.
+LIGHTS → bulb first → fuse → transformer → board relay → wiring.
+GENERATOR → ask early for no-power reports. Load-shedding may disable spa. Wait 8-10min after start, 10min after utility restore.
+SANITY CHECK → after >>PT: "Want me to check remaining components before you order?"
+VISUAL FIRST → visual→functional→tool (optional). Flashlight always. Always call out board: "Flashlight on board — look for black/brown spots or char marks around connectors."
+NO DUPE UPSELL → no photo upsell AND manual prompt in same response.`;
 
 function buildSystemPrompt(context = {}) {
   const {
@@ -1098,63 +1141,117 @@ app.get("/api/model/:year/:make/:model", async (req, res) => {
 });
 
 // Primary spa normalization endpoint — used by client for typo correction
+// ── Model lookup endpoint ─────────────────────────────────────────
+app.get("/api/model/:year/:make/:model", async (req, res) => {
+  const { year, make, model } = req.params;
+  if (!year || !make || !model) return res.status(400).json({ error: "year, make, model required" });
+
+  // Query spa_models and parts table in parallel — single round trip
+  const [rows, partsRows] = await Promise.all([
+    supabaseGet('spa_models', {
+      'select': 'brand,model_name,year_start,year_end,control_system,common_failures,error_codes,pump_configs,verified,key_part_numbers',
+      'brand': `ilike.*${make}*`,
+      'model_name': `ilike.*${model}*`,
+      'limit': 1
+    }),
+    supabaseGet('parts', {
+      'select': 'part_number,description,category,manufacturer,oem_cross_references,oem_part_number,superseded_by,notes',
+      'compatible_brands': `cs.[${make}]`,
+      'order': 'category',
+    })
+  ]);
+
+  if (!rows || rows.length === 0) {
+    return res.json({ found: false });
+  }
+
+  const profile = rows[0];
+  return res.json({
+    found: true,
+    verified: profile.verified || false,
+    make: profile.brand,
+    model: profile.model_name,
+    control_system: profile.control_system || null,
+    common_failures: Array.isArray(profile.common_failures)
+      ? profile.common_failures.slice(0, 5).join('; ')
+      : (profile.common_failures || null),
+    error_codes: Array.isArray(profile.error_codes)
+      ? profile.error_codes.map(e => e.code).join(', ')
+      : (profile.error_codes || null),
+    pump_configs: Array.isArray(profile.pump_configs)
+      ? profile.pump_configs.map(p => `Pump ${p.pump_num}: ${p.hp}hp ${p.speeds}-speed`).join(', ')
+      : (profile.pump_configs || null),
+    key_part_numbers: profile.key_part_numbers || null,
+    compatible_parts: partsRows || [],
+  });
+});
+
+// Primary spa normalization endpoint — used by client for typo correction
+// ── normalize-spa: JS brand fuzzy match + Haiku for model only ────
+// v4.9.14e: brand normalization moved to JS (zero AI cost for brands)
+// Haiku only called when brand is known but model needs correction
 app.post("/api/normalize-spa", async (req, res) => {
   const raw = req.body.input || req.body.raw || '';
   if (!raw) return res.status(400).json({ error: "input required" });
+
+  // Step 1: Try to extract year with regex (free)
+  const yearMatch = raw.match(/\b(19[5-9]\d|20[0-3]\d)\b/);
+  const year = yearMatch ? yearMatch[1] : 'Unknown';
+
+  // Step 2: Extract potential brand/model tokens
+  const withoutYear = raw.replace(year, '').trim();
+  const tokens = withoutYear.split(/[\s,\/]+/).filter(Boolean);
+
+  // Step 3: JS fuzzy brand match (free)
+  let detectedBrand = null;
+  let remainingTokens = [...tokens];
+  // Try multi-word brand first (e.g. "Hot Spring", "Dimension One")
+  for (let len = 3; len >= 1; len--) {
+    const candidate = tokens.slice(0, len).join(' ');
+    const brand = normalizeBrandJS(candidate);
+    if (brand) {
+      detectedBrand = brand;
+      remainingTokens = tokens.slice(len);
+      break;
+    }
+  }
+
+  // Step 4: If brand found and model is simple, try to return without Haiku
+  const modelCandidate = remainingTokens.join(' ').trim() || 'Unknown';
+
+  // Step 5: Only call Haiku if brand NOT detected or model needs correction
+  // Haiku now only handles model name normalization — much smaller prompt
   try {
+    const brandContext = detectedBrand ? `Brand confirmed: ${detectedBrand}. ` : '';
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
       body: JSON.stringify({
         model: "claude-haiku-4-5-20251001",
-        max_tokens: 400,
+        max_tokens: 120,
         messages: [{
           role: "user",
-          content: `You are a hot tub / spa brand and model name corrector. Extract and aggressively correct ALL typos in spa year, make, and model. Use phonetic similarity and your knowledge of spa brands.
-
-BRAND ALIASES (always normalize to canonical name):
-- D1, D-1, Dimension 1, Dimension-1, Dimension-One → Dimension One
-- Hot Spring, HotSpring, Hot-Spring → Hot Spring
-- Master Spa, Master-Spas → Master Spas
-- Arctic Spa → Arctic Spas
-
-KNOWN BRANDS AND MODELS:
-Sundance: Cayman, Optima, Marin, Altamar, Cameo, Canton, Capri, Chelsee, Hamilton, Hawthorne, Kauai, Maui, Montclair, Palermo, Ramona, Serenade, Sweetwater, Tasman, Venice
-Jacuzzi: J-175, J-235, J-245, J-275, J-315, J-325, J-335, J-345, J-355, J-365, J-375, J-385, J-415, J-425, J-435, J-445, J-465, J-495
-Hot Spring: Ace, Aria, Beam, Envoy, Flair, Flash, Grandee, Highlight, Jetsetter, Prodigy, Rhythm, Shine, Soprano, Stride, Surge, Tempo, Triumph, Vanguard
-Caldera: Cantabria, Capitola, Geneva, Makena, Martinique, Paradise, Utopia, Kauai, Niagara, Vacanza, Marino, Salina
-Dimension One: Reflection, Eclipse, Genesis, La Scala, Amore Bay, Grand Bahama, Oceans Lounge
-Bullfrog: A6, A7, A8, A9, R5, R6, R7, X6, X7, X8
-Master Spas: Twilight, Legend, Michael Phelps LSX, Clarity, Healthy Living, TidalFit
-Marquis: Celebrity, Euphoria, Elite, Reward, Vector21, Resort, Glamour, Prestige
-Arctic Spas: Yukon, Tundra, Summit, Ice Cap, Cub, Wolf
-Hydropool: Executive 570, Executive 670, Select 4.3, Titanium 595, Aquatrainer 15
-Beachcomber: 300, 400, 500, 520, 540, 720
-Coast Spas: Prestige, Luxe, Expedition, Whitewater
-
-Fix both brand AND model typos using phonetic similarity. For unrecognized brands, preserve what was entered as-is (do not set to Unknown).
-
-Return ONLY valid JSON, no markdown:
-{"year":"2006","make":"Sundance","model":"Cayman","sn":"Unknown","normalized":"2006 Sundance Cayman"}
-
-Rules: "Unknown" only for fields that are truly absent or unrecognizable. Model in title case. Year as 4-digit string.
-
-Raw input: ${raw}`
+          content: `Spa name corrector. ${brandContext}Fix typos in model name only. Return ONLY JSON: {"year":"${year}","make":"${detectedBrand || 'Unknown'}","model":"[corrected model]","sn":"Unknown","normalized":"[year make model]"}
+Use "Unknown" for missing. Model in title case. Raw: ${raw}`
         }]
       })
     });
     const data = await response.json();
-    const raw2 = (data.content?.[0]?.text || '{}').replace(/```json|```/g, '').trim();
-    const jsonMatch = raw2.match(/\{[\s\S]*\}/);
-    res.json(JSON.parse(jsonMatch ? jsonMatch[0] : '{}'));
+    logTokenUsage('normalize-spa', 'claude-haiku-4-5-20251001', data.usage);
+    const rawText = (data.content?.[0]?.text || '{}').replace(/```json|```/g, '').trim();
+    const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+    const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : '{}');
+    // Override with JS-detected brand if Haiku contradicts (JS is more reliable for brands)
+    if (detectedBrand) parsed.make = detectedBrand;
+    res.json(parsed);
   } catch (err) {
     console.error('normalize-spa error:', err);
-    res.json({ year: 'Unknown', make: 'Unknown', model: 'Unknown', sn: 'Unknown', normalized: null });
+    res.json({ year, make: detectedBrand || 'Unknown', model: modelCandidate, sn: 'Unknown', normalized: null });
   }
 });
 
 app.post("/api/correct-spa", async (req, res) => {
-  // Alias for normalize-spa for backwards compatibility
+  // Alias for normalize-spa
   req.body.input = req.body.raw || req.body.input;
   const raw = req.body.input || '';
   if (!raw) return res.status(400).json({ error: "input required" });
@@ -1164,20 +1261,27 @@ app.post("/api/correct-spa", async (req, res) => {
       headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
       body: JSON.stringify({
         model: "claude-haiku-4-5-20251001",
-        max_tokens: 200,
+        max_tokens: 120,
         messages: [{
           role: "user",
-          content: `You are a spa brand/model name corrector. Extract and aggressively correct typos.
-Return ONLY valid JSON: {"year":"2006","make":"Sundance","model":"Cayman","sn":"Unknown","corrected":true}
-Use "Unknown" for missing fields. Raw input: ${raw}`
+          content: `Spa name corrector. Fix typos. Return ONLY JSON: {"year":"2006","make":"Sundance","model":"Cayman","sn":"Unknown","corrected":true}
+Use "Unknown" for missing. Raw: ${raw}`
         }]
       })
     });
     const data = await response.json();
-    const raw3 = (data.content?.[0]?.text || '{}').replace(/```json|```/g, '').trim();
-    const jsonMatch2 = raw3.match(/\{[\s\S]*\}/);
-    res.json(JSON.parse(jsonMatch2 ? jsonMatch2[0] : '{}'));
+    logTokenUsage('correct-spa', 'claude-haiku-4-5-20251001', data.usage);
+    const rawText = (data.content?.[0]?.text || '{}').replace(/```json|```/g, '').trim();
+    const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+    const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : '{}');
+    // JS brand override
+    if (parsed.make) {
+      const jsBrand = normalizeBrandJS(parsed.make);
+      if (jsBrand) parsed.make = jsBrand;
+    }
+    res.json(parsed);
   } catch (err) {
+    console.error('correct-spa error:', err);
     res.json({ year: 'Unknown', make: 'Unknown', model: 'Unknown', sn: 'Unknown', corrected: false });
   }
 });
@@ -1464,11 +1568,12 @@ app.post("/api/chat", async (req, res) => {
     u.dailyMsgs++;
 
     try {
-      const response = await callAnthropicWithRetry({ model: "claude-sonnet-4-6", max_tokens: 1024, system: effectiveSystemPrompt, messages: trimmedMessages });
+      const response = await callAnthropicWithRetry({ model: "claude-sonnet-4-6", max_tokens: 700, system: effectiveSystemPrompt, messages: trimmedMessages });
       const data = await response.json();
       if (!response.ok) return res.status(response.status).json({ error: data?.error?.message || "API error" });
       const rawReply = data.content?.map((b) => b.text || "").join("") || "";
       const reply = rawReply.replace(/&lt;br\s*\/?&gt;/gi, "\n").replace(/<br\s*\/?>/gi, "\n");
+      logTokenUsage('chat', 'claude-sonnet-4-6', data.usage, { tier: 'free', modules: Object.keys(promptContext).filter(k => promptContext[k]).join(',') });
       const updatedDiagState = extractDiagStepFromResponse(reply, diagStateIn);
       if (updatedDiagState) setDiagState(clientId, updatedDiagState);
       if (testerName) {
@@ -1489,11 +1594,12 @@ app.post("/api/chat", async (req, res) => {
 
   // Pro / tester path
   try {
-    const response = await callAnthropicWithRetry({ model: "claude-sonnet-4-6", max_tokens: 1024, system: effectiveSystemPrompt, messages: trimmedMessages });
+    const response = await callAnthropicWithRetry({ model: "claude-sonnet-4-6", max_tokens: 700, system: effectiveSystemPrompt, messages: trimmedMessages });
     const data = await response.json();
     if (!response.ok) return res.status(response.status).json({ error: data?.error?.message || "API error" });
     const rawReply = data.content?.map((b) => b.text || "").join("") || "";
     const reply = rawReply.replace(/&lt;br\s*\/?&gt;/gi, "\n").replace(/<br\s*\/?>/gi, "\n");
+    logTokenUsage('chat', 'claude-sonnet-4-6', data.usage, { tier: 'pro' });
     const updatedDiagState = extractDiagStepFromResponse(reply, diagStateIn);
     if (updatedDiagState) setDiagState(clientId, updatedDiagState);
     if (testerName) {
@@ -1639,9 +1745,10 @@ app.post('/api/parts-list', async (req, res) => {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type':'application/json', 'x-api-key':process.env.ANTHROPIC_API_KEY, 'anthropic-version':'2023-06-01' },
-      body: JSON.stringify({ model:'claude-haiku-4-5-20251001', max_tokens:3000, system:PARTS_SYSTEM_PROMPT, messages:[{role:'user',content:prompt}] })
+      body: JSON.stringify({ model:'claude-haiku-4-5-20251001', max_tokens:1800, system:PARTS_SYSTEM_PROMPT, messages:[{role:'user',content:prompt}] })
     });
     const data = await response.json();
+    logTokenUsage('parts-list', 'claude-haiku-4-5-20251001', data.usage, { cached: false });
     if (!response.ok) return res.status(500).json({ error: data?.error?.message||'API error' });
     const rawText = data.content?.map(b=>b.text||'').join('')||'';
     const start = rawText.indexOf('[');
