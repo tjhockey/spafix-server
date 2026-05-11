@@ -1,4 +1,4 @@
-// SpaFix Server v4.9.13 — Diagnostic state block (replaces full history), server-side Anthropic timeout, request logging, OEM part numbers from Supabase, SPA_KEYWORDS expanded, haikusaysSpaRelated timeout, Step 3 one-question rule, robots.txt
+// SpaFix Server v4.9.14 — Parts table integration, Pro Diag mode, MODEL_DATA_FOUND hard rule, Step 3 one-question, general how-to bypass, control panel guide updates, error code template dynamic label
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -652,25 +652,26 @@ NEVER output "Year: [year]", "Make: [manufacturer]", or any template fields in y
 
 When you receive a message starting with "My spa is a [Year Make Model]" — the client has normalized and confirmed the spa details. You MUST:
 1. Start your response with a VARIED opener — do not always say "Got it". Rotate naturally between: "Got it —", "Perfect —", "Understood —", "Thanks —", "Good to know —". Follow with "you have a **[exact year/make/model from the message]**."
-2. If "[MODEL_DATA_FOUND]" appears in the message — add: "I have detailed specs for your **[exact year/make/model]** on file, which will help me give you the most relevant repair advice."
-3. If "[MODEL_DATA_NOT_FOUND]" appears in the message — add: "I don't have specific details on your [spa] on file yet — if you have your owner's manual handy, tap 📎 to upload it and I'll use it for more accurate guidance."
-4. If "Already tried: X" is in the message, acknowledge it briefly using clean, corrected language — fix any obvious typos (e.g. "tyb" → "tub", "watre" → "water") when echoing back what the user tried. Format the echo as separate lines matching the template structure:
+2. If "[MODEL_DATA_FOUND]" appears in the message — you MUST ALWAYS include this exact line before proceeding to diagnosis: "I have detailed specs for your **[exact year/make/model]** on file, which will help me give you the most relevant repair advice." This line is MANDATORY — never skip it when MODEL_DATA_FOUND is present.
+3. If "[MODEL_DATA_NOT_FOUND]" appears AND model is known — add: "I don't have specific details on your [spa] on file yet — if you have your owner's manual handy, tap 📎 to upload it and I'll use it for more accurate guidance."
+4. If model is Unknown — ask casually: "Do you happen to know the model name? It'll help me give you more specific guidance — but no worries if not, we can work through it either way." This replaces the MODEL_DATA_NOT_FOUND message when only model is unknown.
+5. If "Already tried: X" is in the message, acknowledge it briefly, fix typos, format echo as separate lines:
 Year: [year]
 Make/Model: [make] [model]
 Error code: [code or blank]
 Already tried: [what they tried]
 Mark those steps as ✅ done.
-5. If the message contains "Issue: Error code X" — you already have the error code. Do NOT ask what code they're seeing. Start Step 1 immediately.
-6. If the message contains "Issue: X" (non-error-code) — immediately continue diagnosing that issue. Do NOT ask "What's going on?" or "What can I help you with?"
-7. If the conversation history contains a previously stated issue (e.g. user said "I think I have an airlock issue" before entering spa details) — carry that forward. Do NOT ask what's going on if the issue was already stated earlier in the conversation.
-8. If the message also contains [CONFIRM_PART:X], immediately continue with the confirm flow for that part
-9. NEVER say "as confirmed" or "your spa as confirmed" — always echo the actual make and model
-10. NEVER ask for spa details again — they are confirmed
-11. NEVER ask "Does that look right?"
-12. NEVER ask "What's going on?" if the issue is already stated in the message or conversation history
+6. If the message contains "Issue: Error code X" — you already have the error code. Do NOT ask what code they're seeing. Start Step 1 immediately.
+7. If the message contains "Issue: X" (non-error-code) — immediately continue diagnosing that issue.
+8. If the conversation history contains a previously stated issue — carry that forward. Do NOT ask what's going on if already stated.
+9. If the message also contains [CONFIRM_PART:X], immediately continue with the confirm flow for that part
+10. NEVER say "as confirmed" or "your spa as confirmed" — always echo the actual make and model
+11. NEVER ask for spa details again — they are confirmed
+12. NEVER ask "Does that look right?" or "What's going on?" if the issue is already stated
+13. PARTIAL SPA DETAILS: when year is known but make/model unknown, ask only for what's missing
 
 MODEL NAME ACCURACY — CRITICAL:
-NEVER reference a specific model name that was not explicitly provided in the confirmed spa details of the current message. Do not infer, guess, or substitute a model name based on brand knowledge. If the confirmed spa is a "2006 Sundance Cayman", always say "Sundance Cayman" — never substitute "Sundance Sentry", "Sundance 880", or any other model. If you are uncertain of the model, omit the model name entirely rather than guessing.
+NEVER reference a specific model name not explicitly provided in confirmed spa details. Never substitute a model name based on brand knowledge.
 
 If the user can't provide details or skips them: acknowledge it, note that you'll help as best you can, and proceed normally. Never repeat the request mid-conversation unless the spa model would materially change the answer — and even then, make it a soft ask, not a gate.
 
@@ -847,11 +848,13 @@ The filters should already be out from Step 1. If they were reinstalled, ask the
 
 While the filters are out during this testing process, keep them submerged in water — do not let them dry out or trap air. They will be reinstalled after the air lock procedure is complete.
 
-STEP 3 — ONE QUESTION AT A TIME:
+STEP 3 — ONE QUESTION AT A TIME — HARD RULE:
 Ask ONLY: "With the filters still out, run the spa. Do you feel strong suction at the main filter inlet (the opening where your filter sits)?"
-Wait for the user's answer before asking anything else.
-Do NOT ask about error code clearing in the same message. That is a separate follow-up question asked AFTER the suction answer is received.
-NEVER use "Also —" to tack on a second question to a step.
+STOP. Wait for the answer.
+Do NOT ask about error code clearing in the same message.
+Do NOT add "Also —" or any second question.
+Do NOT combine two questions in one message at any step.
+ONE question per response. Always.
 
 With filters still out, run the spa and ask: "With the spa running and the filters still out, do you feel strong suction at the main filter inlet (the opening where your filter sits)? You may need to turn on the jets to get flow going."
 If user reported a flow error code: also ask if the error clears with filter removed.
@@ -1762,15 +1765,20 @@ app.get("/api/model/:year/:make/:model", async (req, res) => {
   const { year, make, model } = req.params;
   if (!year || !make || !model) return res.status(400).json({ error: "year, make, model required" });
 
-  const makeNorm = make.toLowerCase().trim();
-  const modelNorm = model.toLowerCase().trim();
-
-  const rows = await supabaseGet('spa_models', {
-    'select': 'brand,model_name,year_start,year_end,control_system,common_failures,error_codes,pump_configs,verified,key_part_numbers',
-    'brand': `ilike.*${make}*`,
-    'model_name': `ilike.*${model}*`,
-    'limit': 1
-  });
+  // Query spa_models and parts table in parallel — single round trip
+  const [rows, partsRows] = await Promise.all([
+    supabaseGet('spa_models', {
+      'select': 'brand,model_name,year_start,year_end,control_system,common_failures,error_codes,pump_configs,verified,key_part_numbers',
+      'brand': `ilike.*${make}*`,
+      'model_name': `ilike.*${model}*`,
+      'limit': 1
+    }),
+    supabaseGet('parts', {
+      'select': 'part_number,description,category,manufacturer,oem_cross_references,oem_part_number,superseded_by,notes',
+      'compatible_brands': `cs.[${make}]`,
+      'order': 'category',
+    })
+  ]);
 
   if (!rows || rows.length === 0) {
     return res.json({ found: false });
@@ -1793,6 +1801,7 @@ app.get("/api/model/:year/:make/:model", async (req, res) => {
       ? profile.pump_configs.map(p => `Pump ${p.pump_num}: ${p.hp}hp ${p.speeds}-speed`).join(', ')
       : (profile.pump_configs || null),
     key_part_numbers: profile.key_part_numbers || null,
+    compatible_parts: partsRows || [],
   });
 });
 
@@ -2313,25 +2322,40 @@ Do NOT include: spa covers, test kits, chemicals, generic accessories, or any it
 CRITICAL: Return ONLY a raw JSON array. Start with [ and end with ]. No markdown, no backticks, no explanation. Keep total response under 2500 tokens.`;
 
 app.post('/api/parts-list', async (req, res) => {
-  const { year, make, model, cacheKey, keyPartNumbers } = req.body;
+  const { year, make, model, cacheKey, keyPartNumbers, compatibleParts } = req.body;
   if (!make || !model) return res.status(400).json({ error: 'make and model required' });
   const session = requireProSession(req, res);
   if (!session) return;
   const key = cacheKey || [year,make,model].join('-').toLowerCase().replace(/[^a-z0-9-]/g,'');
   if (partsCache[key]) return res.json({ parts: partsCache[key], cached: true });
   try {
-    // Build OEM part numbers context if available
+    // Build OEM part numbers context from key_part_numbers
     let oemContext = '';
     if (keyPartNumbers && typeof keyPartNumbers === 'object' && Object.keys(keyPartNumbers).length > 0) {
-      const partLines = Object.entries(keyPartNumbers).map(([key, val]) => {
-        // Format: "heater_pdr_6kw: HQP-85-0131 (xref: 26-C3160-1S)"
-        const label = key.replace(/_/g, ' ');
+      const partLines = Object.entries(keyPartNumbers).map(([k, val]) => {
+        const label = k.replace(/_/g, ' ');
         return `  ${label}: ${val}`;
       }).join('\n');
       oemContext = `\n\nOEM PART NUMBERS FOR THIS SPA (use these exact SKUs in your output where applicable):\n${partLines}\n\nFor parts with OEM numbers: include the SKU in the part name field, e.g. "Heater element (4kW PDR) — HQP-85-8754". If the OEM data includes an xref value, add it in parentheses as "(OEM: XXXXXX)" only when it aids sourcing at other suppliers. For parts without OEM numbers, use generic descriptions as normal.`;
     }
 
-    const prompt = `Generate a concise parts list for a ${year||''} ${make} ${model} hot tub. Include only the 15 most commonly replaced parts. Return a JSON array only, no markdown fences, no explanation.${oemContext}`;
+    // Build compatible parts context from parts table
+    let partsTableContext = '';
+    if (compatibleParts && Array.isArray(compatibleParts) && compatibleParts.length > 0) {
+      const partsLines = compatibleParts.map(p => {
+        let line = `  [${p.category}] ${p.part_number}`;
+        if (p.description) line += ` — ${p.description}`;
+        if (p.manufacturer) line += ` (${p.manufacturer})`;
+        if (p.oem_part_number) line += ` OEM: ${p.oem_part_number}`;
+        if (p.oem_cross_references) line += ` xref: ${p.oem_cross_references}`;
+        if (p.superseded_by) line += ` SUPERSEDED BY: ${p.superseded_by}`;
+        if (p.notes) line += ` NOTE: ${p.notes}`;
+        return line;
+      }).join('\n');
+      partsTableContext = `\n\nVERIFIED COMPATIBLE PARTS FROM DATABASE (prioritize these over generic descriptions):\n${partsLines}\n\nFor superseded parts: show original part number AND add note "Superseded by [new] — order the newer part".\nFor parts with safety notes: include the safety note in the notes field of your JSON output.`;
+    }
+
+    const prompt = `Generate a concise parts list for a ${year||''} ${make} ${model} hot tub. Include only the 15 most commonly replaced parts. Return a JSON array only, no markdown fences, no explanation.${oemContext}${partsTableContext}`;
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type':'application/json', 'x-api-key':process.env.ANTHROPIC_API_KEY, 'anthropic-version':'2023-06-01' },
@@ -2344,9 +2368,56 @@ app.post('/api/parts-list', async (req, res) => {
     const end = rawText.lastIndexOf(']');
     if (start === -1 || end === -1) throw new Error('No JSON array found in response');
     const parts = JSON.parse(rawText.slice(start, end + 1));
+
+    // Flag parts with safety warnings from compatible_parts for UI badge rendering
+    if (compatibleParts && compatibleParts.length > 0) {
+      parts.forEach(part => {
+        const match = compatibleParts.find(cp =>
+          cp.notes && (
+            (cp.part_number && part.part_number && cp.part_number === part.part_number) ||
+            (cp.description && part.name && part.name.toLowerCase().includes(cp.description.toLowerCase().split(' ')[0]))
+          )
+        );
+        if (match && match.notes) {
+          part.safety_warning = match.notes;
+        }
+        if (match && match.superseded_by) {
+          part.superseded_by = match.superseded_by;
+        }
+      });
+    }
+
     partsCache[key] = parts;
     res.json({ parts, cached: false });
   } catch(e) { console.error('Parts list error:', e.message); res.status(500).json({ error: e.message }); }
+});
+
+// Pro Diag — diagnosis checklist generation
+app.post('/api/pd-diagnosis', async (req, res) => {
+  const { year, make, model, issue, controlSystem } = req.body;
+  if (!make || !model) return res.status(400).json({ error: 'make and model required' });
+  try {
+    const spaContext = `${year||''} ${make} ${model}`.trim();
+    const issueContext = issue ? ` Reported issue: ${issue}.` : '';
+    const controlContext = controlSystem ? ` Control system: ${controlSystem}.` : '';
+    const prompt = `Generate a diagnostic checklist for a ${spaContext} hot tub.${issueContext}${controlContext} Return a JSON array of diagnostic steps. Each step must have: "step" (number), "label" (short name, max 4 words), "description" (what to check/do, max 20 words). Include 10-15 steps covering: filters, water level, pumps, flow, heating, electrical, sensors, error codes. Return ONLY a raw JSON array starting with [.`;
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type':'application/json', 'x-api-key':process.env.ANTHROPIC_API_KEY, 'anthropic-version':'2023-06-01' },
+      body: JSON.stringify({ model:'claude-haiku-4-5-20251001', max_tokens:1500, messages:[{role:'user',content:prompt}] })
+    });
+    const data = await response.json();
+    if (!response.ok) return res.status(500).json({ error: data?.error?.message||'API error' });
+    const rawText = data.content?.map(b=>b.text||'').join('')||'';
+    const start = rawText.indexOf('[');
+    const end = rawText.lastIndexOf(']');
+    if (start === -1 || end === -1) throw new Error('No JSON array in response');
+    const steps = JSON.parse(rawText.slice(start, end + 1));
+    res.json({ steps });
+  } catch(e) {
+    console.error('PD diagnosis error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.use((err, req, res, next) => {
