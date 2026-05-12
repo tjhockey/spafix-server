@@ -1,4 +1,4 @@
-// v4.9.15
+// SpaFix Server v4.9.15a — fix: maybeNormalizeGuidedChatInput and dependencies restored
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -776,6 +776,73 @@ function detectRequestContext(messages, diagStateIn, body) {
     hasDiagState, isGuideEntry, hasSpaConfirmed, hasPartRequest,
     isEquipmentBayStep, hasInstallRequest, isFirstMessage, stepContext,
   };
+}
+
+const GUIDED_CONTEXT_PATTERNS = [
+  /\bserial number\b/i, /\bmodel number\b/i,
+  /\bwhat does (it|the label|the sticker|the plate)\s+say\b/i,
+  /\bcan you (check|look|confirm|tell|share|read|find)\b/i,
+  /\bplease (check|look|confirm|tell|share|read|find)\b/i,
+  /\bdo you (see|have|know)\b/i,
+  /\breply with\b/i, /\banswer with\b/i, /\bjust say\b/i,
+  /\byes or no\b/i, /\bwhich\b/i, /\bwhere\b/i, /\bwhat happens\b/i,
+];
+const GUIDED_SHORT_REPLY_PATTERNS = [
+  /^(yes|no|yeah|yep|nope|nah|ok|okay|done|still|maybe)$/i,
+  /^(not sure|unsure|unknown|i don'?t know|dont know)$/i,
+  /^(working|not working|heating|not heating|running|not running|tripped|reset)$/i,
+  /^[a-z0-9][a-z0-9-]{1,31}$/i,
+];
+
+function getChatInputField(body) {
+  if (!body || typeof body !== "object") return "";
+  return CHAT_INPUT_FIELDS.find((field) => typeof body[field] === "string") || "";
+}
+
+function pushTextSnippet(value, snippets) {
+  if (typeof value !== "string") return;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.startsWith("data:")) return;
+  snippets.push(trimmed.slice(0, 500));
+}
+
+function collectGuidedContext(value, snippets, depth = 0) {
+  if (!value || depth > 4) return;
+  if (typeof value === "string") { pushTextSnippet(value, snippets); return; }
+  if (Array.isArray(value)) { for (const item of value.slice(-8)) collectGuidedContext(item, snippets, depth + 1); return; }
+  if (typeof value !== "object") return;
+  const roleHints = [value.role, value.sender, value.type].filter(e => typeof e === "string");
+  const isAssistantLike = roleHints.some(e => /assistant|bot|system/i.test(e));
+  const textKeys = ["content", "text", "message", "prompt", "question", "reply"];
+  if (isAssistantLike) { for (const key of textKeys) pushTextSnippet(value[key], snippets); return; }
+  for (const key of ["assistant", "bot", "system", "lastAssistantMessage", "lastBotMessage"]) collectGuidedContext(value[key], snippets, depth + 1);
+  if (depth < 2) for (const key of ["messages", "conversation", "history", "chatHistory", "transcript"]) collectGuidedContext(value[key], snippets, depth + 1);
+}
+
+function getGuidedConversationContext(body) {
+  const snippets = [];
+  for (const key of ["messages","conversation","history","chatHistory","transcript","assistantMessage","lastAssistantMessage","lastBotMessage","botMessage"]) collectGuidedContext(body?.[key], snippets);
+  return snippets.slice(-6).join("\n");
+}
+
+function isShortGuidedReply(text) {
+  const trimmed = typeof text === "string" ? text.trim() : "";
+  if (!trimmed || trimmed.length > 40) return false;
+  if (GUIDED_SHORT_REPLY_PATTERNS.some(p => p.test(trimmed))) return true;
+  return trimmed.split(/\s+/).length <= 4 && /^[a-z0-9\s-]+$/i.test(trimmed);
+}
+
+function maybeNormalizeGuidedChatInput(req, res, next) {
+  const field = getChatInputField(req.body);
+  if (!field) return next();
+  const original = req.body[field].trim();
+  if (!isShortGuidedReply(original)) return next();
+  const guidedContext = getGuidedConversationContext(req.body);
+  if (!guidedContext) return next();
+  if (!GUIDED_CONTEXT_PATTERNS.some(p => p.test(guidedContext))) return next();
+  req.body.originalUserMessage = req.body.originalUserMessage || original;
+  req.body[field] = `Spa troubleshooting follow-up reply: ${original}`;
+  return next();
 }
 
 app.use("/api/chat", chatRateLimiter, maybeNormalizeGuidedChatInput);
