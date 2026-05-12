@@ -1,4 +1,4 @@
-// v4.9.15b
+// v4.9.15c
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -753,7 +753,12 @@ LIGHTS → bulb first → fuse → transformer → board relay → wiring.
 GENERATOR → ask early for no-power reports. Wait 8-10min after start, 10min after utility restore.
 SANITY CHECK → after >>PT: "Want me to check remaining components before you order?"
 VISUAL FIRST → visual→functional→tool (optional). Flashlight always. Board: "look for black/brown spots or char marks around connectors."
-NO DUPE UPSELL → no photo upsell AND manual prompt in same response.`;
+NO DUPE UPSELL → no photo upsell AND manual prompt in same response.
+AIRLOCK HOW-TO: any general question about clearing/purging an airlock → emit [FIRE:AIRLOCK_PURGE] then ask "Did that clear it up?"
+DIAG PROGRESS: user asks to "show all steps", "show diagnostic list", "what steps are left", or "go back to step X" →
+  Show numbered list of all 14 steps with status: ✅ passed, ❌ failed (but diagnosis continues), ⏳ not yet tested.
+  Format: "S1 ✅ Filter condition", "S2a ⏳ Water condition", etc.
+  User can say "go back to step 3" → re-execute that step, signal [SKIP] for current and set state back.`;
 
 function buildSystemPrompt(context = {}) {
   const { hasDiagState, isGuideEntry, hasSpaConfirmed, hasPartRequest, isEquipmentBayStep, hasInstallRequest, isFirstMessage, stepContext } = context;
@@ -1113,6 +1118,11 @@ Use "Unknown" for missing. Model in title case. Raw: ${raw}`
     const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : '{}');
     // Override with JS-detected brand if Haiku contradicts (JS is more reliable for brands)
     if (detectedBrand) parsed.make = detectedBrand;
+    // Sanitize: strip any leaked pipe-delimited key:value text from fields
+    const sanitizeField = v => typeof v === 'string' ? v.split(/\s*[|•]\s*/)[0].replace(/^\w+:\s*/, '').trim() : v;
+    parsed.make = sanitizeField(parsed.make);
+    parsed.model = sanitizeField(parsed.model);
+    parsed.year = sanitizeField(parsed.year);
     res.json(parsed);
   } catch (err) {
     console.error('normalize-spa error:', err);
@@ -1405,6 +1415,10 @@ app.post("/api/chat", async (req, res) => {
     const cleanReply = rawReply
       .replace(/\[ADVANCE:[A-Z0-9a-z]+\]/g, '')
       .replace(/\[SKIP:[A-Z0-9a-z]+\]/g, '')
+      .replace(/^\[DS\][\s\S]*?(?=\n[A-Z]|\n[a-z]|\nGot|\nPerfect|\nUnderstood|\nThanks|\nGood)/m, '') // strip leaked DS block
+      .replace(/^\{[^}]*\}\s*\n/gm, '')       // strip any {curly brace} leaked tokens
+      .replace(/^=CURRENT STEP=[\s\S]*?(?=\n\n|\n[A-Z])/m, '') // strip leaked step context
+      .replace(/^S\d+@current\s*/m, '')        // strip leaked step marker
       .replace(/&lt;br\s*\/?&gt;/gi, "\n")
       .replace(/<br\s*\/?>/gi, "\n");
     const reply = applyFireTemplates(cleanReply).trim();
