@@ -1,4 +1,4 @@
-// SpaFix Server v4.9.15a — fix: maybeNormalizeGuidedChatInput and dependencies restored
+// v4.9.15b
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -466,12 +466,36 @@ const FREE_WEEKLY_SESSION_LIMIT = 3; // sessions per week
 // In production, replace with Redis or a database
 const usageStore = {}; // key: clientId, value: { dailyMsgs, dailyDate, weeklySessions, weekStart, sessionActive }
 
-// ── Diagnostic state store ────────────────────────────────────────
-// Compact per-client diagnostic state — replaces sending full history to Anthropic
-// Stores completed steps and current context so only last 3 messages need to be sent
-// ── FIRE templates — static text injected by server, never by AI ──
-// Jet emits [FIRE:KEY] anywhere in response. Server substitutes full text.
-// Zero prompt tokens for these blocks.
+function getClientId(req) {
+  return req.headers["x-forwarded-for"]?.split(",")[0].trim() || req.socket.remoteAddress || "unknown";
+}
+function getWeekStart(date = new Date()) {
+  const d = new Date(date); d.setHours(0,0,0,0); d.setDate(d.getDate()-d.getDay()); return d.toISOString().split("T")[0];
+}
+function getTodayStr() { return new Date().toISOString().split("T")[0]; }
+function resetDailyIfNeeded(u) {
+  if (!u) return u;
+  const today = getTodayStr(), weekStart = getWeekStart();
+  if (u.dailyDate !== today) { u.dailyMsgs = 0; u.dailyDate = today; u.sessionActive = false; }
+  if (u.weekStart !== weekStart) { u.weeklySessions = 0; u.weekStart = weekStart; u.sessionActive = false; }
+  return u;
+}
+function getUsage(clientId) {
+  if (!usageStore[clientId]) usageStore[clientId] = { dailyMsgs:0, dailyDate:getTodayStr(), weeklySessions:0, weekStart:getWeekStart(), sessionActive:false };
+  return resetDailyIfNeeded(usageStore[clientId]);
+}
+function checkFreeLimits(clientId) {
+  const u = getUsage(clientId);
+  if (!u.sessionActive) {
+    if (u.weeklySessions >= FREE_WEEKLY_SESSION_LIMIT) return { allowed:false, reason:"weekly_sessions", message:`You've used all ${FREE_WEEKLY_SESSION_LIMIT} free sessions this week. Sessions reset every Sunday, or upgrade to Premium for unlimited access.` };
+    u.weeklySessions++; u.sessionActive = true; u.dailyMsgs = 0;
+  }
+  if (u.dailyMsgs >= FREE_DAILY_MSG_LIMIT) return { allowed:false, reason:"daily_messages", message:`You've reached the ${FREE_DAILY_MSG_LIMIT} message limit for today. Come back tomorrow, or upgrade to Premium for unlimited messages.` };
+  return { allowed:true };
+}
+const DISCLAIMER = ``;
+
+// ── FIRE templates — server-side static text, zero prompt tokens ──
 const FIRE_TEMPLATES = {
   AIRLOCK_PURGE: `Step 4 — Air Lock Purge:
 
@@ -494,29 +518,26 @@ const FIRE_TEMPLATES = {
 };
 
 // ── Diagnostic step definitions — state machine ───────────────────
-// Jet receives only the CURRENT step def + last user answer.
-// Jet signals [ADVANCE:Sx] to move forward, [SKIP:Sx] to skip.
-// Server manages sequence — Jet only reasons about one step at a time.
 const DIAG_STEPS = {
-  S1:  { id:'S1',  next:'S2a', label:'Filter condition',       prompt:'Ask user to pull all filters and check for dirt, slime, or damage. Multi-filter spas: check ALL. $25-100 to replace.' },
-  S2a: { id:'S2a', next:'S2b', label:'Water condition',        prompt:'Ask: is the water foamy, cloudy, or visibly dirty?' },
-  S2b: { id:'S2b', next:'S3',  label:'Water level',            prompt:'Ask: does the water cover the skimmer opening by 1-2 inches? If low, raise it before continuing.' },
-  S3:  { id:'S3',  next:'S4',  label:'Suction test',           prompt:'Filters still out. Ask ONLY: "With the filters still out, run the spa. Do you feel strong suction at the filter inlet?" ONE question. Stop. If flow error clears without filter — submerge filter fully until zero bubbles, reinstall immediately. If error returns after reinstall → filter is the cause, emit >>PT for filter. Otherwise continue.' },
-  S4:  { id:'S4',  next:'S5',  label:'Air lock purge',         prompt:'Tell user to perform the air lock purge procedure. Emit [FIRE:AIRLOCK_PURGE]. Then ask: "Tell me the results — did the error clear?"' },
-  S5:  { id:'S5',  next:'BREAKER', label:'Heater indicator',   prompt:'Ask user to set temp above current water temp and watch for any heating indicator (light, flame symbol, or "Heat"). This confirms the control board is commanding the heater.' },
-  BREAKER: { id:'BREAKER', next:'S6', label:'Breaker reset',   prompt:'Emit [FIRE:BREAKER_RESET] then ask if the error clears after reset.' },
-  S6:  { id:'S6',  next:'S6b', label:'Gate valves',            prompt:'Emit [FIRE:BAY_ENTRY]. Then ask: are all gate or isolation valves (if equipped) fully open? These are the round handles on the plumbing lines.' },
-  S6b: { id:'S6b', next:'S7',  label:'Air purge valve',        prompt:'If equipped, ask user to briefly open the air purge valve to release any trapped air.' },
-  S7:  { id:'S7',  next:'S8a', label:'Air lock phase 2',       prompt:'Repeat the hose purge procedure with the bay open. Watch for air bubbles in the lines.' },
-  S8a: { id:'S8a', next:'S8b', label:'Circ pump',              prompt:'Emit [FIRE:CIRC_PUMP_POWER]. Ask user to feel the circ pump housing — hum/vibration/warm = working. Silent/grinding/hot/leaking = failed ($150-300). Note: not all spas have a dedicated circ pump.' },
-  S8b: { id:'S8b', next:'S8c', label:'Flow switch visual',     prompt:'Ask user to check the flow switch paddle — does it move freely with active flow? Also check the direction arrow on the body (backwards = won\'t work).' },
-  S8c: { id:'S8c', next:'S9',  label:'Flow switch jumper',     prompt:'Emit [FIRE:FS_JUMPER_GATE] then confirm user is comfortable: >>BTN\nYes, I\'m ready | Skip this step\n<<BTN. If ready: power OFF at breaker → photograph wire connections → disconnect flow switch wires → bridge the terminals → restore power → does error clear? Yes = replace flow switch ($20-60) → >>PT. No = continue.' },
-  S9:  { id:'S9',  next:'S10', label:'Visual inspection',      prompt:'Ask user to use a flashlight throughout the equipment bay. Look for burn marks, scorched wires, corrosion on boards, blown fuses, or rodent damage. Specifically: "Using a flashlight, examine the control board closely — look for any black or brown spots or char marks around connectors."' },
-  S10: { id:'S10', next:'S11', label:'Fuses',                  prompt:'Ask user to inspect all fuses — check both the housing and the filament inside. A blown fuse is a symptom, not the root cause — help identify what caused it.' },
-  S11: { id:'S11', next:'S12', label:'Temp sensor',            prompt:'Ask user to compare the actual water temperature (thermometer or feel) against the topside display reading. A significant difference = replace the temp sensor ($15-50).' },
-  S12: { id:'S12', next:'S13', label:'Hi-limit sensor',        prompt:'Ask user to check for a reset button on the hi-limit sensor and press it if present. If the spa is overheating: ⚠️ cut power immediately and do not use until replaced.' },
-  S13: { id:'S13', next:'S14', label:'Heater element',         prompt:'Multimeter test: resistance and ground fault. Element $30-150, assembly $120-400. Ask if user has a multimeter first — if not, skip to visual check of heater assembly for corrosion/burn marks.' },
-  S14: { id:'S14', next:null,  label:'Control board',          prompt:'LAST RESORT — only reached after ALL previous steps completed/skipped. Present control board diagnosis and >>PT.' },
+  S1:      { id:'S1',      next:'S2a',    label:'Filter condition',     prompt:'Ask user to pull all filters and check for dirt, slime, or damage. Multi-filter spas: check ALL. Also check temp sensor near filter area. $25-100 to replace.' },
+  S2a:     { id:'S2a',    next:'S2b',    label:'Water condition',       prompt:'Ask: is the water foamy, cloudy, or visibly dirty?' },
+  S2b:     { id:'S2b',    next:'S3',     label:'Water level',           prompt:'Ask: does the water cover the skimmer opening by 1-2 inches? If low, raise it before continuing.' },
+  S3:      { id:'S3',     next:'S4',     label:'Suction test',          prompt:'Filters still out. Ask ONLY: "With the filters still out, run the spa. Do you feel strong suction at the filter inlet?" ONE question. Stop. If flow error clears without filter — submerge filter fully until zero bubbles, reinstall immediately. If error returns after reinstall → filter is the cause → emit >>PT for filter. Otherwise continue.' },
+  S4:      { id:'S4',     next:'S5',     label:'Air lock purge',        prompt:'Tell user to perform the air lock purge. Emit [FIRE:AIRLOCK_PURGE]. Then ask: "Tell me the results — did the error clear?"' },
+  S5:      { id:'S5',     next:'BREAKER',label:'Heater indicator',      prompt:'Ask user to set temp above current water temp and watch for any heating indicator (light, flame symbol, or "Heat"). Confirms control board is commanding the heater.' },
+  BREAKER: { id:'BREAKER',next:'S6',     label:'Breaker reset',         prompt:'Emit [FIRE:BREAKER_RESET] then ask if the error clears after reset.' },
+  S6:      { id:'S6',     next:'S6b',    label:'Gate valves',           prompt:'Emit [FIRE:BAY_ENTRY]. Then ask: are all gate or isolation valves (if equipped) fully open?' },
+  S6b:     { id:'S6b',   next:'S7',     label:'Air purge valve',       prompt:'If equipped, ask user to briefly open the air purge valve to release any trapped air.' },
+  S7:      { id:'S7',     next:'S8a',    label:'Air lock phase 2',      prompt:'Repeat the hose purge with the bay open. Watch for air bubbles in the lines.' },
+  S8a:     { id:'S8a',   next:'S8b',    label:'Circ pump',             prompt:'Emit [FIRE:CIRC_PUMP_POWER]. Ask user to feel the circ pump housing — hum/vibration/warm=working; silent/grinding/hot/leaking=failed ($150-300). Not all spas have a dedicated circ pump.' },
+  S8b:     { id:'S8b',   next:'S8c',    label:'Flow switch visual',    prompt:'Ask user to check the flow switch paddle — does it move freely with active flow? Check the direction arrow on the body (backwards = will not work).' },
+  S8c:     { id:'S8c',   next:'S9',     label:'Flow switch jumper',    prompt:'Emit [FIRE:FS_JUMPER_GATE] then confirm user is comfortable: >>BTN\nYes, I\'m ready | Skip this step\n<<BTN. If ready: power OFF → photograph wire connections → disconnect FS wires → bridge terminals → restore power → error clear? Yes=replace FS ($20-60)→>>PT. No=continue.' },
+  S9:      { id:'S9',     next:'S10',    label:'Visual inspection',     prompt:'Ask user to use a flashlight throughout the bay. Look for burn marks, scorched wires, corrosion, blown fuses, rodent damage. Specifically call out board: "Using a flashlight, examine the control board closely — look for any black or brown spots or char marks around connectors."' },
+  S10:     { id:'S10',   next:'S11',    label:'Fuses',                 prompt:'Ask user to inspect all fuses — housing and filament. Blown fuse = symptom, find the cause.' },
+  S11:     { id:'S11',   next:'S12',    label:'Temp sensor',           prompt:'Ask user to compare actual water temp against topside display. Significant difference = replace ($15-50).' },
+  S12:     { id:'S12',   next:'S13',    label:'Hi-limit sensor',       prompt:'Ask user to check for a reset button on the hi-limit and press it if present. If spa is overheating: ⚠️ cut power immediately, do not use until replaced.' },
+  S13:     { id:'S13',   next:'S14',    label:'Heater element',        prompt:'Multimeter test: resistance and ground fault. Element $30-150, assembly $120-400. Ask if user has a multimeter first — if not, skip to visual check for corrosion/burn marks.' },
+  S14:     { id:'S14',   next:null,     label:'Control board',         prompt:'LAST RESORT — only after ALL previous steps completed/skipped. Present control board diagnosis and >>PT.' },
 };
 
 // ── Diag state store ──────────────────────────────────────────────
@@ -525,11 +546,9 @@ const diagStateStore = {};
 function getDiagState(clientId) {
   return diagStateStore[clientId] || null;
 }
-
 function setDiagState(clientId, state) {
   diagStateStore[clientId] = { ...state, lastUpdated: Date.now() };
 }
-
 function clearDiagState(clientId) {
   delete diagStateStore[clientId];
 }
@@ -547,50 +566,34 @@ function buildDiagStateBlock(state) {
   return `[DS] ${spa}${err}\n${steps}${current}`;
 }
 
-// Advance diag state based on Jet's [ADVANCE:Sx] or [SKIP:Sx] signals
 function processDiagSignals(reply, clientId) {
   const state = getDiagState(clientId);
   if (!state) return null;
-
   const advanceMatch = reply.match(/\[ADVANCE:([A-Z0-9a-z]+)\]/);
   const skipMatch = reply.match(/\[SKIP:([A-Z0-9a-z]+)\]/);
-
   if (advanceMatch || skipMatch) {
     const completedId = (advanceMatch || skipMatch)[1].toUpperCase();
     const step = DIAG_STEPS[completedId];
     if (step) {
-      // Mark step complete in history
       if (!state.steps) state.steps = [];
       const existing = state.steps.find(s => s.id === completedId);
       if (!existing) {
-        state.steps.push({
-          id: completedId,
-          label: step.label,
-          passed: !!advanceMatch,
-          skipped: !!skipMatch,
-        });
+        state.steps.push({ id: completedId, label: step.label, passed: !!advanceMatch, skipped: !!skipMatch });
       } else {
         existing.passed = !!advanceMatch;
         existing.skipped = !!skipMatch;
       }
-      // Set next step
       state.currentStep = step.next || null;
       setDiagState(clientId, state);
     }
   }
-
-  // Also detect [FIRE:] for logging — no state change needed
   return getDiagState(clientId);
 }
 
-// Substitute [FIRE:KEY] tokens in Jet's reply with full template text
 function applyFireTemplates(reply) {
-  return reply.replace(/\[FIRE:([A-Z0-9_]+)\]/g, (match, key) => {
-    return FIRE_TEMPLATES[key] || match; // leave unknown keys intact
-  });
+  return reply.replace(/\[FIRE:([A-Z0-9_]+)\]/g, (match, key) => FIRE_TEMPLATES[key] || match);
 }
 
-// Build the current-step context block to inject into system prompt
 function buildStepContext(state) {
   if (!state || !state.currentStep) return null;
   const step = DIAG_STEPS[state.currentStep];
@@ -600,9 +603,40 @@ function buildStepContext(state) {
 Step: ${step.id} — ${step.label}
 Task: ${step.prompt}
 Signal [ADVANCE:${step.id}] when user's answer clears this step.
-Signal [SKIP:${step.id}] if user skips or can't perform this step.
+Signal [SKIP:${step.id}] if user skips or cannot perform this step.
 ${nextStep ? `Next: ${step.next} — ${nextStep.label}` : 'This is the final step.'}
 NEVER move forward without emitting [ADVANCE:${step.id}] or [SKIP:${step.id}].`;
+}
+
+// ── Token telemetry ───────────────────────────────────────────────
+function logTokenUsage(route, model, usage, meta = {}) {
+  if (!usage) return;
+  const entry = { ts: Date.now(), route, model: model.replace('claude-','').replace('-20251001','').replace('-4-6',''), in: usage.input_tokens || 0, out: usage.output_tokens || 0, ...meta };
+  console.log('[TOKENS]', JSON.stringify(entry));
+}
+
+// ── Brand normalization — pure JS, zero AI cost ───────────────────
+const KNOWN_BRANDS = ['Sundance','Jacuzzi','Hot Spring','Caldera','Dimension One','Bullfrog','Master Spas','Marquis','Arctic Spas','Hydropool','Beachcomber','Coast Spas','Cal Spa','Balboa','Tiger River','Watkins'];
+const BRAND_ALIASES = { 'hotspring':'Hot Spring','hot springs':'Hot Spring','hot-spring':'Hot Spring','d1':'Dimension One','d-1':'Dimension One','dimension 1':'Dimension One','dimension-1':'Dimension One','dimension-one':'Dimension One','master spa':'Master Spas','master-spas':'Master Spas','master-spa':'Master Spas','arctic spa':'Arctic Spas','bullforg':'Bullfrog','jacuzi':'Jacuzzi','jaccuzi':'Jacuzzi','calspas':'Cal Spa','cal spas':'Cal Spa' };
+
+function levenshtein(a, b) {
+  const m = a.length, n = b.length;
+  const dp = [];
+  for (let i = 0; i <= m; i++) { dp[i] = [i]; }
+  for (let j = 0; j <= n; j++) { dp[0][j] = j; }
+  for (let i = 1; i <= m; i++) for (let j = 1; j <= n; j++) dp[i][j] = a[i-1]===b[j-1] ? dp[i-1][j-1] : 1+Math.min(dp[i-1][j],dp[i][j-1],dp[i-1][j-1]);
+  return dp[m][n];
+}
+
+function normalizeBrandJS(raw) {
+  if (!raw || typeof raw !== 'string') return null;
+  const lower = raw.trim().toLowerCase();
+  if (BRAND_ALIASES[lower]) return BRAND_ALIASES[lower];
+  const exact = KNOWN_BRANDS.find(b => b.toLowerCase() === lower);
+  if (exact) return exact;
+  let best = null, bestScore = Infinity;
+  for (const brand of KNOWN_BRANDS) { const score = levenshtein(lower, brand.toLowerCase()); if (score < bestScore) { bestScore = score; best = brand; } }
+  return bestScore <= 2 ? best : null;
 }
 
 // ── System prompt modules — v4.9.15 ──────────────────────────────
@@ -652,8 +686,6 @@ Never: raw URLs, markdown links, <br>, 240V/GFCI/gas/structural instructions.`;
 const SP_PERSONALITY = `=STYLE=
 Never dismiss answers. No resets. One Q, wait, move on. Don't restate what user said. No "usually/typically/often/probably/might." Never suggest calling tech for standard repairs.`;
 
-// SP_DIAG_FLOW now only contains rules + never-violate list.
-// Step-by-step content lives in DIAG_STEPS and is injected per-step via buildStepContext().
 const SP_DIAG_FLOW = `=DIAG FLOW=
 Flow/heat errors (FL1/FL2/FLO/FLOW/no heat/low heat): follow step sequence exactly.
 App tracks current step and injects =CURRENT STEP= block. Execute that step only.
@@ -723,13 +755,8 @@ SANITY CHECK → after >>PT: "Want me to check remaining components before you o
 VISUAL FIRST → visual→functional→tool (optional). Flashlight always. Board: "look for black/brown spots or char marks around connectors."
 NO DUPE UPSELL → no photo upsell AND manual prompt in same response.`;
 
-// ── buildSystemPrompt — assembles modules per request context ─────
 function buildSystemPrompt(context = {}) {
-  const {
-    hasDiagState, isGuideEntry, hasSpaConfirmed, hasPartRequest,
-    isEquipmentBayStep, hasInstallRequest, isFirstMessage, stepContext,
-  } = context;
-
+  const { hasDiagState, isGuideEntry, hasSpaConfirmed, hasPartRequest, isEquipmentBayStep, hasInstallRequest, isFirstMessage, stepContext } = context;
   const modules = [SP_CORE];
   if (isFirstMessage || !hasSpaConfirmed) modules.push(SP_PERSONALITY);
   if (hasDiagState || hasSpaConfirmed) modules.push(SP_DIAG_FLOW);
@@ -740,10 +767,7 @@ function buildSystemPrompt(context = {}) {
   if (isGuideEntry) modules.push(SP_GUIDE_CONTEXT);
   if (hasSpaConfirmed || hasDiagState) modules.push(SP_BRAND_CONTEXT);
   if (!hasDiagState) modules.push(SP_MISC);
-
-  // Inject current step definition last — highest specificity
   if (stepContext) modules.push(stepContext);
-
   return modules.join('\n\n');
 }
 
@@ -751,41 +775,76 @@ function detectRequestContext(messages, diagStateIn, body) {
   const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
   const content = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : '';
   const assistantExists = messages.some(m => m.role === 'assistant');
-
   const isGuideEntry = content.startsWith('[From guide:');
   const hasPartRequest = /\[(CONFIRM_PART|SHOW_LINKS|START_DIAGNOSIS)/i.test(content);
   const hasDiagState = !!(diagStateIn && diagStateIn.steps && diagStateIn.steps.length > 0);
-  const hasSpaConfirmed = body.spaConfirmed === true ||
-    messages.some(m => m.role === 'user' && typeof m.content === 'string' && (m.content.startsWith('[Spa:') || m.content.startsWith('My spa is a ')));
+  const hasSpaConfirmed = body.spaConfirmed === true || messages.some(m => m.role === 'user' && typeof m.content === 'string' && (m.content.startsWith('[Spa:') || m.content.startsWith('My spa is a ')));
   const bayKeywords = /step\s*(6|7|8|9|10|11|12|13|14)|equipment bay|circ pump|flow switch|fuse|control board|heater element|hi.limit|temp sensor/i;
   const isEquipmentBayStep = hasDiagState || bayKeywords.test(content);
   const installKeywords = /install|replace|how (do|to) (replace|install|swap|remove)/i;
   const hasInstallRequest = installKeywords.test(content);
   const isFirstMessage = messages.filter(m => m.role === 'user').length <= 1 && !assistantExists;
-
-  // Build step context if we're in an active diagnostic
   let stepContext = null;
   if (diagStateIn && diagStateIn.currentStep) {
     stepContext = buildStepContext(diagStateIn);
   } else if (!diagStateIn && (hasSpaConfirmed || body.startDiagnosis)) {
-    // Fresh start — inject S1
     stepContext = buildStepContext({ currentStep: 'S1' });
   }
-
-  return {
-    hasDiagState, isGuideEntry, hasSpaConfirmed, hasPartRequest,
-    isEquipmentBayStep, hasInstallRequest, isFirstMessage, stepContext,
-  };
+  return { hasDiagState, isGuideEntry, hasSpaConfirmed, hasPartRequest, isEquipmentBayStep, hasInstallRequest, isFirstMessage, stepContext };
 }
 
+
+const PHOTO_SYSTEM_PROMPT = `You are Jet, SpaFix's expert hot tub and spa repair assistant with deep knowledge of hot tub parts, components, and repair.
+
+The user has uploaded a photo of a hot tub part or issue. Your job is to:
+
+1. IDENTIFY what part or issue is shown in the image. Be specific (e.g. "Balboa 2-speed pump", "diverter valve", "topside control panel", "jet body insert", "heater element", etc.)
+2. DIAGNOSE the visible problem if any (corrosion, cracks, worn seals, burnt components, scale buildup, etc.)
+3. RECOMMEND the fix — explain clearly what needs to be done
+4. SUGGEST REPLACEMENT PARTS using this exact format for each part:
+
+---PART_RECOMMENDATION---
+name: [exact part name]
+amazon_url: https://www.amazon.com/s?k=[url+encoded+part+name]&tag=spafix-20
+supplier_url: https://www.spadepot.com/search?q=[url+encoded+part+name]
+easy_spa_parts_url: https://www.easyspaparts.com/shop/?s=[url+encoded+part+name]
+easy_spa_parts_broad_url: https://www.easyspaparts.com/shop/?s=[make+url+encoded+part+name]
+price_range: [$XX - $XX typical price range]
+notes: [compatibility notes or what to look for when buying]
+---END_PART---
+
+After your diagnosis, note whether this is DIY-friendly or requires a professional.
+Use **bold** for part names and important warnings.
+${DISCLAIMER}`;
+
+const DOCUMENT_SUMMARY_PROMPT = `You are Jet, SpaFix's expert hot tub and spa repair assistant.
+
+The user has uploaded a document — it may be a user manual, parts list, service history, troubleshooting notes, or similar.
+
+Your job is to:
+1. Identify what type of document this is
+2. Extract the most useful information: hot tub make/model, error codes mentioned, parts already replaced, recent issues, warranty info
+3. Give a brief friendly summary (3-5 sentences) of what you found and how it will help
+4. Note specific details that will be especially useful going forward
+
+Keep the tone conversational. Use **bold** for the hot tub model name and key findings.`;
+
+// ── Routes ───────────────────────────────────────────────────────
+const CHAT_INPUT_FIELDS = ["message", "text", "prompt", "input", "query"];
 const GUIDED_CONTEXT_PATTERNS = [
-  /\bserial number\b/i, /\bmodel number\b/i,
+  /\bserial number\b/i,
+  /\bmodel number\b/i,
   /\bwhat does (it|the label|the sticker|the plate)\s+say\b/i,
   /\bcan you (check|look|confirm|tell|share|read|find)\b/i,
   /\bplease (check|look|confirm|tell|share|read|find)\b/i,
   /\bdo you (see|have|know)\b/i,
-  /\breply with\b/i, /\banswer with\b/i, /\bjust say\b/i,
-  /\byes or no\b/i, /\bwhich\b/i, /\bwhere\b/i, /\bwhat happens\b/i,
+  /\breply with\b/i,
+  /\banswer with\b/i,
+  /\bjust say\b/i,
+  /\byes or no\b/i,
+  /\bwhich\b/i,
+  /\bwhere\b/i,
+  /\bwhat happens\b/i,
 ];
 const GUIDED_SHORT_REPLY_PATTERNS = [
   /^(yes|no|yeah|yep|nope|nah|ok|okay|done|still|maybe)$/i,
@@ -808,38 +867,72 @@ function pushTextSnippet(value, snippets) {
 
 function collectGuidedContext(value, snippets, depth = 0) {
   if (!value || depth > 4) return;
-  if (typeof value === "string") { pushTextSnippet(value, snippets); return; }
-  if (Array.isArray(value)) { for (const item of value.slice(-8)) collectGuidedContext(item, snippets, depth + 1); return; }
+  if (typeof value === "string") {
+    pushTextSnippet(value, snippets);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value.slice(-8)) collectGuidedContext(item, snippets, depth + 1);
+    return;
+  }
   if (typeof value !== "object") return;
-  const roleHints = [value.role, value.sender, value.type].filter(e => typeof e === "string");
-  const isAssistantLike = roleHints.some(e => /assistant|bot|system/i.test(e));
+
+  const roleHints = [value.role, value.sender, value.type].filter((entry) => typeof entry === "string");
+  const isAssistantLike = roleHints.some((entry) => /assistant|bot|system/i.test(entry));
   const textKeys = ["content", "text", "message", "prompt", "question", "reply"];
-  if (isAssistantLike) { for (const key of textKeys) pushTextSnippet(value[key], snippets); return; }
-  for (const key of ["assistant", "bot", "system", "lastAssistantMessage", "lastBotMessage"]) collectGuidedContext(value[key], snippets, depth + 1);
-  if (depth < 2) for (const key of ["messages", "conversation", "history", "chatHistory", "transcript"]) collectGuidedContext(value[key], snippets, depth + 1);
+
+  if (isAssistantLike) {
+    for (const key of textKeys) pushTextSnippet(value[key], snippets);
+    return;
+  }
+
+  for (const key of ["assistant", "bot", "system", "lastAssistantMessage", "lastBotMessage"]) {
+    collectGuidedContext(value[key], snippets, depth + 1);
+  }
+
+  if (depth < 2) {
+    for (const key of ["messages", "conversation", "history", "chatHistory", "transcript"]) {
+      collectGuidedContext(value[key], snippets, depth + 1);
+    }
+  }
 }
 
 function getGuidedConversationContext(body) {
   const snippets = [];
-  for (const key of ["messages","conversation","history","chatHistory","transcript","assistantMessage","lastAssistantMessage","lastBotMessage","botMessage"]) collectGuidedContext(body?.[key], snippets);
+  for (const key of [
+    "messages",
+    "conversation",
+    "history",
+    "chatHistory",
+    "transcript",
+    "assistantMessage",
+    "lastAssistantMessage",
+    "lastBotMessage",
+    "botMessage",
+  ]) {
+    collectGuidedContext(body?.[key], snippets);
+  }
   return snippets.slice(-6).join("\n");
 }
 
 function isShortGuidedReply(text) {
   const trimmed = typeof text === "string" ? text.trim() : "";
   if (!trimmed || trimmed.length > 40) return false;
-  if (GUIDED_SHORT_REPLY_PATTERNS.some(p => p.test(trimmed))) return true;
+  if (GUIDED_SHORT_REPLY_PATTERNS.some((pattern) => pattern.test(trimmed))) return true;
   return trimmed.split(/\s+/).length <= 4 && /^[a-z0-9\s-]+$/i.test(trimmed);
 }
 
 function maybeNormalizeGuidedChatInput(req, res, next) {
   const field = getChatInputField(req.body);
   if (!field) return next();
+
   const original = req.body[field].trim();
   if (!isShortGuidedReply(original)) return next();
+
   const guidedContext = getGuidedConversationContext(req.body);
   if (!guidedContext) return next();
-  if (!GUIDED_CONTEXT_PATTERNS.some(p => p.test(guidedContext))) return next();
+  if (!GUIDED_CONTEXT_PATTERNS.some((pattern) => pattern.test(guidedContext))) return next();
+
   req.body.originalUserMessage = req.body.originalUserMessage || original;
   req.body[field] = `Spa troubleshooting follow-up reply: ${original}`;
   return next();
@@ -1276,7 +1369,6 @@ app.post("/api/chat", async (req, res) => {
   const isPro = !!proAuth.session || premiumAccess;
   const testerName = proAuth.session?.testerName || null;
 
-  // Validate last user message
   const lastMsg = messages[messages.length - 1];
   if (lastMsg?.role === "user") {
     const rawContent = typeof lastMsg.content === "string" ? lastMsg.content : "";
@@ -1287,9 +1379,7 @@ app.post("/api/chat", async (req, res) => {
     const hasDiagState = !!(diagStateIn && diagStateIn.spa);
     const spaConfirmed = req.body.spaConfirmed === true;
     const conversationInProgress = messages.filter(m => m.role === 'user').length > 1 || messages.some(m => m.role === 'assistant');
-    const check = (isSpaForm || spaSubmitted || spaConfirmed || conversationInProgress || hasSpaContext || hasDiagState)
-      ? { valid: true }
-      : await isValidMessage(content);
+    const check = (isSpaForm || spaSubmitted || spaConfirmed || conversationInProgress || hasSpaContext || hasDiagState) ? { valid: true } : await isValidMessage(content);
     if (!check.valid) {
       const msgs = { too_short: "Please describe your hot tub issue in a bit more detail.", too_long: "Your message is too long — please keep it under 2,000 characters.", off_topic: "SpaFix can only help with hot tub and spa questions. Please describe your spa issue and I'll be happy to help!" };
       return res.status(400).json({ error: msgs[check.reason] || "Please ask a spa-related question." });
@@ -1298,11 +1388,9 @@ app.post("/api/chat", async (req, res) => {
 
   const promptContext = detectRequestContext(messages, diagStateIn, req.body);
   const systemPrompt = buildSystemPrompt(promptContext);
-
   const hasDiagStateActive = diagStateIn && diagStateIn.steps && diagStateIn.steps.length > 0;
   const msgLimit = hasDiagStateActive ? 3 : 6;
   const trimmedMessages = messages.slice(-msgLimit);
-
   let effectiveSystemPrompt = systemPrompt;
   if (hasDiagStateActive) {
     const stateBlock = buildDiagStateBlock(diagStateIn);
@@ -1314,7 +1402,6 @@ app.post("/api/chat", async (req, res) => {
     const data = await response.json();
     if (!response.ok) throw new Error(data?.error?.message || "API error");
     const rawReply = data.content?.map(b => b.text || "").join("") || "";
-    // Strip internal signals from user-facing reply, apply FIRE templates
     const cleanReply = rawReply
       .replace(/\[ADVANCE:[A-Z0-9a-z]+\]/g, '')
       .replace(/\[SKIP:[A-Z0-9a-z]+\]/g, '')
@@ -1322,7 +1409,6 @@ app.post("/api/chat", async (req, res) => {
       .replace(/<br\s*\/?>/gi, "\n");
     const reply = applyFireTemplates(cleanReply).trim();
     logTokenUsage('chat', 'claude-sonnet-4-6', data.usage, { tier });
-    // Process state machine signals from raw reply (before stripping)
     const updatedDiagState = processDiagSignals(rawReply, clientId);
     if (testerName) {
       const lm = messages[messages.length - 1];
@@ -1333,10 +1419,8 @@ app.post("/api/chat", async (req, res) => {
   }
 
   if (premiumAccess) {
-    try {
-      const { reply, diagState } = await callAndProcess('admin');
-      res.json({ reply, diagState, usage: null });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    try { const { reply, diagState } = await callAndProcess('admin'); res.json({ reply, diagState, usage: null }); }
+    catch (err) { res.status(500).json({ error: err.message }); }
     return;
   }
 
@@ -1353,19 +1437,16 @@ app.post("/api/chat", async (req, res) => {
       u.sessionActive = true;
     }
     u.dailyMsgs++;
-    try {
-      const { reply, diagState } = await callAndProcess('free');
-      res.json({ reply, diagState, usage: { dailyMsgs: u.dailyMsgs, dailyLimit: FREE_DAILY_MSG_LIMIT, weeklySessions: u.weeklySessions, weeklyLimit: FREE_WEEKLY_SESSION_LIMIT } });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    try { const { reply, diagState } = await callAndProcess('free'); res.json({ reply, diagState, usage: { dailyMsgs: u.dailyMsgs, dailyLimit: FREE_DAILY_MSG_LIMIT, weeklySessions: u.weeklySessions, weeklyLimit: FREE_WEEKLY_SESSION_LIMIT } }); }
+    catch (err) { res.status(500).json({ error: err.message }); }
     return;
   }
 
-  // Pro / tester
-  try {
-    const { reply, diagState } = await callAndProcess('pro');
-    res.json({ reply, diagState, usage: null });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  try { const { reply, diagState } = await callAndProcess('pro'); res.json({ reply, diagState, usage: null }); }
+  catch (err) { res.status(500).json({ error: err.message }); }
 });
+
+
 
 app.post("/api/analyze-photo", async (req, res) => {
   const { imageBase64, mediaType, messages } = req.body;
