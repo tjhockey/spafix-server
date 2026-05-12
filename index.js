@@ -1,4 +1,4 @@
-// 4.9.15d
+// 4.9.15e
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -520,9 +520,9 @@ const FIRE_TEMPLATES = {
 // ── Diagnostic step definitions — state machine ───────────────────
 const DIAG_STEPS = {
   S1:      { id:'S1',      next:'S2a',    label:'Filter condition',     prompt:'Ask user to pull all filters and check for dirt, slime, or damage. Multi-filter spas: check ALL. Also check temp sensor near filter area. $25-100 to replace.' },
-  S2a:     { id:'S2a',    next:'S2b',    label:'Water condition',       prompt:'Ask: is the water foamy, cloudy, or visibly dirty?' },
-  S2b:     { id:'S2b',    next:'S3',     label:'Water level',           prompt:'Ask: does the water cover the skimmer opening by 1-2 inches? If low, raise it before continuing.' },
-  S3:      { id:'S3',     next:'S4',     label:'Suction test',          prompt:'Filters still out. Ask ONLY: "With the filters still out, run the spa. Do you feel strong suction at the filter inlet?" ONE question. Stop. If flow error clears without filter — submerge filter fully until zero bubbles, reinstall immediately. If error returns after reinstall → filter is the cause → emit >>PT for filter. Otherwise continue.' },
+  S2a:     { id:'S2a',    next:'S2b',    label:'Water condition',       prompt:'Ask ONLY this one question: "Is the water foamy, cloudy, or visibly dirty?" Nothing else. Wait for answer.' },
+  S2b:     { id:'S2b',    next:'S3',     label:'Water level',           prompt:'Ask ONLY this one question: "Does the water cover the skimmer opening by 1-2 inches?" If user says low → tell them to raise it and signal [ADVANCE:S2b]. Nothing else. No water chemistry questions.' },
+  S3:      { id:'S3',     next:'S4',     label:'Suction test',          prompt:'Ask ONLY: "With the filters still out, run the spa. Do you feel strong suction at the filter inlet?" ONE question only. No follow-up. No additional checks. Wait for answer. If flow error clears without filter: submerge filter fully until zero bubbles, reinstall immediately — if error returns → filter is cause → >>PT. Otherwise [ADVANCE:S3].' },
   S4:      { id:'S4',     next:'S5',     label:'Air lock purge',        prompt:'Tell user to perform the air lock purge. Emit [FIRE:AIRLOCK_PURGE]. Then ask: "Tell me the results — did the error clear?"' },
   S5:      { id:'S5',     next:'BREAKER',label:'Heater indicator',      prompt:'Ask user to set temp above current water temp and watch for any heating indicator (light, flame symbol, or "Heat"). Confirms control board is commanding the heater.' },
   BREAKER: { id:'BREAKER',next:'S6',     label:'Breaker reset',         prompt:'Emit [FIRE:BREAKER_RESET] then ask if the error clears after reset.' },
@@ -567,7 +567,7 @@ function buildDiagStateBlock(state) {
 }
 
 function processDiagSignals(reply, clientId) {
-  const state = getDiagState(clientId);
+  let state = getDiagState(clientId);
   if (!state) return null;
   const advanceMatch = reply.match(/\[ADVANCE:([A-Z0-9a-z]+)\]/);
   const skipMatch = reply.match(/\[SKIP:([A-Z0-9a-z]+)\]/);
@@ -772,6 +772,7 @@ function buildSystemPrompt(context = {}) {
   if (isGuideEntry) modules.push(SP_GUIDE_CONTEXT);
   if (hasSpaConfirmed || hasDiagState) modules.push(SP_BRAND_CONTEXT);
   if (!hasDiagState) modules.push(SP_MISC);
+  // SP_MISC excluded during active diagnosis — saves ~271 tokens, Jet stays on-script
   if (stepContext) modules.push(stepContext);
   return modules.join('\n\n');
 }
@@ -1106,7 +1107,7 @@ app.post("/api/normalize-spa", async (req, res) => {
         max_tokens: 120,
         messages: [{
           role: "user",
-          content: `Spa name corrector. ${brandContext}Fix typos in model name only. Return ONLY JSON: {"year":"${year}","make":"${detectedBrand || 'Unknown'}","model":"[corrected model]","sn":"Unknown","normalized":"[year make model]"}
+          content: `Spa name corrector. ${brandContext}Fix ALL typos using phonetic similarity — e.g. "calmans"→"Cayman", "caymn"→"Cayman", "optama"→"Optima", "grandee"→"Grandee". Return ONLY JSON: {"year":"${year}","make":"${detectedBrand || 'Unknown'}","model":"[corrected model]","sn":"Unknown","normalized":"[year make model]"}
 Use "Unknown" for missing. Model in title case. Raw: ${raw}`
         }]
       })
@@ -1368,6 +1369,27 @@ app.post("/api/chat", async (req, res) => {
   const clientId = getClientId(req);
   const diagStateIn = req.body.diagState || getDiagState(clientId) || null;
 
+  // Initialize diagState when diagnosis starts (START_DIAGNOSIS or spa form + issue)
+  const lastMsgContent = typeof messages[messages.length-1]?.content === 'string' ? messages[messages.length-1].content : '';
+  const isStartDiagnosis = lastMsgContent.includes('[START_DIAGNOSIS]') ||
+    (lastMsgContent.includes('Please start the diagnostic sequence') && lastMsgContent.includes('My spa is a ')) ||
+    (lastMsgContent.includes('Issue:') && lastMsgContent.includes('My spa is a '));
+
+  if (isStartDiagnosis && !diagStateIn) {
+    // Build spa label — prefer explicit fields sent by client, fall back to message parsing
+    const spaYear = req.body.spaYear || '';
+    const spaMake = req.body.spaMake || '';
+    const spaModel = req.body.spaModel || '';
+    let spaLabel = [spaYear, spaMake, spaModel].filter(v => v && v !== 'Unknown').join(' ');
+    if (!spaLabel) {
+      const spaMatch = lastMsgContent.match(/My spa is a ([^.]+?)(?:\.|\s+Issue:|\s+I've)/);
+      spaLabel = spaMatch ? spaMatch[1].trim() : 'Unknown';
+    }
+    const errMatch = lastMsgContent.match(/Error code(?:[^:]*)?:\s*([A-Z0-9]+)/i);
+    const newState = { spa: spaLabel, errorCode: errMatch ? errMatch[1] : null, steps: [], currentStep: 'S1', lastUpdated: Date.now() };
+    setDiagState(clientId, newState);
+  }
+
   console.log(`[/api/chat] ${new Date().toISOString()} clientId=${clientId} msgs=${messages?.length || 0} step=${diagStateIn?.currentStep || 'none'}`);
 
   if (!messages || !Array.isArray(messages)) return res.status(400).json({ error: "messages array required" });
@@ -1415,10 +1437,13 @@ app.post("/api/chat", async (req, res) => {
     const cleanReply = rawReply
       .replace(/\[ADVANCE:[A-Z0-9a-z]+\]/g, '')
       .replace(/\[SKIP:[A-Z0-9a-z]+\]/g, '')
-      .replace(/^\[DS\][\s\S]*?(?=\n[A-Z]|\n[a-z]|\nGot|\nPerfect|\nUnderstood|\nThanks|\nGood)/m, '') // strip leaked DS block
-      .replace(/^\{[^}]*\}\s*\n/gm, '')       // strip any {curly brace} leaked tokens
-      .replace(/^=CURRENT STEP=[\s\S]*?(?=\n\n|\n[A-Z])/m, '') // strip leaked step context
-      .replace(/^S\d+@current\s*/m, '')        // strip leaked step marker
+      // Strip all DS/step leak formats
+      .replace(/^\[DS\][^\n]*\n[^\n]*\n?/m, '')
+      .replace(/^\[DS\][^\n]*\n?/m, '')
+      .replace(/^(?:S\d+[a-z]?[\u2705\u274C\u23F3][^|\n]*\|?\s*)+@?\S*\n?/m, '')
+      .replace(/^\{[^}]*\}\s*\n/gm, '')
+      .replace(/^=CURRENT STEP=[\s\S]*?(?=\n[A-Z\u{1F300}-\u{1F9FF}]|\n[a-z])/mu, '')
+      .replace(/\[DS\][^\n]*/g, '')
       .replace(/&lt;br\s*\/?&gt;/gi, "\n")
       .replace(/<br\s*\/?>/gi, "\n");
     const reply = applyFireTemplates(cleanReply).trim();
