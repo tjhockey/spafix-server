@@ -1,4 +1,4 @@
-// 4.9.15e
+// 4.9.15f
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -566,9 +566,22 @@ function buildDiagStateBlock(state) {
   return `[DS] ${spa}${err}\n${steps}${current}`;
 }
 
-function processDiagSignals(reply, clientId) {
+function processDiagSignals(reply, clientId, incomingMsg) {
   let state = getDiagState(clientId);
   if (!state) return null;
+
+  // Handle step jump — sync server state before processing reply signals
+  if (incomingMsg) {
+    const jumpMatch = typeof incomingMsg === 'string' ? incomingMsg.match(/User jumped to step ([A-Z0-9a-z]+)/) : null;
+    if (jumpMatch) {
+      const jumpId = jumpMatch[1].toUpperCase();
+      if (DIAG_STEPS[jumpId]) {
+        state.currentStep = jumpId;
+        setDiagState(clientId, state);
+      }
+    }
+  }
+
   const advanceMatch = reply.match(/\[ADVANCE:([A-Z0-9a-z]+)\]/);
   const skipMatch = reply.match(/\[SKIP:([A-Z0-9a-z]+)\]/);
   if (advanceMatch || skipMatch) {
@@ -1424,6 +1437,17 @@ app.post("/api/chat", async (req, res) => {
   const msgLimit = hasDiagStateActive ? 3 : 6;
   const trimmedMessages = messages.slice(-msgLimit);
   let effectiveSystemPrompt = systemPrompt;
+
+  // Inject confirmed spa details so Jet never re-asks for info already on file
+  const spaYearVal = req.body.spaYear || '';
+  const spaMakeVal = req.body.spaMake || '';
+  const spaModelVal = req.body.spaModel || '';
+  const hasConfirmedSpaDetails = (spaYearVal || spaMakeVal) && spaMakeVal !== 'Unknown';
+  if (hasConfirmedSpaDetails) {
+    const spaLine = [spaYearVal, spaMakeVal, spaModelVal].filter(v => v && v !== 'Unknown').join(' ');
+    effectiveSystemPrompt = `=SPA ON FILE= User's spa is confirmed: ${spaLine}. DO NOT ask for spa year, make, or model — already known.\n\n` + effectiveSystemPrompt;
+  }
+
   if (hasDiagStateActive) {
     const stateBlock = buildDiagStateBlock(diagStateIn);
     if (stateBlock) effectiveSystemPrompt = `${stateBlock}\n\n${systemPrompt}`;
@@ -1448,7 +1472,7 @@ app.post("/api/chat", async (req, res) => {
       .replace(/<br\s*\/?>/gi, "\n");
     const reply = applyFireTemplates(cleanReply).trim();
     logTokenUsage('chat', 'claude-sonnet-4-6', data.usage, { tier });
-    const updatedDiagState = processDiagSignals(rawReply, clientId);
+    const updatedDiagState = processDiagSignals(rawReply, clientId, lastMsgContent);
     if (testerName) {
       const lm = messages[messages.length - 1];
       if (lm?.role === 'user') appendToTranscript(testerName, clientId, 'user', typeof lm.content === 'string' ? lm.content : '');
