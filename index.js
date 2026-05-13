@@ -1,4 +1,4 @@
-// 4.9.15f
+// 4.9.15m
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -497,47 +497,49 @@ const DISCLAIMER = ``;
 
 // ── FIRE templates — server-side static text, zero prompt tokens ──
 const FIRE_TEMPLATES = {
-  AIRLOCK_PURGE: `Step 4 — Air Lock Purge:
+  'F:AP': `Step 5 — Air Lock Purge:
 
-⚠️ Plain garden hose end only — no sprayer, nozzle, or attachment.
+⚠️ Be sure to only use a plain garden hose for these steps — no sprayer, nozzle or attachments. Forcing pressurized air or a hard stream can damage internal components.
 
-• With filter(s) out, perform the following steps...
-• Wrap a towel around the plain hose end to seal it against the filter inlet.
-• Turn the water on fully and wait until only water (no air) comes out the hose end.
-• Press the hose and towel firmly over the filter inlet and force water through for 30–60 seconds.
-• Air bubbling up from the jets is normal — keep going until only water flows.
-• Stop and check if the error has cleared. Repeat once more if needed.`,
+1. Wrap a towel around the end of a plain garden hose to create a seal against the filter inlet opening.
+2. Have someone turn the water on fully and wait until only water (no air) is coming out of the hose end.
+3. Press the hose and towel firmly over the filter inlet and force water through for 30–60 seconds.
+4. You may see air bubbling up from the jets — that's normal. Keep going until only water flows with no bubbles.
+5. Stop and check if the error has cleared.
+6. If not cleared, repeat once more.`,
 
-  BREAKER_RESET: `Before we go further — try a full breaker reset. Find the dedicated circuit breaker for your spa (not the topside panel) and flip it OFF. Wait 15 seconds, then flip it back ON.`,
+  'F:BR': `Before we go further — try a full breaker reset. Find the dedicated circuit breaker for your spa (not the topside panel) and flip it OFF. Wait 15 seconds, then flip it back ON.`,
 
-  BAY_ENTRY: `Before we open the equipment bay — turn off the dedicated circuit breaker. Not the topside panel button — the breaker in your electrical panel. The topside button does not fully cut power to the components inside.`,
+  'F:BE': `Before we open the equipment bay — turn off the dedicated circuit breaker. Not the topside panel button — the breaker in your electrical panel. The topside button does not fully cut power to the components inside.`,
 
-  CIRC_PUMP_POWER: `⚠️ Power stays ON for this step — touch the pump housing only. Keep hands completely away from all wires, terminals, and connectors.`,
+  'F:CP': `⚠️ Power stays ON for this step — touch the pump housing only. Keep hands completely away from all wires, terminals, and connectors.`,
 
-  FS_JUMPER_GATE: `⚠️ Power MUST be OFF at the breaker before this step — not just the topside panel.`,
+  'F:FJ': `⚠️ Power MUST be OFF at the breaker before this step — not just the topside panel.`,
 };
 
 // ── Diagnostic step definitions — state machine ───────────────────
+// Default rule (set in SP_DIAG_RULES): output the step question word-for-word, nothing else.
+// Steps only note exceptions to the default.
 const DIAG_STEPS = {
-  S1:      { id:'S1',      next:'S2a',    label:'Filter condition',     prompt:'Ask user to pull all filters and check for dirt, slime, or damage. Multi-filter spas: check ALL. Also check temp sensor near filter area. $25-100 to replace.' },
-  S2a:     { id:'S2a',    next:'S2b',    label:'Water condition',       prompt:'Ask ONLY this one question: "Is the water foamy, cloudy, or visibly dirty?" Nothing else. Wait for answer.' },
-  S2b:     { id:'S2b',    next:'S3',     label:'Water level',           prompt:'Ask ONLY this one question: "Does the water cover the skimmer opening by 1-2 inches?" If user says low → tell them to raise it and signal [ADVANCE:S2b]. Nothing else. No water chemistry questions.' },
-  S3:      { id:'S3',     next:'S4',     label:'Suction test',          prompt:'Ask ONLY: "With the filters still out, run the spa. Do you feel strong suction at the filter inlet?" ONE question only. No follow-up. No additional checks. Wait for answer. If flow error clears without filter: submerge filter fully until zero bubbles, reinstall immediately — if error returns → filter is cause → >>PT. Otherwise [ADVANCE:S3].' },
-  S4:      { id:'S4',     next:'S5',     label:'Air lock purge',        prompt:'Tell user to perform the air lock purge. Emit [FIRE:AIRLOCK_PURGE]. Then ask: "Tell me the results — did the error clear?"' },
-  S5:      { id:'S5',     next:'BREAKER',label:'Heater indicator',      prompt:'Ask user to set temp above current water temp and watch for any heating indicator (light, flame symbol, or "Heat"). Confirms control board is commanding the heater.' },
-  BREAKER: { id:'BREAKER',next:'S6',     label:'Breaker reset',         prompt:'Emit [FIRE:BREAKER_RESET] then ask if the error clears after reset.' },
-  S6:      { id:'S6',     next:'S6b',    label:'Gate valves',           prompt:'Emit [FIRE:BAY_ENTRY]. Then ask: are all gate or isolation valves (if equipped) fully open?' },
-  S6b:     { id:'S6b',   next:'S7',     label:'Air purge valve',       prompt:'If equipped, ask user to briefly open the air purge valve to release any trapped air.' },
-  S7:      { id:'S7',     next:'S8a',    label:'Air lock phase 2',      prompt:'Repeat the hose purge with the bay open. Watch for air bubbles in the lines.' },
-  S8a:     { id:'S8a',   next:'S8b',    label:'Circ pump',             prompt:'Emit [FIRE:CIRC_PUMP_POWER]. Ask user to feel the circ pump housing — hum/vibration/warm=working; silent/grinding/hot/leaking=failed ($150-300). Not all spas have a dedicated circ pump.' },
-  S8b:     { id:'S8b',   next:'S8c',    label:'Flow switch visual',    prompt:'Ask user to check the flow switch paddle — does it move freely with active flow? Check the direction arrow on the body (backwards = will not work).' },
-  S8c:     { id:'S8c',   next:'S9',     label:'Flow switch jumper',    prompt:'Emit [FIRE:FS_JUMPER_GATE] then confirm user is comfortable: >>BTN\nYes, I\'m ready | Skip this step\n<<BTN. If ready: power OFF → photograph wire connections → disconnect FS wires → bridge terminals → restore power → error clear? Yes=replace FS ($20-60)→>>PT. No=continue.' },
-  S9:      { id:'S9',     next:'S10',    label:'Visual inspection',     prompt:'Ask user to use a flashlight throughout the bay. Look for burn marks, scorched wires, corrosion, blown fuses, rodent damage. Specifically call out board: "Using a flashlight, examine the control board closely — look for any black or brown spots or char marks around connectors."' },
-  S10:     { id:'S10',   next:'S11',    label:'Fuses',                 prompt:'Ask user to inspect all fuses — housing and filament. Blown fuse = symptom, find the cause.' },
-  S11:     { id:'S11',   next:'S12',    label:'Temp sensor',           prompt:'Ask user to compare actual water temp against topside display. Significant difference = replace ($15-50).' },
-  S12:     { id:'S12',   next:'S13',    label:'Hi-limit sensor',       prompt:'Ask user to check for a reset button on the hi-limit and press it if present. If spa is overheating: ⚠️ cut power immediately, do not use until replaced.' },
-  S13:     { id:'S13',   next:'S14',    label:'Heater element',        prompt:'Multimeter test: resistance and ground fault. Element $30-150, assembly $120-400. Ask if user has a multimeter first — if not, skip to visual check for corrosion/burn marks.' },
-  S14:     { id:'S14',   next:null,     label:'Control board',         prompt:'LAST RESORT — only after ALL previous steps completed/skipped. Present control board diagnosis and >>PT.' },
+  S1:      { id:'S1',      next:'S2a',    label:'Filter condition',     prompt:'"Pull all your filters out and take a look at them. Are they visibly dirty, slimy, or damaged?" [A:S1] if ok. Dirty/damaged → >>PT filter.' },
+  S2a:     { id:'S2a',    next:'S2b',    label:'Water condition',       prompt:'"Is the water foamy, cloudy, or visibly dirty?" [A:S2a] either way.' },
+  S2b:     { id:'S2b',    next:'S3',     label:'Water level',           prompt:'"Does the water cover the skimmer opening by at least an inch?" If low → tell them to top up → [A:S2b]. If fine → [A:S2b].' },
+  S3:      { id:'S3',     next:'S4',     label:'Suction test',          prompt:'"With the filters still out, run the spa. Do you feel strong suction at the filter inlet?" [A:S3] if yes. If error clears without filter → submerge filter, reinstall, if returns → filter cause → >>PT.' },
+  S4:      { id:'S4',     next:'S5',     label:'Air lock purge',        prompt:'Emit [F:AP]. Then: "Did the error clear after the purge?"' },
+  S5:      { id:'S5',     next:'BREAKER',label:'Heater indicator',      prompt:'"Set the target temp above the current water temp. Do you see a heating indicator — a light, flame icon, or the word Heat — on the topside panel?"' },
+  BREAKER: { id:'BREAKER',next:'S6',     label:'Breaker reset',         prompt:'Emit [F:BR]. Then: "Did the error clear after the breaker reset?"' },
+  S6:      { id:'S6',     next:'S6b',    label:'Gate valves',           prompt:'Emit [F:BE]. Then: "Are all gate valves or isolation valves fully open? They should be turned all the way counterclockwise."' },
+  S6b:     { id:'S6b',   next:'S7',     label:'Air purge valve',       prompt:'"If your spa has an air purge valve on the pump or plumbing, open it briefly to release any trapped air. Does the error clear?"' },
+  S7:      { id:'S7',     next:'S8a',    label:'Air lock phase 2',      prompt:'"With the equipment bay open, perform the hose purge again. Watch for air bubbles coming up through the jets — keep going until only water flows. Did the error clear?"' },
+  S8a:     { id:'S8a',   next:'S8b',    label:'Circ pump',             prompt:'Emit [F:CP]. Then: "Feel the circulation pump housing — the smaller pump separate from the jet pumps. Does it hum, vibrate, or feel slightly warm? Or is it silent, grinding, very hot, or leaking?"' },
+  S8b:     { id:'S8b',   next:'S8c',    label:'Flow switch visual',    prompt:'"Find the flow switch — a small device with a paddle inside, mounted on the plumbing near the heater. Does the paddle move freely? Is the directional arrow on the body pointing the correct way with water flow?"' },
+  S8c:     { id:'S8c',   next:'S9',     label:'Flow switch jumper',    prompt:'Emit [F:FJ]. Then: "Are you comfortable proceeding with power off?" >>BTN\nYes, I\'m ready | Skip this step\n<<BTN' },
+  S9:      { id:'S9',     next:'S10',    label:'Visual inspection',     prompt:'"Using a flashlight, look through the entire equipment bay. Check for burn marks, scorched wires, corrosion, or blown fuses. Focus on the control board — look closely for any black or brown spots or char marks around the connectors. What do you see?"' },
+  S10:     { id:'S10',   next:'S11',    label:'Fuses',                 prompt:'"Check all fuses — look at both the housing and the filament inside. Are any blown or visibly damaged?"' },
+  S11:     { id:'S11',   next:'S12',    label:'Temp sensor',           prompt:'"What does the topside panel show as the current water temperature? And roughly how warm does the water actually feel?"' },
+  S12:     { id:'S12',   next:'S13',    label:'Hi-limit sensor',       prompt:'"Check the hi-limit sensor for a small reset button and press it if present. Is the water noticeably overheating?" If yes → ⚠️ cut power immediately, do not use.' },
+  S13:     { id:'S13',   next:'S14',    label:'Heater element',        prompt:'"Do you have a multimeter?" >>BTN\nYes | No\n<<BTN Yes → resistance + ground fault test. No → visual check for corrosion/burn marks.' },
+  S14:     { id:'S14',   next:null,     label:'Control board',         prompt:'LAST RESORT — only after ALL previous steps done. "Based on everything we\'ve checked, the control board is the likely culprit." Then >>PT.' },
 };
 
 // ── Diag state store ──────────────────────────────────────────────
@@ -579,11 +581,13 @@ function processDiagSignals(reply, clientId, incomingMsg) {
         state.currentStep = jumpId;
         setDiagState(clientId, state);
       }
+      // JUMP_ONLY — skip advance/skip processing this turn
+      if (incomingMsg.includes('[JUMP_ONLY]')) return getDiagState(clientId);
     }
   }
 
-  const advanceMatch = reply.match(/\[ADVANCE:([A-Z0-9a-z]+)\]/);
-  const skipMatch = reply.match(/\[SKIP:([A-Z0-9a-z]+)\]/);
+  const advanceMatch = reply.match(/\[A:([A-Z0-9a-z]+)\]/);
+  const skipMatch = reply.match(/\[SK:([A-Z0-9a-z]+)\]/);
   if (advanceMatch || skipMatch) {
     const completedId = (advanceMatch || skipMatch)[1].toUpperCase();
     const step = DIAG_STEPS[completedId];
@@ -604,7 +608,7 @@ function processDiagSignals(reply, clientId, incomingMsg) {
 }
 
 function applyFireTemplates(reply) {
-  return reply.replace(/\[FIRE:([A-Z0-9_]+)\]/g, (match, key) => FIRE_TEMPLATES[key] || match);
+  return reply.replace(/\[F:([A-Z0-9]+)\]/g, (match, key) => FIRE_TEMPLATES[`F:${key}`] || match);
 }
 
 function buildStepContext(state) {
@@ -612,13 +616,12 @@ function buildStepContext(state) {
   const step = DIAG_STEPS[state.currentStep];
   if (!step) return null;
   const nextStep = step.next ? DIAG_STEPS[step.next] : null;
-  return `=CURRENT STEP=
-Step: ${step.id} — ${step.label}
-Task: ${step.prompt}
-Signal [ADVANCE:${step.id}] when user's answer clears this step.
-Signal [SKIP:${step.id}] if user skips or cannot perform this step.
-${nextStep ? `Next: ${step.next} — ${nextStep.label}` : 'This is the final step.'}
-NEVER move forward without emitting [ADVANCE:${step.id}] or [SKIP:${step.id}].`;
+  return `=STEP=
+${step.id} — ${step.label}
+${step.prompt}
+Clear → [A:${step.id}]. Skip → [SK:${step.id}].
+${nextStep ? `Next: ${step.next} — ${nextStep.label}` : 'Final step.'}
+No [A:] or [SK:] = do not advance.`;
 }
 
 // ── Token telemetry ───────────────────────────────────────────────
@@ -661,7 +664,7 @@ SpaFix hot tub repair AI. "Skip the repairman." Confident, direct, warm. No hedg
 Steps: id+✅/❌/⚠️+optional(persists/cleared). Never re-ask completed steps.
 
 =SPA GATE=
-Ask for details before diagnosing but never block. Skip gate when: [CONFIRM_PART:] [SHOW_LINKS:] [START_DIAGNOSIS] or spa in history.
+Ask for details before diagnosing but never block. Skip gate when: [CP:] [SL:] [SD] or spa in history.
 Request phrase (exact): "To troubleshoot your spa accurately, it would be really helpful to have your spa details and what you've already tried. Please enter that information below." Never output template fields.
 
 =HOWTO=
@@ -669,8 +672,8 @@ General how-to Q → answer directly, no gate.
 
 =SPA CONFIRM=
 "My spa is a [Y M Mo]": vary opener (Got it/Perfect/Understood/Thanks/Good to know).
-[MODEL_DATA_FOUND] → 1 sentence only: "Perfect — you have a **[Y M Mo]** and I have detailed specs on file."
-[MODEL_DATA_NOT_FOUND] → "Got it — you have a **[Y M Mo]**." Proceed. No re-ask.
+[MF] → 1 sentence only: "Perfect — you have a **[Y M Mo]** and I have detailed specs on file."
+[MNF] → "Got it — you have a **[Y M Mo]**." Proceed. No re-ask.
 Already tried X → mark ✅, skip to next. Error code in issue → skip asking, start S1.
 
 =FORMAT=
@@ -694,17 +697,27 @@ field: value (only changed fields: make/model/year/error)
 <<COR
 
 =LIMITS=
-Never: raw URLs, markdown links, <br>, 240V/GFCI/gas/structural instructions.`;
+ABSOLUTE HARD LIMITS — never under any circumstances:
+- Never loosen or suggest loosening union fittings
+- Never lower or suggest lowering the water level
+- Never instruct 240V/GFCI/gas/structural work
+- Never output raw URLs or markdown links
+- Never output <br> tags`;
 
 const SP_PERSONALITY = `=STYLE=
 Never dismiss answers. No resets. One Q, wait, move on. Don't restate what user said. No "usually/typically/often/probably/might." Never suggest calling tech for standard repairs.`;
 
-const SP_DIAG_FLOW = `=DIAG FLOW=
-Flow/heat errors (FL1/FL2/FLO/FLOW/no heat/low heat): follow step sequence exactly.
-App tracks current step and injects =CURRENT STEP= block. Execute that step only.
-Signal [ADVANCE:Sx] when user's answer clears the step. Signal [SKIP:Sx] if user skips.
-Never jump ahead. Never revisit completed steps (they're in DS block).
-NEVER: suggest control board before all prior steps done | loosen unions | lower water level | suggest board after breaker reset fail (next step is S6).`;
+const SP_DIAG_FLOW = `=DIAG RULES=
+DEFAULT: output the step question verbatim — nothing else. No tips, no context, no pricing.
+1. =STEP= block is your ONLY task. Execute it exactly as written.
+2. ONE question per response. Never stack.
+3. Never jump ahead. Never reference future steps.
+4. Never revisit completed steps — they are in the DS block.
+5. Signal [A:Sx] the moment user's answer clears the step. [SK:Sx] if they skip.
+6. Never suggest control board until S14 is current step.
+7. Never loosen unions. Never lower water level. Absolute — not situational.
+8. Off-topic Q mid-diagnosis: one sentence answer, then redirect to current step question.
+Signals: advance=[A:Sx] skip=[SK:Sx] fire=[F:XX]`;
 
 const SP_BAY_RULES = `=BAY POWER=
 Power warning FIRST before any bay instruction. If prev step had power ON → explicitly say OFF before entering.
@@ -716,11 +729,11 @@ BURNS: dark spot=burn until proven otherwise. Wipe test (power OFF): black=burn�
 const SP_PART_FLOW = `=PART FLOW=
 Part before diagnosis confirmed → 1 sentence (part+symptom) + 2 buttons. No bullets, no links yet.
 Heater element NOT most common — filter/airlock/flow switch/circ pump are. Never say "most common" unless true.
-[CONFIRM_PART:heater assembly/element]: never ask element vs assembly again.
+[CP:heater assembly/element]: never ask element vs assembly again.
 "pump" unspecified → ask which (circ vs jets, which zone).
 Suspected part → "Confirming is wise before ordering." >>BTN\nStart Diagnosis | Show Purchase Links\n<<BTN
-[SHOW_LINKS:part] → >>PT immediately.
-[START_DIAGNOSIS] → S1, spa confirmed, don't re-confirm spa.
+[SL:part] → >>PT immediately.
+[SD] → S1, spa confirmed, don't re-confirm spa.
 After part links → >>BTN\nHelp me install it | Diagnose something else | Search different part\n<<BTN
 Diagnosis confirmed faulty → skip buttons, straight to >>PT.
 >>PT MANDATORY for any faulty/recommended part. One >>PT per part.
@@ -767,7 +780,7 @@ GENERATOR → ask early for no-power reports. Wait 8-10min after start, 10min af
 SANITY CHECK → after >>PT: "Want me to check remaining components before you order?"
 VISUAL FIRST → visual→functional→tool (optional). Flashlight always. Board: "look for black/brown spots or char marks around connectors."
 NO DUPE UPSELL → no photo upsell AND manual prompt in same response.
-AIRLOCK HOW-TO: any general question about clearing/purging an airlock → emit [FIRE:AIRLOCK_PURGE] then ask "Did that clear it up?"
+AIRLOCK HOW-TO: any general question about clearing/purging an airlock → emit [F:AP] then ask "Did that clear it up?"
 DIAG PROGRESS: user asks to "show all steps", "show diagnostic list", "what steps are left", or "go back to step X" →
   Show numbered list of all 14 steps with status: ✅ passed, ❌ failed (but diagnosis continues), ⏳ not yet tested.
   Format: "S1 ✅ Filter condition", "S2a ⏳ Water condition", etc.
@@ -795,9 +808,9 @@ function detectRequestContext(messages, diagStateIn, body) {
   const content = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : '';
   const assistantExists = messages.some(m => m.role === 'assistant');
   const isGuideEntry = content.startsWith('[From guide:');
-  const hasPartRequest = /\[(CONFIRM_PART|SHOW_LINKS|START_DIAGNOSIS)/i.test(content);
-  const hasDiagState = !!(diagStateIn && diagStateIn.steps && diagStateIn.steps.length > 0);
-  const hasSpaConfirmed = body.spaConfirmed === true || messages.some(m => m.role === 'user' && typeof m.content === 'string' && (m.content.startsWith('[Spa:') || m.content.startsWith('My spa is a ')));
+  const hasPartRequest = /\[(CP:|SL:|SD\]|START_DIAGNOSIS)/i.test(content);
+  const hasDiagState = !!(diagStateIn && (diagStateIn.currentStep || (diagStateIn.steps && diagStateIn.steps.length > 0)));
+  const hasSpaConfirmed = body.spaConfirmed === true || messages.some(m => m.role === 'user' && typeof m.content === 'string' && (m.content.startsWith('[Spa:') || m.content.startsWith('My spa is a ') || /^My .+ has (this issue|an issue)/.test(m.content)));
   const bayKeywords = /step\s*(6|7|8|9|10|11|12|13|14)|equipment bay|circ pump|flow switch|fuse|control board|heater element|hi.limit|temp sensor/i;
   const isEquipmentBayStep = hasDiagState || bayKeywords.test(content);
   const installKeywords = /install|replace|how (do|to) (replace|install|swap|remove)/i;
@@ -1330,7 +1343,7 @@ async function haikusaysSpaRelated(text) {
 
 async function isValidMessage(text) {
   if (!text || text.trim().length < 3) return { valid: false, reason: "too_short" };
-  if (text.trim().length > 2000) return { valid: false, reason: "too_long" };
+  if (text.trim().length > 300) return { valid: false, reason: "too_long" };
   // Fast keyword check first (free)
   if (looksSpaRelated(text)) return { valid: true };
   // If no keywords matched, ask Haiku (very cheap)
@@ -1385,11 +1398,13 @@ app.post("/api/chat", async (req, res) => {
   // Initialize diagState when diagnosis starts (START_DIAGNOSIS or spa form + issue)
   const lastMsgContent = typeof messages[messages.length-1]?.content === 'string' ? messages[messages.length-1].content : '';
   const isStartDiagnosis = lastMsgContent.includes('[START_DIAGNOSIS]') ||
+    lastMsgContent.includes('[SD]') ||
     (lastMsgContent.includes('Please start the diagnostic sequence') && lastMsgContent.includes('My spa is a ')) ||
-    (lastMsgContent.includes('Issue:') && lastMsgContent.includes('My spa is a '));
+    (lastMsgContent.includes('Issue:') && lastMsgContent.includes('My spa is a ')) ||
+    (lastMsgContent.includes('Please start the diagnostic sequence') && req.body.spaConfirmed === true) ||
+    (lastMsgContent.includes('has this issue:') && lastMsgContent.includes('Please start the diagnostic sequence'));
 
   if (isStartDiagnosis && !diagStateIn) {
-    // Build spa label — prefer explicit fields sent by client, fall back to message parsing
     const spaYear = req.body.spaYear || '';
     const spaMake = req.body.spaMake || '';
     const spaModel = req.body.spaModel || '';
@@ -1403,7 +1418,10 @@ app.post("/api/chat", async (req, res) => {
     setDiagState(clientId, newState);
   }
 
-  console.log(`[/api/chat] ${new Date().toISOString()} clientId=${clientId} msgs=${messages?.length || 0} step=${diagStateIn?.currentStep || 'none'}`);
+  // Re-read diagState after potential init above
+  const diagStateEffective = getDiagState(clientId) || diagStateIn;
+
+  console.log(`[/api/chat] ${new Date().toISOString()} clientId=${clientId} msgs=${messages?.length || 0} step=${diagStateEffective?.currentStep || 'none'}`);
 
   if (!messages || !Array.isArray(messages)) return res.status(400).json({ error: "messages array required" });
   const premiumAccess = hasPremiumAccess(req);
@@ -1421,49 +1439,54 @@ app.post("/api/chat", async (req, res) => {
     const isSpaForm = content.includes('Year:') || content.includes('Make/Model:') || content.includes('Serial#:');
     const spaSubmitted = req.body.spaSubmitted === true;
     const hasSpaContext = messages.some(m => m.role === 'user' && typeof m.content === 'string' && m.content.startsWith('[Spa:'));
-    const hasDiagState = !!(diagStateIn && diagStateIn.spa);
+    const hasDiagState = !!(diagStateEffective && diagStateEffective.spa);
     const spaConfirmed = req.body.spaConfirmed === true;
     const conversationInProgress = messages.filter(m => m.role === 'user').length > 1 || messages.some(m => m.role === 'assistant');
     const check = (isSpaForm || spaSubmitted || spaConfirmed || conversationInProgress || hasSpaContext || hasDiagState) ? { valid: true } : await isValidMessage(content);
     if (!check.valid) {
-      const msgs = { too_short: "Please describe your hot tub issue in a bit more detail.", too_long: "Your message is too long — please keep it under 2,000 characters.", off_topic: "SpaFix can only help with hot tub and spa questions. Please describe your spa issue and I'll be happy to help!" };
+      const msgs = { too_short: "Please describe your hot tub issue in a bit more detail.", too_long: "Your message is too long — please keep it under 300 characters.", off_topic: "SpaFix can only help with hot tub and spa questions. Please describe your spa issue and I'll be happy to help!" };
       return res.status(400).json({ error: msgs[check.reason] || "Please ask a spa-related question." });
     }
   }
 
-  const promptContext = detectRequestContext(messages, diagStateIn, req.body);
+  const promptContext = detectRequestContext(messages, diagStateEffective, req.body);
   const systemPrompt = buildSystemPrompt(promptContext);
-  const hasDiagStateActive = diagStateIn && diagStateIn.steps && diagStateIn.steps.length > 0;
+  const hasDiagStateActive = !!(diagStateEffective && (diagStateEffective.currentStep || (diagStateEffective.steps && diagStateEffective.steps.length > 0)));
   const msgLimit = hasDiagStateActive ? 3 : 6;
   const trimmedMessages = messages.slice(-msgLimit);
-  let effectiveSystemPrompt = systemPrompt;
 
-  // Inject confirmed spa details so Jet never re-asks for info already on file
+  // Inject confirmed spa details — only needed before diagState.spa is established
   const spaYearVal = req.body.spaYear || '';
   const spaMakeVal = req.body.spaMake || '';
   const spaModelVal = req.body.spaModel || '';
   const hasConfirmedSpaDetails = (spaYearVal || spaMakeVal) && spaMakeVal !== 'Unknown';
-  if (hasConfirmedSpaDetails) {
-    const spaLine = [spaYearVal, spaMakeVal, spaModelVal].filter(v => v && v !== 'Unknown').join(' ');
-    effectiveSystemPrompt = `=SPA ON FILE= User's spa is confirmed: ${spaLine}. DO NOT ask for spa year, make, or model — already known.\n\n` + effectiveSystemPrompt;
-  }
+  // Skip prefix once diagState already has spa — server already knows it
+  const spaAlreadyInState = !!(diagStateEffective && diagStateEffective.spa);
+  const spaPrefix = (hasConfirmedSpaDetails && !spaAlreadyInState)
+    ? `[SPA:${[spaYearVal, spaMakeVal, spaModelVal].filter(v => v && v !== 'Unknown').join(' ')}] confirmed. No re-ask.\n\n`
+    : '';
+
+  let effectiveSystemPrompt = spaPrefix + systemPrompt;
 
   if (hasDiagStateActive) {
-    const stateBlock = buildDiagStateBlock(diagStateIn);
-    if (stateBlock) effectiveSystemPrompt = `${stateBlock}\n\n${systemPrompt}`;
+    const stateBlock = buildDiagStateBlock(diagStateEffective);
+    if (stateBlock) effectiveSystemPrompt = stateBlock + '\n\n' + spaPrefix + systemPrompt;
   }
 
   async function callAndProcess(tier) {
-    const response = await callAnthropicWithRetry({ model: "claude-sonnet-4-6", max_tokens: 700, system: effectiveSystemPrompt, messages: trimmedMessages });
+    const diagTokenCap = hasDiagStateActive ? 350 : 700;
+    const response = await callAnthropicWithRetry({ model: "claude-sonnet-4-6", max_tokens: diagTokenCap, system: effectiveSystemPrompt, messages: trimmedMessages });
     const data = await response.json();
     if (!response.ok) throw new Error(data?.error?.message || "API error");
     const rawReply = data.content?.map(b => b.text || "").join("") || "";
     const cleanReply = rawReply
-      .replace(/\[ADVANCE:[A-Z0-9a-z]+\]/g, '')
-      .replace(/\[SKIP:[A-Z0-9a-z]+\]/g, '')
+      .replace(/\[A:[A-Z0-9a-z]+\]/g, '')
+      .replace(/\[SK:[A-Z0-9a-z]+\]/g, '')
+      .replace(/\[JO\]/g, '')
       // Strip all DS/step leak formats
       .replace(/^\[DS\][^\n]*\n[^\n]*\n?/m, '')
       .replace(/^\[DS\][^\n]*\n?/m, '')
+      .replace(/^---+\s*\n/gm, '')
       .replace(/^(?:S\d+[a-z]?[\u2705\u274C\u23F3][^|\n]*\|?\s*)+@?\S*\n?/m, '')
       .replace(/^\{[^}]*\}\s*\n/gm, '')
       .replace(/^=CURRENT STEP=[\s\S]*?(?=\n[A-Z\u{1F300}-\u{1F9FF}]|\n[a-z])/mu, '')
@@ -1478,7 +1501,7 @@ app.post("/api/chat", async (req, res) => {
       if (lm?.role === 'user') appendToTranscript(testerName, clientId, 'user', typeof lm.content === 'string' ? lm.content : '');
       appendToTranscript(testerName, clientId, 'assistant', reply);
     }
-    return { reply, diagState: updatedDiagState || diagStateIn || null };
+    return { reply, diagState: updatedDiagState || diagStateEffective || null };
   }
 
   if (premiumAccess) {
