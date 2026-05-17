@@ -1,4 +1,4 @@
-// 4.9.15w
+// 4.9.15al
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -519,6 +519,7 @@ const FIRE_TEMPLATES = {
 
 // ── Diagnostic step definitions — button-driven state machine ─────
 const DIAG_STEPS = {
+  // ── FLOW sequence ─────────────────────────────────────────────
   S2a: { id:'S2a', next:'S2b', label:'Water condition',
     question:'What does the water look like right now?',
     buttons:[
@@ -689,8 +690,282 @@ const DIAG_STEPS = {
       {label:'I need help identifying my board', outcome:'action', action:'identify_board'},
     ]
   },
-};
 
+  // ── HEAT sequence ─────────────────────────────────────────────
+  H2a: { id:'H2a', next:'H2b', label:'Water condition',
+    question:'What does the water look like right now?',
+    buttons:[
+      {label:'Clear', outcome:'pass'},
+      {label:'Cloudy / Foamy', outcome:'action', action:'water_cloudy'},
+      {label:'Visibly dirty', outcome:'action', action:'water_dirty'},
+    ]
+  },
+  H2b: { id:'H2b', next:'H1', label:'Water level',
+    question:'Does the water cover the skimmer opening by at least 1 to 2 inches?',
+    buttons:[
+      {label:"Yes, it's fine", outcome:'pass'},
+      {label:'It looks low', outcome:'action', action:'top_up'},
+    ]
+  },
+  H1: { id:'H1', next:'H5', label:'Filter condition',
+    question:'',
+    buttons:[
+      {label:'Clean / New', outcome:'action', action:'filter_clean'},
+      {label:'A little dirty', outcome:'action', action:'filter_dirty'},
+      {label:"They're filthy", outcome:'action', action:'filter_filthy'},
+    ]
+  },
+  H5: { id:'H5', next:'H3', label:'Mode settings',
+    question:'Check your topside control panel. Is the spa set to Standard or Ready mode?',
+    buttons:[
+      {label:'Standard / Ready mode', outcome:'pass'},
+      {label:'Economy / Sleep / Rest mode', outcome:'action', action:'heat_mode_wrong'},
+      {label:"I'm not sure", outcome:'action', action:'heat_mode_unsure'},
+      {label:'Skip Step', outcome:'skip'},
+    ]
+  },
+  H3: { id:'H3', next:'H4', label:'Suction test',
+    question:'With the filters still out, run the spa. What do you feel at the filter inlet?',
+    buttons:[
+      {label:'Strong suction', outcome:'pass'},
+      {label:'Weak or no suction', outcome:'possible'},
+      {label:"Can't find the inlet", outcome:'action', action:'cant_find_inlet'},
+    ]
+  },
+  H4: { id:'H4', next:'HBREAKER', label:'Air lock purge',
+    fire:'F:AP',
+    question:'',
+    buttons:[
+      {label:'Spa is now heating', outcome:'action', action:'heat_airlock_cleared'},
+      {label:'Still not heating', outcome:'neutral'},
+      {label:'Skip Step', outcome:'skip'},
+    ]
+  },
+  HBREAKER: { id:'HBREAKER', next:'H6', label:'Breaker reset',
+    fire:'F:BR',
+    question:'',
+    buttons:[
+      {label:'Spa is now heating', outcome:'pass'},
+      {label:'Still not heating', outcome:'pass'},
+      {label:'Skip Step', outcome:'skip'},
+    ]
+  },
+  H6: { id:'H6', next:'H6b', label:'Gate valves',
+    bayStep:true,
+    question:'Check the gate valves (also called slice or isolation valves) on either side of the heater pack — they must be fully open. A partially closed valve restricts water flow and prevents the heater from firing. Pull each valve fully out and confirm it locks open.',
+    buttons:[
+      {label:'All fully open', outcome:'pass'},
+      {label:'Found one closed or partially closed', outcome:'action', action:'valve_closed'},
+      {label:"My spa doesn't have these", outcome:'skip'},
+      {label:'Skip Step', outcome:'skip'},
+    ]
+  },
+  H6b: { id:'H6b', next:'H7', label:'Air purge valve',
+    bayStep:true,
+    question:'Some spas have an air purge valve on the pump or plumbing — a small bleed valve or knurled cap. If yours has one and you see air bubbling out when you open it, keep it open until only water flows, then close it.',
+    buttons:[
+      {label:'Spa is now heating', outcome:'pass'},
+      {label:'Still not heating / No valve', outcome:'pass'},
+      {label:'Skip Step', outcome:'skip'},
+    ]
+  },
+  H7: { id:'H7', next:'H8a', label:'Air lock phase 2',
+    fire:'F:AP',
+    bayStep:true,
+    question:'',
+    buttons:[
+      {label:'Spa is now heating', outcome:'pass'},
+      {label:'Still not heating', outcome:'neutral'},
+      {label:'Skip Step', outcome:'skip'},
+    ]
+  },
+  H8a: { id:'H8a', next:'H11', label:'Circ pump',
+    fire:'F:CP',
+    bayStep:true,
+    question:"Find the circulation pump — the smaller pump separate from the jet pumps. The circ pump is responsible for moving water through the heater. If it isn't running, the heater will never fire. Some circ pumps run continuously; others activate with the heating cycle. Feel the housing — it should be warm and you should hear a faint hum.",
+    buttons:[
+      {label:'Humming / warm', outcome:'pass'},
+      {label:'Silent', outcome:'fail', part:'circulation pump'},
+      {label:'Grinding / very hot', outcome:'fail', part:'circulation pump'},
+      {label:'Leaking', outcome:'fail', part:'circ pump seal'},
+      {label:'Skip Step', outcome:'skip'},
+    ]
+  },
+  H11: { id:'H11', next:'H12', label:'Temp sensor',
+    question:'Compare the water temperature shown on your topside panel against how the water actually feels. A faulty or miscalibrated temp sensor can convince the control board the water is already at target temperature — causing the heater to never fire.',
+    buttons:[
+      {label:'Readings match', outcome:'pass'},
+      {label:'Panel reads higher than actual', outcome:'fail', part:'temp sensor'},
+      {label:'Big difference either way', outcome:'fail', part:'temp sensor'},
+      {label:'Skip Step', outcome:'skip'},
+    ]
+  },
+  H12: { id:'H12', next:'H13', label:'Hi-limit sensor / reset',
+    bayStep:true,
+    question:'The hi-limit sensor cuts power to the heater if it detects overheating — even a false reading will prevent heating. Look on the heater assembly or control box for a small reset button (sometimes red or white). Press it firmly if present. Also check if the water feels dangerously hot.',
+    buttons:[
+      {label:'Reset button found and pressed', outcome:'action', action:'heat_hilimit_reset'},
+      {label:'No reset button found', outcome:'pass'},
+      {label:'Water feels dangerously hot', outcome:'fail', part:'hi-limit sensor', critical:true},
+      {label:'Skip Step', outcome:'skip'},
+    ]
+  },
+  H13: { id:'H13', next:'H9', label:'Heater element',
+    question:'Do you have a multimeter?',
+    buttons:[
+      {label:'Yes, I have one', outcome:'action', action:'heat_multimeter_test'},
+      {label:"No, I don't", outcome:'action', action:'heat_visual_element_check'},
+      {label:"I'd like one", outcome:'action', action:'suggest_multimeter'},
+      {label:'Skip Step', outcome:'skip'},
+    ]
+  },
+  H9: { id:'H9', next:'H10', label:'Visual inspection',
+    bayStep:true,
+    question:'Using a flashlight, inspect the heater assembly and the full equipment bay. Look for burn marks, scorched wires, corrosion, or charred solder joints on the control board. Pay close attention to the heater terminal block and the wires connecting the board to the heater element.',
+    buttons:[
+      {label:'Everything looks clean', outcome:'pass'},
+      {label:'Found burn marks on heater', outcome:'fail', part:'heater element'},
+      {label:'Found burn marks on control board', outcome:'fail', part:'control board'},
+      {label:'Found something unusual', outcome:'action', action:'unusual_finding'},
+      {label:'Skip Step', outcome:'skip'},
+    ]
+  },
+  H10: { id:'H10', next:'H14', label:'Fuses',
+    bayStep:true,
+    question:'Check all fuses in the equipment bay — look at both the housing and the filament inside. A blown fuse is a symptom, not the root cause — we\'ll need to understand what caused it.',
+    buttons:[
+      {label:'All fuses intact', outcome:'pass'},
+      {label:'Found a blown fuse', outcome:'possible', part:'fuse kit'},
+      {label:'Skip Step', outcome:'skip'},
+    ]
+  },
+  H14: { id:'H14', next:null, label:'Control board',
+    question:"Based on everything we've checked, the control board is the most likely remaining cause. Before ordering, photograph everything — wide shot of the full board, every connector, and all jumper settings. Pull connectors by the housing only, never by the wires. Check for any discolored wires near burn marks — a damaged harness with a new board will result in immediate failure.",
+    buttons:[
+      {label:'Show me control board options', outcome:'fail', part:'control board'},
+      {label:'I need help identifying my board', outcome:'action', action:'identify_board'},
+    ]
+  },
+
+  // ── JETS sequence ─────────────────────────────────────────────
+  J2a: { id:'J2a', next:'J2b', label:'Water condition',
+    question:'What does the water look like right now?',
+    buttons:[
+      {label:'Clear', outcome:'pass'},
+      {label:'Cloudy / Foamy', outcome:'action', action:'water_cloudy'},
+      {label:'Visibly dirty', outcome:'action', action:'water_dirty'},
+    ]
+  },
+  J2b: { id:'J2b', next:'J1', label:'Water level',
+    question:'Does the water cover the skimmer opening by at least 1 to 2 inches? Low water causes the pump to suck in air and lose its prime, which kills jet pressure.',
+    buttons:[
+      {label:"Yes, it's fine", outcome:'pass'},
+      {label:'It looks low', outcome:'action', action:'top_up'},
+    ]
+  },
+  J1: { id:'J1', next:'J_JF', label:'Filter condition',
+    question:'',
+    buttons:[
+      {label:'Clean / New', outcome:'action', action:'filter_clean'},
+      {label:'A little dirty', outcome:'action', action:'filter_dirty'},
+      {label:"They're filthy", outcome:'action', action:'filter_filthy'},
+    ]
+  },
+  J_JF: { id:'J_JF', next:'J_DV', label:'Jet face adjustment',
+    question:'Many hot tub jets can be individually turned off by rotating the outer ring (bezel) clockwise. Over time, grit or calcium buildup can lock jet faces in the closed position — making it seem like the pump is dead when the plumbing is just shut off at the seat. Try firmly twisting each jet face counter-clockwise to make sure they\'re fully open.',
+    buttons:[
+      {label:'All jets are open', outcome:'pass'},
+      {label:'Found closed jets — now fixed!', outcome:'action', action:'jets_face_fixed'},
+      {label:'Jets are open but still no pressure', outcome:'pass'},
+      {label:'Skip Step', outcome:'skip'},
+    ]
+  },
+  J_DV: { id:'J_DV', next:'J4', label:'Diverter valves',
+    question:'Large topside diverter valves route water between different seats or zones. If a diverter valve is centered or broken internally, it can starve an entire section of jets. Turn each diverter valve fully from one side to the other — make sure none are stuck in a middle position.',
+    buttons:[
+      {label:'All diverters move freely', outcome:'pass'},
+      {label:'Found a stuck valve — now fixed!', outcome:'action', action:'jets_diverter_fixed'},
+      {label:'Valves move but still no pressure', outcome:'pass'},
+      {label:'Skip Step', outcome:'skip'},
+    ]
+  },
+  J4: { id:'J4', next:'J_SS', label:'Air lock purge',
+    fire:'F:AP',
+    question:'',
+    buttons:[
+      {label:'Jets are working now!', outcome:'action', action:'jets_airlock_cleared'},
+      {label:'Still no jets', outcome:'neutral'},
+      {label:'Skip Step', outcome:'skip'},
+    ]
+  },
+  J_SS: { id:'J_SS', next:'J10', label:'Sound signature',
+    question:'Press the Jets button. What do you hear?',
+    buttons:[
+      {label:'Complete silence — nothing happens', outcome:'action', action:'jets_sound_silent'},
+      {label:'Loud hum but jets don\'t spin up', outcome:'action', action:'jets_sound_hum'},
+      {label:'Screech or squeal when running', outcome:'action', action:'jets_sound_squeal'},
+      {label:'Runs normally but weak pressure', outcome:'pass'},
+      {label:'Skip Step', outcome:'skip'},
+    ]
+  },
+  J10: { id:'J10', next:'J_SH', label:'Fuses',
+    bayStep:true,
+    question:'Most control packs have dedicated fuses for each pump. Turn off the breaker, locate the fuse panel inside the equipment bay, and check the fuse for the corresponding jet pump. Look at both the housing and the filament inside — a blown fuse is a symptom, not the root cause.',
+    buttons:[
+      {label:'All fuses intact', outcome:'pass'},
+      {label:'Found a blown fuse', outcome:'possible', part:'fuse kit'},
+      {label:'Skip Step', outcome:'skip'},
+    ]
+  },
+  J_SH: { id:'J_SH', next:'J_VT', label:'Shaft & impeller check',
+    bayStep:true,
+    question:'Debris like stones, hairbands, or broken filter pieces can physically jam the pump impeller. With power completely OFF, locate the back of the jet pump motor — many have a slot on the rear shaft where you can insert a flathead screwdriver. Try to manually turn the shaft.',
+    buttons:[
+      {label:'Shaft turns freely', outcome:'pass'},
+      {label:'Shaft is locked solid', outcome:'action', action:'jets_shaft_locked'},
+      {label:'Can\'t access the shaft', outcome:'skip'},
+      {label:'Skip Step', outcome:'skip'},
+    ]
+  },
+  J_VT: { id:'J_VT', next:'J9', label:'Voltage test',
+    bayStep:true,
+    question:'Do you have a multimeter?',
+    buttons:[
+      {label:'Yes, I have one', outcome:'action', action:'jets_voltage_test'},
+      {label:"No, I don't", outcome:'action', action:'jets_no_multimeter'},
+      {label:"I'd like one", outcome:'action', action:'suggest_multimeter'},
+      {label:'Skip Step', outcome:'skip'},
+    ]
+  },
+  J9: { id:'J9', next:'J13', label:'Visual inspection',
+    bayStep:true,
+    question:'Using a flashlight, inspect the jet pump and the full equipment bay. Look for burn marks, scorched wires, melted insulation, or corrosion. Check the wiring harness running to the pump — look for any discoloration or damage near the terminals.',
+    buttons:[
+      {label:'Everything looks clean', outcome:'pass'},
+      {label:'Found burn marks on pump wiring', outcome:'fail', part:'jet pump'},
+      {label:'Found burn marks on control board', outcome:'fail', part:'control board'},
+      {label:'Found something unusual', outcome:'action', action:'unusual_finding'},
+      {label:'Skip Step', outcome:'skip'},
+    ]
+  },
+  J13: { id:'J13', next:'J14', label:'Jet pump',
+    bayStep:true,
+    question:'Based on everything we\'ve checked, the jet pump itself is the likely cause. Before ordering, confirm the pump model number from the label on the pump housing. Also check the wiring harness for any damage — a new pump with damaged wiring will fail immediately.',
+    buttons:[
+      {label:'Show me jet pump options', outcome:'fail', part:'jet pump'},
+      {label:'I need help identifying my pump', outcome:'action', action:'identify_pump'},
+      {label:'Skip Step', outcome:'skip'},
+    ]
+  },
+  J14: { id:'J14', next:null, label:'Control board / wiring',
+    bayStep:true,
+    question:'If the pump is getting power but not running, or the board isn\'t sending power to the pump at all, the control board relay or wiring harness is the likely culprit. Before ordering a board, photograph everything — every connector, all jumper settings, and any discolored wires. Pull connectors by the housing only, never by the wires.',
+    buttons:[
+      {label:'Show me control board options', outcome:'fail', part:'control board'},
+      {label:'I need help identifying my board', outcome:'action', action:'identify_board'},
+    ]
+  },
+};
 // ── Diag state store ──────────────────────────────────────────────
 const diagStateStore = {};
 
@@ -1178,7 +1453,7 @@ app.get("/api/model/:year/:make/:model", async (req, res) => {
   // Query spa_models and parts table in parallel — single round trip
   const [rows, partsRows] = await Promise.all([
     supabaseGet('spa_models', {
-      'select': 'brand,model_name,year_start,year_end,control_system,common_failures,error_codes,pump_configs,verified,key_part_numbers',
+      'select': 'brand,model_name,year_start,year_end,control_system,common_failures,error_codes,pump_configs,verified,key_part_numbers,filter_count',
       'brand': `ilike.*${make}*`,
       'model_name': `ilike.*${model}*`,
       'limit': 1
@@ -1200,6 +1475,7 @@ app.get("/api/model/:year/:make/:model", async (req, res) => {
     verified: profile.verified || false,
     make: profile.brand,
     model: profile.model_name,
+    filter_count: profile.filter_count || null,
     control_system: profile.control_system || null,
     common_failures: Array.isArray(profile.common_failures)
       ? profile.common_failures.slice(0, 5).join('; ')
@@ -1215,53 +1491,6 @@ app.get("/api/model/:year/:make/:model", async (req, res) => {
   });
 });
 
-// Primary spa normalization endpoint — used by client for typo correction
-// ── Model lookup endpoint ─────────────────────────────────────────
-app.get("/api/model/:year/:make/:model", async (req, res) => {
-  const { year, make, model } = req.params;
-  if (!year || !make || !model) return res.status(400).json({ error: "year, make, model required" });
-
-  // Query spa_models and parts table in parallel — single round trip
-  const [rows, partsRows] = await Promise.all([
-    supabaseGet('spa_models', {
-      'select': 'brand,model_name,year_start,year_end,control_system,common_failures,error_codes,pump_configs,verified,key_part_numbers',
-      'brand': `ilike.*${make}*`,
-      'model_name': `ilike.*${model}*`,
-      'limit': 1
-    }),
-    supabaseGet('parts', {
-      'select': 'part_number,description,category,manufacturer,oem_cross_references,oem_part_number,superseded_by,notes',
-      'compatible_brands': `cs.[${make}]`,
-      'order': 'category',
-    })
-  ]);
-
-  if (!rows || rows.length === 0) {
-    return res.json({ found: false });
-  }
-
-  const profile = rows[0];
-  return res.json({
-    found: true,
-    verified: profile.verified || false,
-    make: profile.brand,
-    model: profile.model_name,
-    control_system: profile.control_system || null,
-    common_failures: Array.isArray(profile.common_failures)
-      ? profile.common_failures.slice(0, 5).join('; ')
-      : (profile.common_failures || null),
-    error_codes: Array.isArray(profile.error_codes)
-      ? profile.error_codes.map(e => e.code).join(', ')
-      : (profile.error_codes || null),
-    pump_configs: Array.isArray(profile.pump_configs)
-      ? profile.pump_configs.map(p => `Pump ${p.pump_num}: ${p.hp}hp ${p.speeds}-speed`).join(', ')
-      : (profile.pump_configs || null),
-    key_part_numbers: profile.key_part_numbers || null,
-    compatible_parts: partsRows || [],
-  });
-});
-
-// Primary spa normalization endpoint — used by client for typo correction
 // ── normalize-spa: JS brand fuzzy match + Haiku for model only ────
 // v4.9.14e: brand normalization moved to JS (zero AI cost for brands)
 // Haiku only called when brand is known but model needs correction
@@ -1415,6 +1644,70 @@ app.post("/api/increment-msg", (req, res) => {
   res.json({ limitReached: false, dailyMsgs: u.dailyMsgs, dailyLimit: FREE_DAILY_MSG_LIMIT });
 });
 
+// ── Spa brand master list by region ──────────────────────────────
+const SPA_BRANDS_BY_REGION = {
+  NA: {
+    countries: ['US','CA','MX'],
+    brands: ['Arctic Spas','Artesian Spas','Beachcomber','Blue Falls Manufacturing','Bullfrog Spas','Cal Spas','Caldera','Coleman','Dimension One','Dynasty Spas','Fantasy Spas','Free Flow Spas','Gecko','Hot Spring','Hydropool','Jacuzzi','Leisure Bay','Lifesmart Spas','Marquis','Master Spas','Maax Spas','Nordic Hot Tubs','Pacific Spas','Paradise Spas','Premier Spas','Saratoga Spas','Softub','Sundance','Tiger River','Vita Spas','Watkins Wellness','American Whirlpool','Barefoot Spas','Tropic Seas Spas','Clearwater Spas','Escape Spas','Hydro Systems','Hydrojet','Vanguard Spas','Prodigy Spas']
+  },
+  EU: {
+    countries: ['GB','DE','FR','IT','ES','NL','BE','SE','NO','DK','FI','CH','AT','PL','PT','IE','CZ','HU','RO','SK','SI','HR','GR'],
+    brands: ['Aquavia Spa','Villeroy & Boch','Passion Spas','Wellis','Jacuzzi','Sundance','Hot Spring','Caldera','Hydropool','Maax Spas','Oceanspa','ThermoSpas','Revel Spas','Oasis Spas','Pacific Spas','Spaform','Aquatica','Egeria','Oviedo Spas','Poolstar','Silver Fox']
+  },
+  AU: {
+    countries: ['AU','NZ'],
+    brands: ['Sapphire Spas','Vortex Spas','Spa World','Beachcomber','Hydropool','Jacuzzi','Sundance','Hot Spring','Swim Spa Australia','Aqua Spas','Leisure Concepts','Summit Spas','Oasis Spas','Pacific Spas','Dynasty Spas','Excel Spas']
+  },
+  APAC: {
+    countries: ['JP','KR','CN','TW','SG','MY','TH','ID','PH','HK','IN'],
+    brands: ['Jacuzzi','Hot Spring','Sundance','Balboa','Wellis','Aquavia Spa','Passion Spas','Oasis Spas','Pacific Spas']
+  },
+  INTL: {
+    countries: [],
+    brands: ['Jacuzzi','Hot Spring','Sundance','Caldera','Hydropool','Maax Spas','Balboa','Gecko','Intex','Bestway','Coleman']
+  }
+};
+
+function getBrandsForCountry(countryCode) {
+  const code = (countryCode || '').toUpperCase();
+  // Find the user's region
+  let userRegion = null;
+  for (const [region, data] of Object.entries(SPA_BRANDS_BY_REGION)) {
+    if (region === 'INTL') continue;
+    if (data.countries.includes(code)) { userRegion = region; break; }
+  }
+  const regionalBrands = userRegion ? SPA_BRANDS_BY_REGION[userRegion].brands : [];
+  // Build full list: regional first, then all others deduped
+  const allBrands = new Set(regionalBrands);
+  for (const [region, data] of Object.entries(SPA_BRANDS_BY_REGION)) {
+    data.brands.forEach(b => allBrands.add(b));
+  }
+  const others = [...allBrands].filter(b => !regionalBrands.includes(b)).sort();
+  return { region: userRegion || 'INTL', countryCode: code, regional: regionalBrands.sort(), others };
+}
+
+app.get("/api/models-for-make", async (req, res) => {
+  let make = req.query.make || '';
+  if (!make) return res.json({ models: [] });
+  // Normalize — strip common suffixes to match Supabase brand column
+  make = make.replace(/\s+(spas?|hot\s+tubs?|industries|inc\.?|llc\.?|corp\.?)$/i, '').trim();
+  const rows = await supabaseGet('spa_models', {
+    'select': 'model_name',
+    'brand': `ilike.*${make}*`,
+    'order': 'model_name',
+    'limit': 100
+  });
+  const models = (rows || []).map(r => r.model_name).filter(Boolean).sort();
+  res.json({ models });
+});
+
+app.get("/api/brands", (req, res) => {
+  // Detect country from Cloudflare header first, then X-Forwarded-For fallback
+  const cfCountry = req.headers['cf-ipcountry'] || '';
+  const countryCode = cfCountry && cfCountry !== 'XX' ? cfCountry : 'US';
+  res.json(getBrandsForCountry(countryCode));
+});
+
 app.get("/api/usage", (req, res) => {
   const clientId = getClientId(req);
   const u = getUsage(clientId);
@@ -1562,7 +1855,7 @@ async function callAnthropicWithRetry(payload, maxRetries = 3) {
 
 // ── Diag button endpoint — processes step button clicks, no AI call ─
 app.post("/api/diag-button", async (req, res) => {
-  const { stepId, buttonLabel, outcome, part, action } = req.body;
+  const { stepId, buttonLabel, outcome, part, action, briefMode } = req.body;
   const clientId = getClientId(req);
 
   // Handle initialization
@@ -1570,9 +1863,12 @@ app.post("/api/diag-button", async (req, res) => {
     const spaYear = req.body.spaYear || '';
     const spaMake = req.body.spaMake || '';
     const spaModel = req.body.spaModel || '';
-    const errorCode = req.body.errorCode || null;
+    const rawErrorCode = req.body.errorCode || null;
+    const errorCode = rawErrorCode ? rawErrorCode.replace(/[^A-Za-z0-9]/g, '').toUpperCase() || null : null;
+    const topic = req.body.topic || 'flow';
     const spaLabel = [spaYear, spaMake, spaModel].filter(v => v && v !== 'Unknown').join(' ') || 'Unknown';
-    setDiagState(clientId, { spa: spaLabel, errorCode, steps: [], currentStep: 'S2a', lastUpdated: Date.now() });
+    const startStep = topic === 'heat' ? 'H2a' : topic === 'jets' ? 'J2a' : 'S2a';
+    setDiagState(clientId, { spa: spaLabel, errorCode, topic, steps: [], currentStep: startStep, lastUpdated: Date.now() });
     return res.json({ ok: true, diagState: getDiagState(clientId) });
   }
 
@@ -1609,6 +1905,29 @@ app.post("/api/diag-button", async (req, res) => {
   switch(outcome) {
     case 'pass':
       stepResult.passed = true;
+      // Step-specific pass messages
+      const passMessages = {
+        'S2a': "Good — clean water rules out a chemistry or contamination issue.",
+        'S2b': "Good — water level is fine.",
+        'S1': "Filters ruled out — let's keep going.",
+        'S3': "Good suction confirmed — the pump is moving water.",
+        'S4': "Great — the air lock purge worked. Let's keep an eye on it and continue checking.",
+        'S5': "Good — the heating indicator is showing, so the control board is commanding heat.",
+        'BREAKER': buttonLabel === 'Error cleared' ? "Great — the breaker reset cleared the error. Let's continue to confirm everything is working." : "Noted — the breaker reset didn't resolve it. Let's keep working through the checklist.",
+        'S6': "Good — all valves are open.",
+        'S6b': "Good — air purge valve checked.",
+        'S7': buttonLabel === 'Error cleared' ? "The second air purge cleared it — air was still in the system. Reinstall your filters as described earlier." : "Noted — second purge didn't resolve it. Let's move on.",
+        'S8b': "Good — the flow switch paddle is moving freely and correctly oriented.",
+        'S8c': buttonLabel === 'Error still showing' ? "Good — flow switch is ruled out. Let's continue." : null,
+        'S9': "Good — no visible burn marks, corrosion, or damage found.",
+        'S10': "Good — all fuses are intact.",
+        'S11': "Good — temperature readings are consistent.",
+        'S12': "Good — hi-limit sensor checked.",
+        'S13': null, // handled by sub-flow
+      };
+      if (passMessages[stepId] !== undefined && passMessages[stepId] !== null) {
+        responseMsg = passMessages[stepId];
+      }
       break;
     case 'fail':
       stepResult.passed = false;
@@ -1618,18 +1937,35 @@ app.post("/api/diag-button", async (req, res) => {
       stepResult.passed = true;
       stepResult.possible = true;
       if (part) partCard = part;
-      break;
-    case 'possible':
-      stepResult.passed = true;
-      stepResult.possible = true;
-      if (part) partCard = part;
+      if (!briefMode && stepId === 'S3') {
+        responseMsg = "Weak or no suction at the inlet is a concern — I've flagged the suction test as a possible issue. This can be caused by trapped air in the plumbing, a struggling circulation pump, or a blockage somewhere in the system. Let's work through the most likely causes one by one.";
+      }
       break;
     case 'neutral':
       stepResult.passed = true;
+      const neutralMessages = {
+        'S4': "Noted — the air lock purge didn't resolve the error. Let's keep working through the checklist.",
+        'S7': "Noted — second purge didn't clear it. Let's move on.",
+        'S8a': "Noted.",
+      };
+      if (neutralMessages[stepId]) responseMsg = neutralMessages[stepId];
       break;
     case 'skip':
       stepResult.passed = false;
       stepResult.skipped = true;
+      if (!briefMode) {
+        if (stepId === 'S4' || stepId === 'H4') {
+          responseMsg = "Air locks are one of the most common causes of flow and heat errors — skipping this test means we can't rule it out. I've flagged it as a possible issue. You can come back to it anytime by tapping the step in the Diagnostic Steps panel.";
+        } else if (stepId === 'J4') {
+          responseMsg = "Air locks are one of the most common causes of jet pressure loss — skipping this test means we can't rule it out. I've flagged it as a possible issue. You can come back to it anytime by tapping the step in the Diagnostic Steps panel.";
+        } else if (stepId === 'S5') {
+          responseMsg = "The heater indicator test is a quick way to confirm whether your spa's thermostat and control board are telling the heater to turn on — skipping it means we can't rule out a control issue. I've flagged it as a possible factor. You can come back to it anytime by tapping the step in the Diagnostic Steps panel.";
+        } else if (stepId === 'H5') {
+          responseMsg = "The mode settings check is a quick win — Economy or Sleep mode prevents heating and is easy to miss. I've flagged it as possible. You can come back anytime by tapping the step in the Diagnostic Steps panel.";
+        } else if (stepId === 'J_VT') {
+          responseMsg = "The voltage test is the most reliable way to determine if the issue is the pump or the control board. Without it we're making an educated guess. I've flagged it as a possible factor.";
+        }
+      }
       break;
     case 'action':
       advanceNow = false; // action steps handle advance themselves
@@ -1639,163 +1975,294 @@ app.post("/api/diag-button", async (req, res) => {
   // Handle special actions
   if (outcome === 'action') {
     switch(action) {
+      case 'water_continue_cloudy':
+        responseMsg = "⚠️ Understood — we'll continue, but the cloudy or foamy water still needs to be addressed. Some upcoming tests require running without filters, which we only recommend with clean water. Proceed with caution.";
+        stepResult.passed = true;
+        stepResult.possible = true;
+        advanceNow = true;
+        break;
+
+      case 'water_continue_dirty':
+        responseMsg = "⚠️ Understood — we'll continue, but the dirty water still needs to be addressed. Some upcoming tests require running without filters, which we only recommend with clean water. Proceed with caution.";
+        stepResult.passed = true;
+        stepResult.possible = true;
+        advanceNow = true;
+        break;
+
       case 'water_cloudy':
         responseMsg = "Cloudy or foamy water needs to be addressed — running diagnostic steps that require operating without filters should only be done with clean water. We can continue testing up to that point, but we strongly recommend sorting the water first.";
         stepResult.passed = true;
         stepResult.possible = true;
         advanceNow = false;
-        partCard = 'water treatment';
         break;
+
       case 'water_dirty':
         responseMsg = "Dirty water needs to be addressed — running diagnostic steps that require operating without filters should only be done with clean water. We can continue testing up to that point, but we strongly recommend sorting the water first.";
         stepResult.passed = true;
         stepResult.possible = true;
         advanceNow = false;
+        break;
+
+      case 'show_water_treatment':
+        responseMsg = "Here are some water treatment options for your spa:";
         partCard = 'water treatment';
-        break;
-      case 'filter_clean':
-        responseMsg = "Good — let's do a quick sanity check. Leave the filters out and run the spa. Does the error clear?";
         advanceNow = false;
         break;
-      case 'filter_clean_yes':
-        responseMsg = "Great news, we've found the problem. Even though they look clean, the filters seem to be restricting water flow. Please replace your filters to get your spa working properly. For your convenience, I've provided some recommendations below.\n\n⚠️ Never use your spa without filters — it can damage the pump and plumbing. Running without filters is for testing purposes only and only with clean water.";
-        stepResult.passed = false;
-        advanceNow = false;
-        partCard = 'filter';
-        break;
-      case 'filter_clean_no':
-        stepResult.passed = true;
-        responseMsg = "Good — filters are ruled out as the cause. Let's keep going.";
-        advanceNow = true;
-        break;
-      case 'filter_dirty':
-        responseMsg = "Let's test your filters. With the filters out, run the spa. Does the error clear?";
-        advanceNow = false;
-        break;
-      case 'filter_dirty_yes':
-        responseMsg = "Perfect — we've found our culprit! If the spa runs fine without them, those filters are just a bit too restricted to let the water through. Filters are the unsung heroes of your spa, but they do need a refresh every now and then. Since yours are looking a little tired, we can either look at some heavy-duty cleaning supplies to revive them or just grab a new set so you can get back to soaking. What sounds best to you?";
-        stepResult.passed = false;
-        advanceNow = false;
-        break;
-      case 'filter_dirty_no':
-        stepResult.passed = true;
-        stepResult.possible = true;
-        responseMsg = "The filters may be contributing but aren't the sole cause. Let's keep checking.";
-        advanceNow = true;
-        break;
-      case 'filter_filthy':
-        responseMsg = "Filthy filters are almost certainly your issue. They need to be replaced before your spa will work properly.\n\n⚠️ Never use your spa without filters — it can damage the pump and plumbing. Running without filters is for testing purposes only and only with clean water.";
-        stepResult.passed = false;
-        advanceNow = false;
-        partCard = 'filter';
-        break;
-      case 'cant_find_inlet':
-        responseMsg = "The filter inlet is the opening where your filter(s) sit — typically a circular opening a few inches in diameter inside the filter compartment. If you don't feel any suction, make sure the spa jets are running — some spas won't draw water through the filter inlet until the jets are active. Check your manual or upload a photo and I can help identify it.";
-        advanceNow = false;
-        break;
-      case 'airlock_cleared':
-        responseMsg = "Looks like an airlock was the culprit — trapped air was blocking water flow and triggering the error. Before you put your filters back, submerge each one fully in the spa water until no air bubbles come out, then reinstall immediately while keeping them submerged. This prevents reintroducing air into the system and potentially triggering the error again.";
-        stepResult.passed = true;
-        advanceNow = false;
-        break;
-      case 'stop_diagnosis':
-        responseMsg = "Progress saved. Come back anytime if the issue returns or if you'd like to continue testing.";
-        stepResult.passed = true;
-        advanceNow = false;
-        break;
-      case 'filter_keep_testing':
-        stepResult.passed = false;
-        advanceNow = true;
-        break;
-      case 'suggest_filter_cleaning':
-        partCard = 'filter cleaning';
-        advanceNow = false;
-        break;
-      case 'suggest_filter_replace':
-        partCard = 'filter';
-        advanceNow = false;
-        break;
+
       case 'view_water_guides':
         responseMsg = "Opening water care guides for you.";
         stepResult.passed = true;
         stepResult.possible = true;
         advanceNow = true;
         break;
-      case 'stop_diagnosis':
-        responseMsg = "Progress saved. Come back anytime if the issue returns or if you'd like to continue testing.";
-        stepResult.passed = false;
-        advanceNow = false;
-        break;
-      case 'filter_clean_no':
-        stepResult.passed = true;
-        advanceNow = true;
-        break;
-      case 'filter_dirty_no':
-        stepResult.passed = true;
-        stepResult.possible = true;
-        advanceNow = true;
-        break;
-      case 'filter_clean_yes':
-        stepResult.passed = false;
-        partCard = 'filter';
-        advanceNow = false;
-        break;
-      case 'filter_dirty_yes':
-        stepResult.passed = false;
-        advanceNow = false;
-        break;
-      case 'filter_filthy':
-        stepResult.passed = false;
-        partCard = 'filter';
-        advanceNow = false;
-        break;
+
       case 'top_up':
         responseMsg = "Top the water up to at least an inch above the skimmer opening, then continue.";
         stepResult.passed = true;
         advanceNow = true;
         break;
+
+      case 'filter_clean':
+        responseMsg = "Good — let's do a quick sanity check. Leave the filters out and run the spa. Does the error clear?";
+        advanceNow = false;
+        break;
+
+      case 'filter_clean_yes':
+        responseMsg = "Great news, we've found the problem. Even though they look clean, the filters seem to be restricting water flow. Please replace your filters to get your spa working properly. For your convenience, I've provided some recommendations below.\n\n⚠️ Never use your spa without filters — it can damage the pump and plumbing. Running without filters is for testing purposes only and only with clean water.";
+        stepResult.passed = false;
+        advanceNow = false;
+        partCard = 'filter';
+        break;
+
+      case 'filter_clean_no':
+        responseMsg = "Good — filters are ruled out as the cause. Let's keep going.";
+        stepResult.passed = true;
+        advanceNow = true;
+        break;
+
+      case 'filter_dirty':
+        responseMsg = "Let's test your filters. With the filters out, run the spa. Does the error clear?";
+        advanceNow = false;
+        break;
+
+      case 'filter_dirty_yes':
+        responseMsg = "Perfect — we've found our culprit! If the spa runs fine without them, those filters are just a bit too restricted to let the water through. Filters are the unsung heroes of your spa, but they do need a refresh every now and then. Since yours are looking a little tired, we can either look at some heavy-duty cleaning supplies to revive them or just grab a new set so you can get back to soaking. What sounds best to you?";
+        stepResult.passed = false;
+        advanceNow = false;
+        break;
+
+      case 'filter_dirty_no':
+        responseMsg = "Your filters are a little dirty and may be contributing to the issue — I've flagged them as a possible factor. It's worth cleaning or replacing them. What would you like to do?";
+        stepResult.passed = true;
+        stepResult.possible = true;
+        advanceNow = true;
+        break;
+
+      case 'filter_filthy':
+        responseMsg = "Filthy filters are almost certainly your issue. They need to be replaced before your spa will work properly.\n\n⚠️ Never use your spa without filters — it can damage the pump and plumbing. Running without filters is for testing purposes only and only with clean water.";
+        stepResult.passed = false;
+        advanceNow = false;
+        partCard = 'filter';
+        break;
+
+      case 'filter_keep_testing':
+        responseMsg = "Got it — let's keep working through the checklist.";
+        stepResult.passed = false;
+        advanceNow = true;
+        break;
+
+      case 'suggest_filter_cleaning':
+        responseMsg = "Here are some filter cleaning products that can help restore flow:";
+        partCard = 'filter cleaning';
+        advanceNow = false;
+        break;
+
+      case 'suggest_filter_replace':
+        responseMsg = "Here are replacement filter options for your spa:";
+        partCard = 'filter';
+        advanceNow = false;
+        break;
+
+      case 'stop_diagnosis':
+        responseMsg = "Progress saved. Come back anytime if the issue returns or if you'd like to continue testing.";
+        stepResult.passed = true;
+        advanceNow = false;
+        break;
+
+      case 'cant_find_inlet':
+        responseMsg = "The filter inlet is the opening where your filter(s) sit — typically a circular opening a few inches in diameter inside the filter compartment. If you don't feel any suction, make sure the spa jets are running — some spas won't draw water through the filter inlet until the jets are active. <a href=\"#\" onclick=\"openManualFinder();return false;\" style=\"color:var(--teal-light);text-decoration:underline;\">Check your manual</a> or upload a photo of the filter bay and I'll help you identify it.";
+        advanceNow = false;
+        break;
+
+      case 'airlock_cleared':
+        responseMsg = "Great news — it looks like an airlock was the culprit! Trapped air was blocking the water flow and triggering the error.\n\nBefore you put your clean filters back in and retest, let's make sure air doesn't get trapped again:\n\n1. Submerge each filter fully in the spa water.\n2. Gently squeeze or shake them underwater to work out any trapped air bubbles.\n3. Reinstall them immediately while keeping them submerged.\n\nThis keeps the lines clear and prevents the error from coming back!";
+        stepResult.passed = true;
+        advanceNow = false;
+        break;
+
       case 'filter_confirmed':
-        responseMsg = "⚠️ Never run your spa without filters during normal use — it can damage the pump and plumbing. For testing purposes only, and only with clean water.\n\nSubmerge your filter fully until no air bubbles come out, then reinstall it immediately. Did the error return?";
+        responseMsg = "⚠️ Never run your spa without filters during normal use — it can damage the pump and plumbing. Running without filters is for testing purposes only and only with clean water.\n\nSubmerge your filter fully until no air bubbles come out, then reinstall it immediately. Did the error return?";
         stepResult.passed = false;
         stepResult.filterIssue = true;
         advanceNow = false;
         partCard = 'filter';
         break;
+
       case 'valve_closed':
         responseMsg = "Open it fully counterclockwise, then check if the error clears.";
         advanceNow = false;
         break;
+
       case 'heater_no_indicator':
         responseMsg = "Did you set the target temp above the current water temp displayed on the panel?";
         advanceNow = false;
         break;
+
+      case 'heat_mode_wrong':
+        responseMsg = "That's likely your culprit. In Economy or Sleep mode, the spa only heats during its scheduled filter cycles — it won't maintain your set temperature. Switch it to Standard or Ready mode, then raise the target temperature above the current water temp and wait a few minutes to see if the heater fires.";
+        stepResult.passed = false;
+        stepResult.possible = true;
+        advanceNow = true;
+        break;
+
+      case 'heat_mode_unsure':
+        responseMsg = "On most spas, press the Mode button (sometimes labeled Temp or Set) to cycle through modes. Look for Standard, Ready, or ST on the display — that's the mode you want. Economy (Econ), Sleep (SLP), and Rest modes will prevent continuous heating. If you can't find it, check your manual via the Manual button.";
+        advanceNow = false;
+        break;
+
+      case 'heat_airlock_cleared':
+        responseMsg = "Great news — an air lock was preventing water from circulating properly, which stopped the heater from firing. Before you put your clean filters back in and retest, let's make sure air doesn't get trapped again:\n\n1. Submerge each filter fully in the spa water.\n2. Gently squeeze or shake them underwater to work out any trapped air bubbles.\n3. Reinstall them immediately while keeping them submerged.\n\nThis keeps the lines clear and prevents the issue from coming back!";
+        stepResult.passed = true;
+        advanceNow = false;
+        break;
+
+      case 'heat_hilimit_reset':
+        responseMsg = "Good — press it firmly until it clicks. The hi-limit tripped because the spa detected (or thought it detected) an overheating condition. After resetting, raise the target temperature above the current water temp and see if the heater fires. If the hi-limit trips again shortly after, the sensor itself may be faulty.";
+        stepResult.passed = true;
+        stepResult.possible = true;
+        advanceNow = true;
+        break;
+
+      case 'heat_multimeter_test':
+        responseMsg = "Set your multimeter to resistance (Ω). Turn off the breaker and disconnect the heater element leads from the control board terminals. Test across the two element terminals — a healthy 5.5kW element should read between 9–12Ω. Also test each terminal to ground (the stainless steel heater tube) — you should read infinite (OL). What do you get?";
+        advanceNow = false;
+        break;
+
+      case 'heat_visual_element_check':
+        responseMsg = "Look at the heater element for any visible corrosion, burn marks, or physical damage on the element body or terminals. Also check the wires connecting the board to the element — look for any melted insulation, discoloration, or charring. What do you see?";
+        advanceNow = false;
+        break;
+
+      // ── Jets actions ──────────────────────────────────────────
+      case 'jets_face_fixed':
+        responseMsg = !briefMode ? "Closed jet faces are a surprisingly common cause — calcium buildup and grit lock them in place over time. Give them a good clean while you have them open. If everything is working now, you're all set! Would you like to keep testing to make sure nothing else is contributing?" : null;
+        stepResult.passed = true;
+        advanceNow = false;
+        break;
+
+      case 'jets_diverter_fixed':
+        responseMsg = !briefMode ? "A stuck diverter valve cuts off water to an entire zone of jets — easy fix once you find it. If everything is working now, you're all set! Would you like to keep testing to make sure nothing else is contributing?" : null;
+        stepResult.passed = true;
+        advanceNow = false;
+        break;
+
+      case 'jets_airlock_cleared':
+        responseMsg = "Great news — an air lock was preventing the pump from moving water. Before you put your clean filters back in and retest, let's make sure air doesn't get trapped again:\n\n1. Submerge each filter fully in the spa water.\n2. Gently squeeze or shake them underwater to work out any trapped air bubbles.\n3. Reinstall them immediately while keeping them submerged.\n\nThis keeps the lines clear and prevents the issue from coming back!";
+        stepResult.passed = true;
+        advanceNow = false;
+        break;
+
+      case 'jets_sound_silent':
+        responseMsg = !briefMode ? "Complete silence when pressing the Jets button usually points to one of three things: a blown fuse on the control board for that pump, a bad relay on the control board, or a completely dead motor winding. Let's check the fuses first — it's the easiest fix." : null;
+        stepResult.passed = true;
+        stepResult.possible = true;
+        advanceNow = true;
+        nextStep = 'J10';
+        break;
+
+      case 'jets_sound_hum':
+        responseMsg = !briefMode ? "A loud hum without the jets spinning up means the motor is getting power but can't turn. The two most likely causes are a blown start capacitor (the motor tries to start but can't get going) or a physically seized/frozen shaft. Let's check the shaft first." : null;
+        stepResult.passed = true;
+        stepResult.possible = true;
+        advanceNow = true;
+        nextStep = 'J_SH';
+        break;
+
+      case 'jets_sound_squeal':
+        responseMsg = !briefMode ? "A screech or squeal when the jets run is the sound of worn or failing motor bearings. The jets may still work for now, but the pump is on its way out — it needs a rebuild or replacement soon. I've flagged this as a likely pump issue." : null;
+        stepResult.passed = true;
+        stepResult.possible = true;
+        advanceNow = true;
+        nextStep = 'J13';
+        break;
+
+      case 'jets_shaft_locked':
+        responseMsg = "A locked shaft means something is either jammed in the impeller housing or the motor bearings have seized. Do not try to force the shaft — further damage could result. This pump will need to be removed and inspected. The impeller housing can be disassembled to check for debris without replacing the full pump.";
+        stepResult.passed = false;
+        advanceNow = false;
+        break;
+
+      case 'jets_voltage_test':
+        responseMsg = "⚠️ DANGER — 240V PRESENT. This test requires the breaker ON with live high voltage exposed inside the equipment bay. Only proceed if you are completely comfortable working around live electrical panels. NEVER touch any terminals, wires, or components other than the multimeter probes.\n\nWith the breaker ON and the Jets button pressed to High: carefully place your multimeter probes on the pump's terminal plug on the circuit board. You should read 240V (or 120V depending on your setup).\n\n- Board outputs correct voltage but pump doesn't run → the pump or its cord is the problem → proceed to pump replacement\n- Board outputs 0V when button pressed → the board relay is bad → proceed to control board";
+        advanceNow = false;
+        break;
+
+      case 'jets_no_multimeter':
+        responseMsg = "Without a multimeter we can't confirm whether the board is sending power. Based on everything we've tested, the most likely cause is either the jet pump itself or the control board relay. We'll check the pump wiring visually first.";
+        advanceNow = true;
+        break;
+
+      case 'identify_pump':
+        responseMsg = "Upload a clear photo of your pump label (Premium feature) and I'll help identify the exact model and find replacement options.";
+        advanceNow = false;
+        break;
+
+      case 'temps_mismatch':
+        responseMsg = "A mismatch between the displayed temperature and actual water temperature is a sign of a faulty or uncalibrated temperature sensor. I've flagged the temp sensor as a possible issue — we'll dig into it in the next step.";
+        stepResult.passed = true;
+        stepResult.possible = true;
+        advanceNow = true;
+        // Pre-flag S11 as possible in diagState
+        if (state.steps) {
+          const s11 = state.steps.find(s => s.id === 'S11');
+          if (!s11) state.steps.push({ id: 'S11', label: 'Temp sensor', passed: true, possible: true, preflagged: true });
+          else { s11.possible = true; s11.preflagged = true; }
+        }
+        break;
+
       case 'circ_flow_check':
         responseMsg = "Good — the pump is energized. The circ pump pushes water through the heater and then to the flow switch/sensor downstream. The sensor must detect sufficient flow to function properly — if flow is insufficient, the circuit won't close and the spa fails.\n\nLook for the flow indicator downstream after the heater. You should be able to visually see the paddle of the flow sensor making contact with the post. Is water moving through?";
         advanceNow = false;
         break;
+
       case 'cant_find_flow_switch':
         responseMsg = "No problem — we'll cover the flow switch in detail in the next step.";
         stepResult.passed = true;
         stepResult.skipped = true;
         advanceNow = true;
         break;
+
       case 'unusual_finding':
         responseMsg = "Describe what you see and I'll help identify it. Or upload a photo for a closer look (Premium).";
         advanceNow = false;
         break;
+
       case 'multimeter_test':
         responseMsg = "Set your multimeter to resistance (Ω). Disconnect the heater element leads. Test across the two terminals — you should read between 8-16 Ω for a working element. Also test each terminal to ground — you should read infinite (OL). What do you get?";
         advanceNow = false;
         break;
+
       case 'visual_element_check':
-        responseMsg = "Look at the heater element for any visible corrosion, burn marks, or damage on the element body or terminals.";
+        responseMsg = "Look at the heater element for any visible corrosion, burn marks, or damage on the element body or terminals. What do you see?";
         advanceNow = false;
         break;
+
       case 'suggest_multimeter':
+        responseMsg = "A multimeter is a handy tool to have for spa diagnosis and general home use. Here are some options:";
         partCard = 'multimeter';
-        responseMsg = "A multimeter is a handy tool to have for spa diagnosis and general home use.";
         advanceNow = false;
         break;
+
       case 'identify_board':
         responseMsg = "Upload a clear photo of your control board (Premium feature) and I'll help identify the exact model.";
         advanceNow = false;
@@ -1897,7 +2364,9 @@ app.post("/api/chat", async (req, res) => {
       spaLabel = spaMatch ? spaMatch[1].trim() : 'Unknown';
     }
     const errMatch = lastMsgContent.match(/Error code(?:[^:]*)?:\s*([A-Z0-9]+)/i);
-    const newState = { spa: spaLabel, errorCode: errMatch ? errMatch[1] : null, steps: [], currentStep: 'S2a', lastUpdated: Date.now() };
+    const rawErrCode = errMatch ? errMatch[1] : null;
+    const cleanErrCode = rawErrCode ? rawErrCode.replace(/[^A-Za-z0-9]/g, '').toUpperCase() || null : null;
+    const newState = { spa: spaLabel, errorCode: cleanErrCode, steps: [], currentStep: 'S2a', lastUpdated: Date.now() };
     setDiagState(clientId, newState);
   }
 
