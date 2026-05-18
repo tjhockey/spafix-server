@@ -1,4 +1,4 @@
-// 4.9.15al
+// v4.9.15bb
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -965,6 +965,261 @@ const DIAG_STEPS = {
       {label:'I need help identifying my board', outcome:'action', action:'identify_board'},
     ]
   },
+
+  // ── NOISE sequence ────────────────────────────────────────────
+  N_LOC: { id:'N_LOC', next:'N_WHEN', label:'Sound location',
+    question:'Where is the noise coming from?',
+    buttons:[
+      {label:'Equipment bay / inside cabinet', outcome:'action', action:'noise_bay'},
+      {label:'External speakers / audio system', outcome:'action', action:'noise_audio'},
+      {label:'Not sure', outcome:'action', action:'noise_unsure'},
+    ]
+  },
+  N_WHEN: { id:'N_WHEN', next:'N_TYPE', label:'When it occurs',
+    question:'When does the noise happen?',
+    buttons:[
+      {label:'Constant — never stops', outcome:'action', action:'noise_constant'},
+      {label:'Only when jets run', outcome:'action', action:'noise_jets'},
+      {label:'Only when heating', outcome:'action', action:'noise_heat'},
+      {label:'Only from audio system', outcome:'action', action:'noise_audio_only'},
+      {label:'Intermittent / random', outcome:'pass'},
+    ]
+  },
+  N_BREAKER: { id:'N_BREAKER', next:'N_TYPE', label:'Breaker test',
+    question:'Turn off the spa breaker completely. Wait 10 seconds, then listen — is the noise still there?',
+    buttons:[
+      {label:'Noise stopped — spa confirmed', outcome:'pass'},
+      {label:'Still noisy — external source', outcome:'action', action:'noise_external_end'},
+      {label:'Skip Step', outcome:'skip'},
+    ]
+  },
+  N_TYPE: { id:'N_TYPE', next:'N_PNL', label:'Sound type',
+    question:'What does the noise sound like?',
+    buttons:[
+      {label:'Grinding or screeching', outcome:'action', action:'noise_grinding'},
+      {label:'Loud humming', outcome:'action', action:'noise_humming'},
+      {label:'Rattling or vibrating', outcome:'pass'},
+      {label:'Gurgling or popping', outcome:'pass'},
+      {label:'Static / hissing (audio)', outcome:'action', action:'noise_audio_static'},
+      {label:'Beeping', outcome:'action', action:'noise_beeping'},
+    ]
+  },
+  N_PNL: { id:'N_PNL', next:'N_FLT', label:'Panel press test',
+    question:'Press firmly on each cabinet panel, one at a time. Does the noise change or muffle when you press?',
+    buttons:[
+      {label:'Yes — noise changes with panel', outcome:'action', action:'noise_cabinet_resonance'},
+      {label:'No difference', outcome:'pass'},
+    ]
+  },
+  N_FLT: { id:'N_FLT', next:'N_BAY', label:'Filter bypass test',
+    question:'Remove your filters completely, then run the spa. Did the noise stop or noticeably improve?',
+    buttons:[
+      {label:'Yes — noise stopped', outcome:'action', action:'noise_cavitation'},
+      {label:'No — still noisy', outcome:'pass'},
+      {label:'Skip Step', outcome:'skip'},
+    ]
+  },
+  N_BAY: { id:'N_BAY', next:'N_TEMP', label:'Equipment bay visual',
+    bayStep:true,
+    question:'Open the equipment bay and scan inside without touching anything. Look for dripping water near pump seals, white scale or green corrosion around the pump shaft, and loose hose clamps.',
+    buttons:[
+      {label:'Dripping or scale around shaft seal', outcome:'fail', part:'circ pump seal'},
+      {label:'Everything looks dry and normal', outcome:'pass'},
+      {label:'Skip Step', outcome:'skip'},
+    ]
+  },
+  N_TEMP: { id:'N_TEMP', next:'N_IMP', label:'Motor temperature',
+    bayStep:true,
+    question:'Carefully hold your hand near (not touching) the motor casing. Does it feel abnormally hot?',
+    buttons:[
+      {label:'Abnormally hot — very hot to the touch', outcome:'fail', part:'circulation pump'},
+      {label:'Warm but normal', outcome:'pass'},
+      {label:'Cool / room temperature', outcome:'pass'},
+      {label:'Skip Step', outcome:'skip'},
+    ]
+  },
+  N_IMP: { id:'N_IMP', next:'N_BEEP', label:'Impeller check',
+    bayStep:true,
+    question:'With power OFF and slice valves closed, carefully open just the face of the pump union — enough to look inside. Do you see any debris in the impeller?',
+    buttons:[
+      {label:'Found debris — cleared it out', outcome:'action', action:'noise_impeller_cleared'},
+      {label:'No debris visible', outcome:'pass'},
+      {label:"Can't access safely", outcome:'skip'},
+      {label:'Skip Step', outcome:'skip'},
+    ]
+  },
+  N_BEEP: { id:'N_BEEP', next:null, label:'Panel check',
+    question:'Look at your topside control panel. What does it show?',
+    buttons:[
+      {label:'Error code showing', outcome:'action', action:'noise_error_code'},
+      {label:'No code — panel looks normal', outcome:'action', action:'noise_external_check'},
+      {label:'No power / garbled display', outcome:'fail', part:'control board'},
+    ]
+  },
+  N_AUD1: { id:'N_AUD1', next:'N_AUD2', label:'Audio source isolation',
+    question:'Switch the audio source from FM Radio to Bluetooth. Did the static or hissing stop?',
+    buttons:[
+      {label:'Yes — static gone on Bluetooth', outcome:'action', action:'noise_fm_interference'},
+      {label:'No — still noisy on Bluetooth', outcome:'pass'},
+    ]
+  },
+  N_AUD2: { id:'N_AUD2', next:'N_AUD3', label:'Volume fade test',
+    question:'Turn the volume all the way down to zero. Is the noise still audible at zero volume?',
+    buttons:[
+      {label:'Yes — still noisy at zero volume', outcome:'fail', part:'audio amplifier'},
+      {label:'No — quiet at zero volume', outcome:'pass'},
+    ]
+  },
+  N_AUD3: { id:'N_AUD3', next:null, label:'Speaker isolation',
+    question:'Use your balance or fader control to isolate individual speakers. Is the issue from one speaker or all of them?',
+    buttons:[
+      {label:'One speaker is worse', outcome:'action', action:'noise_single_speaker'},
+      {label:'All speakers equally', outcome:'action', action:'noise_all_speakers'},
+    ]
+  },
+
+  // ── WATER sequence ────────────────────────────────────────────
+  W1: { id:'W1', next:'W2', label:'Symptom type',
+    question:'What\'s the main symptom you\'re noticing with your water?',
+    buttons:[
+      {label:'Appearance (cloudy / green / foamy)', outcome:'action', action:'water_appearance'},
+      {label:'Smell', outcome:'action', action:'water_smell'},
+      {label:'Feel (skin irritation / slimy)', outcome:'action', action:'water_feel'},
+      {label:'Behavior (not heating / losing water)', outcome:'action', action:'water_behavior'},
+    ]
+  },
+  W2: { id:'W2', next:'W3', label:'Water age check',
+    question:'When was the water last fully changed?',
+    buttons:[
+      {label:'Less than 3 months', outcome:'pass'},
+      {label:'3–4 months', outcome:'action', action:'water_old'},
+      {label:'More than 4 months', outcome:'action', action:'water_very_old'},
+      {label:'Not sure', outcome:'pass'},
+    ]
+  },
+  W3: { id:'W3', next:'W4', label:'Test strip gate',
+    question:'Have you tested the water in the last 24 hours?',
+    buttons:[
+      {label:'Yes — tested recently', outcome:'pass'},
+      {label:'No — not tested yet', outcome:'action', action:'water_test_guide'},
+      {label:'Skip Step', outcome:'skip'},
+    ]
+  },
+  W4: { id:'W4', next:'W5', label:'Test results',
+    question:'What do your test results show? Select the range that applies:',
+    buttons:[
+      {label:'pH: Low (below 7.2)', outcome:'action', action:'water_ph_low'},
+      {label:'pH: Good (7.2–7.8)', outcome:'pass'},
+      {label:'pH: High (above 7.8)', outcome:'action', action:'water_ph_high'},
+      {label:'Not sure / skipping', outcome:'pass'},
+    ]
+  },
+  W5: { id:'W5', next:'W_A1', label:'Sanitizer type',
+    question:'What sanitizer system does your spa use?',
+    buttons:[
+      {label:'Chlorine', outcome:'pass'},
+      {label:'Bromine', outcome:'pass'},
+      {label:'Salt system', outcome:'pass'},
+      {label:'Not sure', outcome:'pass'},
+    ]
+  },
+  W_A1: { id:'W_A1', next:'W_A2', label:'Cloudy — onset',
+    question:'When did the cloudy water start?',
+    buttons:[
+      {label:'Just started (24–48 hours)', outcome:'action', action:'water_cloudy_new'},
+      {label:'Building up over days', outcome:'action', action:'water_cloudy_building'},
+    ]
+  },
+  W_A2: { id:'W_A2', next:'W_A3', label:'Cloudy — dosing',
+    question:'',
+    buttons:[
+      {label:'Got dosing guidance — will treat now', outcome:'pass'},
+      {label:'Water improved', outcome:'action', action:'water_improving'},
+      {label:'No change after treatment', outcome:'action', action:'water_no_change'},
+    ]
+  },
+  W_A3: { id:'W_A3', next:'W_CONFIRM', label:'Dead algae check',
+    question:'Did the water turn green before becoming cloudy (after a shock treatment)?',
+    buttons:[
+      {label:'Yes — shocked green water, now cloudy', outcome:'action', action:'water_dead_algae'},
+      {label:'No — never was green', outcome:'pass'},
+    ]
+  },
+  W_B1: { id:'W_B1', next:'W_B2', label:'Foamy — products',
+    question:'Has the spa been used recently with body lotions, oils, sunscreen, or hair products?',
+    buttons:[
+      {label:'Yes — used recently with products', outcome:'action', action:'water_foam_products'},
+      {label:'No — no products used', outcome:'pass'},
+    ]
+  },
+  W_B2: { id:'W_B2', next:'W_B3', label:'Foamy — water age',
+    question:'How recently was the water filled?',
+    buttons:[
+      {label:'Less than 2 weeks', outcome:'action', action:'water_foam_new_fill'},
+      {label:'More than 3 months', outcome:'action', action:'water_old'},
+      {label:'1–3 months old', outcome:'pass'},
+    ]
+  },
+  W_B3: { id:'W_B3', next:'W_CONFIRM', label:'Foamy — air dial test',
+    question:'Turn all air dial controls to the fully closed position. Did the foam stop or reduce significantly?',
+    buttons:[
+      {label:'Yes — foam reduced', outcome:'action', action:'water_foam_chemical'},
+      {label:'No — still foaming heavily', outcome:'action', action:'water_foam_extreme'},
+    ]
+  },
+  W_C1: { id:'W_C1', next:'W_C2', label:'Green — cover habits',
+    question:'Is the spa kept covered when not in use?',
+    buttons:[
+      {label:'Yes — always covered', outcome:'action', action:'water_green_metals'},
+      {label:'No — often left uncovered', outcome:'action', action:'water_green_algae'},
+    ]
+  },
+  W_C2: { id:'W_C2', next:'W_C3', label:'Green — test routing',
+    question:'Is your sanitizer reading currently low (below target range)?',
+    buttons:[
+      {label:'Yes — sanitizer is low', outcome:'action', action:'water_algae_treat'},
+      {label:'No — sanitizer is normal', outcome:'action', action:'water_green_metals'},
+    ]
+  },
+  W_C3: { id:'W_C3', next:'W_CONFIRM', label:'Green — scratch test',
+    question:'Run your hand along the spa shell walls underwater. How does it feel?',
+    buttons:[
+      {label:'Slimy / slippery', outcome:'action', action:'water_algae_slimy'},
+      {label:'Normal / slightly rough', outcome:'action', action:'water_metals_treat'},
+    ]
+  },
+  W_D1: { id:'W_D1', next:'W_CONFIRM', label:'Smell — type',
+    question:'What does the smell remind you of most?',
+    buttons:[
+      {label:'Strong chlorine / chemical smell', outcome:'action', action:'water_smell_chloramines'},
+      {label:'Rotten egg / sulfur', outcome:'action', action:'water_smell_bacteria'},
+      {label:'Musty / earthy', outcome:'action', action:'water_smell_biofilm'},
+    ]
+  },
+  W_E1: { id:'W_E1', next:'W_CONFIRM', label:'Feel — symptom',
+    question:'What are you noticing when you\'re in the water?',
+    buttons:[
+      {label:'Itchy skin or eyes', outcome:'action', action:'water_feel_itch'},
+      {label:'Slippery / slimy feel', outcome:'action', action:'water_feel_slimy'},
+      {label:'Crusty scale buildup on shell', outcome:'action', action:'water_scale'},
+    ]
+  },
+  W_F1: { id:'W_F1', next:'W_CONFIRM', label:'Behavior routing',
+    question:'What behavior are you noticing?',
+    buttons:[
+      {label:'Not heating', outcome:'action', action:'water_behavior_heat'},
+      {label:'Excessive foam', outcome:'action', action:'water_foam_redirect'},
+      {label:'Losing water level', outcome:'action', action:'water_behavior_loss'},
+    ]
+  },
+  W_CONFIRM: { id:'W_CONFIRM', next:null, label:'Treatment confirmation',
+    question:'After treatment, wait 30–60 minutes with circulation running, then retest. What do your readings look like?',
+    buttons:[
+      {label:'Readings improved — looking better', outcome:'action', action:'water_improving'},
+      {label:'No change after treatment', outcome:'action', action:'water_no_change'},
+      {label:'Readings got worse', outcome:'action', action:'water_escalate'},
+    ]
+  },
 };
 // ── Diag state store ──────────────────────────────────────────────
 const diagStateStore = {};
@@ -1232,8 +1487,18 @@ DIAG PROGRESS: user asks to "show all steps", "show diagnostic list", "what step
   Format: "1. Filter condition ✅", "2. Water condition ⏳", etc.
   User can say "go back to step 3" → re-execute that step, signal [SK:current] and set state back.`;
 
+const SP_OTHER_FREETEXT = `=OTHER_FREETEXT=
+The user is in free-text "Other" diagnostic mode — their issue doesn't fit the standard flow/heat/jets/noise/water sequences.
+Your job: attempt a genuine, specific diagnosis based on what they describe. Use your knowledge of hot tub components for their specific spa model.
+Rules:
+- Stay grounded in what the spa can actually do — never fabricate component behavior or specs
+- If uncertain about a specific behavior for this spa model, say so explicitly before advising
+- Work through possibilities systematically: cheapest/easiest causes first, expensive components last
+- Never suggest calling a technician
+- When you have truly exhausted all remote diagnostic options or find yourself repeating the same advice, append [DIAG_END] on its own line at the very end of your response — not before, not on first response`;
+
 function buildSystemPrompt(context = {}) {
-  const { hasDiagState, isGuideEntry, hasSpaConfirmed, hasPartRequest, isEquipmentBayStep, hasInstallRequest, isFirstMessage, stepContext } = context;
+  const { hasDiagState, isGuideEntry, hasSpaConfirmed, hasPartRequest, isEquipmentBayStep, hasInstallRequest, isFirstMessage, stepContext, isOtherFreeText, otherHint } = context;
   const modules = [SP_CORE];
   if (isFirstMessage || !hasSpaConfirmed) modules.push(SP_PERSONALITY);
   if (hasDiagState || hasSpaConfirmed) modules.push(SP_DIAG_FLOW);
@@ -1243,8 +1508,11 @@ function buildSystemPrompt(context = {}) {
   if (hasInstallRequest) modules.push(SP_INSTALL);
   if (isGuideEntry) modules.push(SP_GUIDE_CONTEXT);
   if (hasSpaConfirmed || hasDiagState) modules.push(SP_BRAND_CONTEXT);
-  if (!hasDiagState) modules.push(SP_MISC);
-  // SP_MISC excluded during active diagnosis — saves ~271 tokens, Jet stays on-script
+  if (!hasDiagState && !isOtherFreeText) modules.push(SP_MISC);
+  if (isOtherFreeText) {
+    modules.push(SP_OTHER_FREETEXT);
+    if (otherHint) modules.push(`[HINT: User's issue may relate to "${otherHint}" — use this as a starting point but don't assume]`);
+  }
   if (stepContext) modules.push(stepContext);
   return modules.join('\n\n');
 }
@@ -1270,7 +1538,9 @@ function detectRequestContext(messages, diagStateIn, body) {
   } else if (!diagStateIn && (hasSpaConfirmed || body.startDiagnosis)) {
     stepContext = buildStepContext({ currentStep: 'S1' });
   }
-  return { hasDiagState, isGuideEntry, hasSpaConfirmed, hasPartRequest, isEquipmentBayStep, hasInstallRequest, isFirstMessage, stepContext };
+  const isOtherFreeText = body.otherFreeText === true;
+  const otherHint = body.otherHint || null;
+  return { hasDiagState, isGuideEntry, hasSpaConfirmed, hasPartRequest, isEquipmentBayStep, hasInstallRequest, isFirstMessage, stepContext, isOtherFreeText, otherHint };
 }
 
 
@@ -1867,7 +2137,7 @@ app.post("/api/diag-button", async (req, res) => {
     const errorCode = rawErrorCode ? rawErrorCode.replace(/[^A-Za-z0-9]/g, '').toUpperCase() || null : null;
     const topic = req.body.topic || 'flow';
     const spaLabel = [spaYear, spaMake, spaModel].filter(v => v && v !== 'Unknown').join(' ') || 'Unknown';
-    const startStep = topic === 'heat' ? 'H2a' : topic === 'jets' ? 'J2a' : 'S2a';
+    const startStep = topic === 'heat' ? 'H2a' : topic === 'jets' ? 'J2a' : topic === 'noise' ? 'N_LOC' : topic === 'water' ? 'W1' : 'S2a';
     setDiagState(clientId, { spa: spaLabel, errorCode, topic, steps: [], currentStep: startStep, lastUpdated: Date.now() });
     return res.json({ ok: true, diagState: getDiagState(clientId) });
   }
@@ -2575,7 +2845,7 @@ const partsCache = {};
 const PARTS_SYSTEM_PROMPT = `You are a hot tub parts expert. When given a spa year, make, and model, return a JSON array of commonly replaced parts for that specific model. Each item must have:
 - name: part name (string)
 - category: one of: "Filtration", "Heating", "Pumps & Jets", "Controls & Sensors", "Plumbing & Seals", "Chemicals & Consumables", "Covers & Accessories"
-- part_number: OEM part number if known for that specific model (string or null)
+- part_number: OEM part number ONLY if you have verified data for this exact model (string or null). NEVER invent or guess part numbers — if unsure, use null.
 - mfr_model: SHORT base manufacturer/aftermarket model name buyers search for e.g. "Laing E-10", "Balboa VS501Z", "Gecko SSPA" — NOT the full part number with suffixes (string or null)
 - interval: replacement interval e.g. "Every 1-2 years", "As needed", "5-10 years"
 - notes: brief note, max 8 words
@@ -2599,7 +2869,9 @@ Include these categories of parts where applicable to the model:
 
 Do NOT include: spa covers, test kits, chemicals, generic accessories, or any item that requires manual verification to confirm applicability.
 
-CRITICAL: Return ONLY a raw JSON array. Start with [ and end with ]. No markdown, no backticks, no explanation. Keep total response under 2500 tokens.`;
+IMPORTANT — PART NUMBERS: Only include a part_number value when you have verified OEM data for this specific model. If unsure, set part_number to null. Never invent part numbers. However, you MUST always return a complete JSON array — even for unknown models, return generic commonly-replaced parts for that type of spa with part_number: null for all items.
+
+CRITICAL: Return ONLY a raw JSON array. Start with [ and end with ]. No markdown, no backticks, no explanation, no preamble. Keep total response under 2500 tokens.`;
 
 app.post('/api/parts-list', async (req, res) => {
   const { year, make, model, cacheKey, keyPartNumbers, compatibleParts } = req.body;
@@ -2645,10 +2917,13 @@ app.post('/api/parts-list', async (req, res) => {
     logTokenUsage('parts-list', 'claude-haiku-4-5-20251001', data.usage, { cached: false });
     if (!response.ok) return res.status(500).json({ error: data?.error?.message||'API error' });
     const rawText = data.content?.map(b=>b.text||'').join('')||'';
-    const start = rawText.indexOf('[');
-    const end = rawText.lastIndexOf(']');
+    console.error('[parts-list] raw response:', rawText.substring(0, 300));
+    // Strip markdown fences and clean before parsing
+    const cleaned = rawText.replace(/```json\s*/gi,'').replace(/```\s*/gi,'').trim();
+    const start = cleaned.indexOf('[');
+    const end = cleaned.lastIndexOf(']');
     if (start === -1 || end === -1) throw new Error('No JSON array found in response');
-    const parts = JSON.parse(rawText.slice(start, end + 1));
+    const parts = JSON.parse(cleaned.slice(start, end + 1));
 
     // Flag parts with safety warnings from compatible_parts for UI badge rendering
     if (compatibleParts && compatibleParts.length > 0) {
