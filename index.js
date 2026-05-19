@@ -1,4 +1,4 @@
-// v4.9.15bd
+// v4.9.15bf
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -1721,11 +1721,18 @@ app.get("/api/model/:year/:make/:model", async (req, res) => {
   if (!year || !make || !model) return res.status(400).json({ error: "year, make, model required" });
 
   // Query spa_models and parts table in parallel — single round trip
+  const yearNum = parseInt(year);
+  const yearFilter = !isNaN(yearNum) && yearNum > 1980 ? {
+    'year_start': `lte.${yearNum}`,
+    'year_end': `gte.${yearNum}`,
+  } : {};
+
   const [rows, partsRows] = await Promise.all([
     supabaseGet('spa_models', {
       'select': 'brand,model_name,year_start,year_end,control_system,common_failures,error_codes,pump_configs,verified,key_part_numbers,filter_count',
       'brand': `ilike.*${make}*`,
       'model_name': `ilike.*${model}*`,
+      ...yearFilter,
       'limit': 1
     }),
     supabaseGet('parts', {
@@ -1750,9 +1757,20 @@ app.get("/api/model/:year/:make/:model", async (req, res) => {
     common_failures: Array.isArray(profile.common_failures)
       ? profile.common_failures.slice(0, 5).join('; ')
       : (profile.common_failures || null),
-    error_codes: Array.isArray(profile.error_codes)
-      ? profile.error_codes.map(e => e.code).join(', ')
-      : (profile.error_codes || null),
+    error_codes: (() => {
+      const ec = profile.error_codes;
+      if (!ec) return null;
+      let codes = [];
+      if (Array.isArray(ec)) {
+        codes = ec.map(e => (typeof e === 'object' && e !== null) ? (e.code || e.name || Object.values(e)[0]) : String(e)).filter(Boolean);
+      } else if (typeof ec === 'string') {
+        codes = ec.split(',').map(c => c.trim()).filter(Boolean);
+      }
+      // Filter out junk — valid codes are 1-12 chars, alphanumeric with limited punctuation
+      const validCode = c => /^[A-Za-z0-9][A-Za-z0-9\s\-_.\/]{0,11}$/.test(c.trim()) && c.trim().length >= 2;
+      const cleaned = codes.filter(validCode);
+      return cleaned.length ? cleaned.join(', ') : null;
+    })(),
     pump_configs: Array.isArray(profile.pump_configs)
       ? profile.pump_configs.map(p => `Pump ${p.pump_num}: ${p.hp}hp ${p.speeds}-speed`).join(', ')
       : (profile.pump_configs || null),
