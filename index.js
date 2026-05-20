@@ -1,4 +1,4 @@
-// v4.9.15bf
+// v4.9.15bl
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -1729,7 +1729,7 @@ app.get("/api/model/:year/:make/:model", async (req, res) => {
 
   const [rows, partsRows] = await Promise.all([
     supabaseGet('spa_models', {
-      'select': 'brand,model_name,year_start,year_end,control_system,common_failures,error_codes,pump_configs,verified,key_part_numbers,filter_count',
+      'select': 'brand,model_name,year_start,year_end,control_system,common_failures,error_codes,code_types,pump_configs,verified,key_part_numbers,filter_count',
       'brand': `ilike.*${make}*`,
       'model_name': `ilike.*${model}*`,
       ...yearFilter,
@@ -1760,17 +1760,32 @@ app.get("/api/model/:year/:make/:model", async (req, res) => {
     error_codes: (() => {
       const ec = profile.error_codes;
       if (!ec) return null;
-      let codes = [];
-      if (Array.isArray(ec)) {
-        codes = ec.map(e => (typeof e === 'object' && e !== null) ? (e.code || e.name || Object.values(e)[0]) : String(e)).filter(Boolean);
-      } else if (typeof ec === 'string') {
-        codes = ec.split(',').map(c => c.trim()).filter(Boolean);
+      // Plain JSON object: {"LF":"description","Pr":"description"} — extract keys as codes
+      if (typeof ec === 'object' && !Array.isArray(ec)) {
+        const codes = Object.keys(ec).filter(Boolean);
+        return codes.length ? codes.join(', ') : null;
       }
-      // Filter out junk — valid codes are 1-12 chars, alphanumeric with limited punctuation
-      const validCode = c => /^[A-Za-z0-9][A-Za-z0-9\s\-_.\/]{0,11}$/.test(c.trim()) && c.trim().length >= 2;
-      const cleaned = codes.filter(validCode);
-      return cleaned.length ? cleaned.join(', ') : null;
+      if (Array.isArray(ec)) {
+        const mapped = ec.map(e => (typeof e === 'object' && e !== null) ? (e.code || e.name || Object.values(e)[0]) : String(e)).filter(Boolean);
+        return mapped.length ? mapped.join(', ') : null;
+      }
+      if (typeof ec === 'string') {
+        const codes = ec.split(',').map(c => c.trim()).filter(Boolean);
+        const validCode = c => /^[A-Za-z0-9][A-Za-z0-9\s\-_.\/]{0,11}$/.test(c) && c.length >= 2;
+        const cleaned = codes.filter(validCode);
+        return cleaned.length ? cleaned.join(', ') : null;
+      }
+      return null;
     })(),
+    error_code_descriptions: (() => {
+      const ec = profile.error_codes;
+      if (!ec) return null;
+      if (typeof ec === 'object' && !Array.isArray(ec)) return ec;
+      return null;
+    })(),
+    code_types: (typeof profile.code_types === 'object' && profile.code_types !== null && !Array.isArray(profile.code_types))
+      ? profile.code_types
+      : null,
     pump_configs: Array.isArray(profile.pump_configs)
       ? profile.pump_configs.map(p => `Pump ${p.pump_num}: ${p.hp}hp ${p.speeds}-speed`).join(', ')
       : (profile.pump_configs || null),
@@ -1976,12 +1991,18 @@ function getBrandsForCountry(countryCode) {
 
 app.get("/api/models-for-make", async (req, res) => {
   let make = req.query.make || '';
+  const yearNum = parseInt(req.query.year || '');
   if (!make) return res.json({ models: [] });
   // Normalize — strip common suffixes to match Supabase brand column
   make = make.replace(/\s+(spas?|hot\s+tubs?|industries|inc\.?|llc\.?|corp\.?)$/i, '').trim();
+  const yearFilter = !isNaN(yearNum) && yearNum > 1980 ? {
+    'year_start': `lte.${yearNum}`,
+    'year_end': `gte.${yearNum}`,
+  } : {};
   const rows = await supabaseGet('spa_models', {
     'select': 'model_name',
     'brand': `ilike.*${make}*`,
+    ...yearFilter,
     'order': 'model_name',
     'limit': 100
   });
@@ -2716,8 +2737,13 @@ app.post("/api/chat", async (req, res) => {
     }
   }
 
+  const errorCodeDescriptions = req.body.errorCodeDescriptions || null;
+  const errorCodeDescLine = (errorCodeDescriptions && typeof errorCodeDescriptions === 'object')
+    ? `\n[ERROR CODE REFERENCE for this spa: ${Object.entries(errorCodeDescriptions).map(([k,v]) => `${k}: ${v}`).join(' | ')}]`
+    : '';
+
   const spaPrefix = spaLine
-    ? `[SPA:${spaLine}] This is the user's confirmed spa. Never ask for spa details again. Never change or hallucinate a different spa.${errorCodeNote}\n\n`
+    ? `[SPA:${spaLine}] This is the user's confirmed spa. Never ask for spa details again. Never change or hallucinate a different spa.${errorCodeNote}${errorCodeDescLine}\n\n`
     : '';
 
   let effectiveSystemPrompt = spaPrefix + systemPrompt;
