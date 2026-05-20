@@ -1,4 +1,4 @@
-// v4.9.15bl
+// SpaFix Server v4.9.15bl — hasDiagState fix, hasSpaConfirmed broadened, spaPrefix preserved, char limit 300
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
