@@ -1,5 +1,5 @@
-// SpaFix Server v4.9.16r
-process.env.APP_VERSION = "v4.9.16r";
+// SpaFix Server v4.9.17
+process.env.APP_VERSION = "v4.9.17";
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -525,12 +525,12 @@ const DIAG_STEPS = {
     question:'What does the water look like right now?',
     buttons:[
       {label:'Clear', outcome:'pass'},
-      {label:'Cloudy / Foamy', outcome:'action', action:'water_cloudy'},
+      {label:'Cloudy / Foamy', outcome:'possible', action:'water_cloudy'},
       {label:'Visibly dirty', outcome:'action', action:'water_dirty'},
     ]
   },
   S2b: { id:'S2b', next:'S1', label:'Water level',
-    question:'Does the water cover the skimmer opening by at least an inch?',
+    question:'#If the water level is too low, the pump will suck in air instead of water. This creates an air lock or heavy foam, which tricks the spa\'s sensors into throwing a false "Low Flow" (FLO) or Overheat (OH) error—safely shutting down your heater even if the hardware is perfectly fine.\n\nWhat we\'re looking for:\n\n• The Vortex: A whirlpool pulling air down into the plumbing.\n• The Sweet Spot: The water level needs to be at least 1 to 2 inches above the top of the skimmer opening (or roughly halfway up the skimmer face). This guarantees a steady, unbroken stream of water to the pump and heater.#\n\nDoes the water cover the skimmer opening by at least an inch?',
     buttons:[
       {label:"Yes, it's fine", outcome:'pass'},
       {label:'It looks low', outcome:'action', action:'top_up'},
@@ -545,7 +545,7 @@ const DIAG_STEPS = {
     ]
   },
   S3: { id:'S3', next:'S4', label:'Suction test',
-    question:'With the filters still out, run the spa. What do you feel at the filter inlet?',
+    question:'With the filter(s) still removed, turn on the spa and check the water intake (where the filter usually sits). A healthy spa will always have a strong, noticeable pull at the inlet. What do you feel?',
     buttons:[
       {label:'Strong suction', outcome:'pass'},
       {label:'Weak or no suction', outcome:'possible'},
@@ -557,7 +557,7 @@ const DIAG_STEPS = {
     question:'',
     buttons:[
       {label:'Error cleared', outcome:'action', action:'airlock_cleared'},
-      {label:'Error still showing', outcome:'neutral'},
+      {label:'Error still showing', outcome:'pass'},
       {label:'Skip Step', outcome:'skip'},
     ]
   },
@@ -603,7 +603,7 @@ const DIAG_STEPS = {
     question:'',
     buttons:[
       {label:'Error cleared', outcome:'pass'},
-      {label:'Still showing', outcome:'neutral'},
+      {label:'Still showing', outcome:'pass'},
       {label:'Skip Step', outcome:'skip'},
     ]
   },
@@ -697,7 +697,7 @@ const DIAG_STEPS = {
     question:'What does the water look like right now?',
     buttons:[
       {label:'Clear', outcome:'pass'},
-      {label:'Cloudy / Foamy', outcome:'action', action:'water_cloudy'},
+      {label:'Cloudy / Foamy', outcome:'possible', action:'water_cloudy'},
       {label:'Visibly dirty', outcome:'action', action:'water_dirty'},
     ]
   },
@@ -726,7 +726,7 @@ const DIAG_STEPS = {
     ]
   },
   H3: { id:'H3', next:'H4', label:'Suction test',
-    question:'With the filters still out, run the spa. What do you feel at the filter inlet?',
+    question:'With the filter(s) still removed, turn on the spa and check the water intake (where the filter usually sits). A healthy spa will always have a strong, noticeable pull at the inlet. What do you feel?',
     buttons:[
       {label:'Strong suction', outcome:'pass'},
       {label:'Weak or no suction', outcome:'possible'},
@@ -853,7 +853,7 @@ const DIAG_STEPS = {
     question:'What does the water look like right now?',
     buttons:[
       {label:'Clear', outcome:'pass'},
-      {label:'Cloudy / Foamy', outcome:'action', action:'water_cloudy'},
+      {label:'Cloudy / Foamy', outcome:'possible', action:'water_cloudy'},
       {label:'Visibly dirty', outcome:'action', action:'water_dirty'},
     ]
   },
@@ -1735,7 +1735,7 @@ app.get("/api/model/:year/:make/:model", async (req, res) => {
 
   const [rows, partsRows] = await Promise.all([
     supabaseGet('spa_models', {
-      'select': 'brand,model_name,year_start,year_end,control_system,common_failures,error_codes,code_types,pump_configs,verified,key_part_numbers,filter_count',
+      'select': 'brand,model_name,year_start,year_end,control_system,common_failures,error_codes,code_types,pump_configs,verified,key_part_numbers,filter_count,has_spa_boy',
       'brand': `ilike.*${make}*`,
       'model_name': `ilike.*${model}*`,
       ...yearFilter,
@@ -1797,6 +1797,7 @@ app.get("/api/model/:year/:make/:model", async (req, res) => {
       : (profile.pump_configs || null),
     key_part_numbers: profile.key_part_numbers || null,
     compatible_parts: partsRows || [],
+    has_spa_boy: profile.has_spa_boy || false,
   });
 });
 
@@ -2218,6 +2219,7 @@ app.post("/api/diag-button", async (req, res) => {
   let advanceNow = true;
   let skipPending = false;
   let deadEndButtons = null;
+  let partCardButtons = null; // inline buttons to append after partCard renders
   let briefOmitted = null; // text omitted due to briefMode — sent to admin/tester for highlight
 
   switch(outcome) {
@@ -2225,7 +2227,7 @@ app.post("/api/diag-button", async (req, res) => {
       stepResult.passed = true;
       // Step-specific pass messages
       const passMessages = {
-        'S2a': "Good — clean water rules out a chemistry or contamination issue.",
+        'S2a': `Right on, let\'s keep digging! We\'ll head to the next step, but remember: treating the water is a crucial part of the fix. Unbalanced water can trick sensors or mimic flow issues, so having clean water is essential to getting accurate results from the rest of this diagnostic procedure. Once you\'ve added your treatments, you\'ll be in the perfect spot to confirm everything is running flawlessly.\n\n[TELL_ME_MORE:s2a_water][HOLD_ADVANCE]`,
         'S2b': "Good — water level is fine.",
         'S1': "Filters ruled out — let's keep going.",
         'S3': "Good suction confirmed — the pump is moving water.",
@@ -2331,9 +2333,31 @@ app.post("/api/diag-button", async (req, res) => {
         advanceNow = true;
         break;
 
+      case 'water_dirty_clean':
+        responseMsg = [
+          "Here's what to do before we continue:",
+          "",
+          "**Step 1: Check and clean the filters** — Remove your filter cartridges and rinse them thoroughly with a high-pressure hose. If they have oily buildup or haven't been changed recently, use a dedicated filter cleaner soak or replace them.",
+          "**Step 2: Skim and vacuum debris** — Use a spa net or spa vacuum to remove any large visible particles, leaves, or settling debris from the footwell and seats.",
+          "",
+          "* **The 4-Month Rule:** If your water is more than 3–4 months old, or if it remains heavily contaminated after skimming, we strongly recommend a complete drain, shell wipe-down, and fresh refill. Trying to chemically treat heavily soiled water wastes time and money.",
+          "",
+          "Once the water is physically clean and circulating, tap below to continue.",
+        ].join("\n");
+        advanceNow = false;
+        partCard = 'water dirty';
+        partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="action" data-action="water_dirty_supplies" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Show Recommended Items</button><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">I have cleaned the water — Continue Diagnosis</button></div>';
+        break;
+
+      case 'water_dirty_supplies':
+        partCard = 'water dirty';
+        advanceNow = false;
+        partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">I have cleaned the water — Continue Diagnosis</button></div>';
+        break;
+
       case 'water_cloudy':
         responseMsg = [
-          "Cloudy water is usually caused by pH imbalance, low sanitizer, high calcium, or organic waste buildup. Here's what to do:",
+          "**Cloudy water is usually caused by pH imbalance, low sanitizer, high calcium, or organic waste buildup.**\n\nHere's what to do:",
           "",
           "• Test your water — check pH (target 7.2–7.8), alkalinity (80–120 ppm), and sanitizer levels first",
           "• Adjust pH if out of range — use pH Up or pH Down as needed",
@@ -2341,22 +2365,17 @@ app.post("/api/diag-button", async (req, res) => {
           "• Add a clarifier — spa clarifier binds fine particles so the filter can catch them",
           "• Run filtration — keep the pump running for at least 4–6 hours after treatment",
           "• Retest — check levels again before using the spa",
+          "* Draining, rinsing, and refilling with fresh water is always an acceptable alternative, particularly for water older than four months or heavily compromised clarity.",
           "",
-          "If the water is very old (4+ months), severely cloudy, or you'd rather not buy chemicals, draining, rinsing and refilling with fresh water is always a valid option.",
-          "",
-          "⚠️ Safety: Always read product labels before handling chemicals. Never mix chemicals directly — add to water, not water to chemicals. Keep away from children and pets.",
-          "",
-          "Some [MANUAL_LINK] recommend specific products — check yours for brand-specific guidance."
+          "Some [MANUAL_LINK] recommend specific products — check yours for brand-specific guidance.",
+          "[HALF_BREAK]",
+          "⚠️ Safety: Always read product labels before handling chemicals. Never mix chemicals directly — add to water, not water to chemicals. Keep away from children and pets."
         ].join("\n");
         partCard = 'water treatment cloudy';
         stepResult.passed = true;
         stepResult.possible = true;
         advanceNow = false;
-        deadEndButtons = [
-          { l: 'Show Recommended Items', o: 'action', a: 'water_show_items_cloudy' },
-          { l: 'View Water Care Guides', o: 'action', a: 'view_water_guides' },
-          { l: 'Continue Diagnosis', o: 'pass', a: '' },
-        ];
+        responseMsg += '\n\n<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="action" data-action="water_show_items_cloudy" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Show Recommended Items</button><button class="diag-btn" data-step="__STEP__" data-outcome="action" data-action="view_water_guides" data-part="" data-critical="false" onclick="handleDiagBtn(this)">View Water Care Guides</button><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button></div>';
         break;
 
       case 'water_foamy':
@@ -2368,42 +2387,31 @@ app.post("/api/diag-button", async (req, res) => {
           "• Shock the water — a good shock dose breaks down the organic compounds causing foam",
           "• Check sanitizer levels — low sanitizer allows foam-causing buildup",
           "• If foam persists — the water may have too many dissolved solids; a full drain and refill is the most reliable fix",
+          "* Draining, rinsing, and refilling with fresh water is always an acceptable alternative, particularly for water older than four months or heavily compromised clarity.",
           "",
-          "If the water is more than 3–4 months old or you've been using a lot of products in the spa, draining and refilling is often faster and cheaper than treating.",
-          "",
-          "⚠️ Safety: Always read product labels before handling chemicals. Never mix chemicals directly — add to water, not water to chemicals. Keep away from children and pets.",
-          "",
-          "Some [MANUAL_LINK] recommend specific products — check yours for brand-specific guidance."
+          "Some [MANUAL_LINK] recommend specific products — check yours for brand-specific guidance.",
+          "[HALF_BREAK]",
+          "⚠️ Safety: Always read product labels before handling chemicals. Never mix chemicals directly — add to water, not water to chemicals. Keep away from children and pets."
         ].join("\n");
         partCard = 'water treatment foamy';
         stepResult.passed = true;
         stepResult.possible = true;
         advanceNow = false;
-        deadEndButtons = [
-          { l: 'Show Recommended Items', o: 'action', a: 'water_show_items_foamy' },
-          { l: 'View Water Care Guides', o: 'action', a: 'view_water_guides' },
-          { l: 'Continue Diagnosis', o: 'pass', a: '' },
-        ];
+        responseMsg += '\n\n<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="action" data-action="water_show_items_foamy" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Show Recommended Items</button><button class="diag-btn" data-step="__STEP__" data-outcome="action" data-action="view_water_guides" data-part="" data-critical="false" onclick="handleDiagBtn(this)">View Water Care Guides</button><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button></div>';
         break;
 
       case 'water_show_items_cloudy':
         responseMsg = null;
         partCard = 'water treatment cloudy items';
+        partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button><button class="diag-btn" data-step="__STEP__" data-outcome="action" data-action="water_treatment_ordered" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Order Placed — I\'ll treat first</button></div>';
         advanceNow = false;
-        deadEndButtons = [
-          { l: 'Continue Diagnosis', o: 'pass', a: '' },
-          { l: "Order Placed — I'll treat first", o: 'action', a: 'water_treatment_ordered' },
-        ];
         break;
 
       case 'water_show_items_foamy':
         responseMsg = null;
         partCard = 'water treatment foamy items';
+        partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button><button class="diag-btn" data-step="__STEP__" data-outcome="action" data-action="water_treatment_ordered" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Order Placed — I\'ll treat first</button></div>';
         advanceNow = false;
-        deadEndButtons = [
-          { l: 'Continue Diagnosis', o: 'pass', a: '' },
-          { l: "Order Placed — I'll treat first", o: 'action', a: 'water_treatment_ordered' },
-        ];
         break;
 
       case 'water_treatment_ready':
@@ -2425,14 +2433,11 @@ app.post("/api/diag-button", async (req, res) => {
         break;
 
       case 'water_dirty':
-        responseMsg = "Dirty water needs to be addressed before we can run certain tests accurately. We can continue up to that point, but we strongly recommend sorting the water first.";
+        responseMsg = "**Dirty water needs to be addressed before we can run certain tests accurately.** We can continue up to that point, but we strongly recommend sorting out the water issue first.";
         stepResult.passed = true;
         stepResult.possible = true;
         advanceNow = false;
-        deadEndButtons = [
-          { l: 'Continue anyway', o: 'pass', a: '' },
-          { l: "I'll clean the water first", o: 'action', a: 'water_cloudy' },
-        ];
+        partCardButtons = '\n<div class=\"diag-step-btns\" style=\"margin-top:10px;\"><button class=\"diag-btn\" data-step=\"__STEP__\" data-outcome=\"pass\" data-action=\"\" data-part=\"\" data-critical=\"false\" onclick=\"handleDiagBtn(this)\">Continue anyway</button><button class=\"diag-btn\" data-step=\"__STEP__\" data-outcome=\"action\" data-action=\"water_dirty_clean\" data-part=\"\" data-critical=\"false\" onclick=\"handleDiagBtn(this)\">I\'ll clean the water first</button></div>';
         break;
 
       case 'show_water_treatment':
@@ -2446,24 +2451,21 @@ app.post("/api/diag-button", async (req, res) => {
         break;
 
       case 'view_water_guides':
-        responseMsg = "Opening water care guides for you.";
-        stepResult.passed = true;
-        advanceNow = true;
+        responseMsg = null;
+        advanceNow = false;
         break;
 
       case 'top_up':
-        responseMsg = "Top the water up to at least an inch above the skimmer opening, then continue.";
-        stepResult.passed = true;
-        advanceNow = true;
+        responseMsg = "Please top the water up to at least an inch above the skimmer opening now and let me know when it's done — I'll wait.";
+        stepResult.passed = false;
+        advanceNow = false;
+        partCardButtons = '<div class=\"diag-step-btns\" style=\"margin-top:10px;\"><button class=\"diag-btn\" data-step=\"__STEP__\" data-outcome=\"pass\" data-action=\"\" data-part=\"\" data-critical=\"false\" onclick=\"handleDiagBtn(this)\">Done, let\'s continue</button></div>';
         break;
 
       case 'filter_clean':
-        responseMsg = "Good — let's do a quick sanity check. Leave the filters out and run the spa. Does the error clear?";
+        responseMsg = "Good — let\'s do a quick sanity check. Leave the filters out and run the spa. Does the error clear?";
         advanceNow = false;
-        deadEndButtons = [
-          { l: 'Yes — error cleared', o: 'action', a: 'filter_clean_yes' },
-          { l: 'No — still showing', o: 'action', a: 'filter_clean_no' },
-        ];
+        partCardButtons = '<div class=\"diag-step-btns\" style=\"margin-top:10px;\"><button class=\"diag-btn\" data-step=\"__STEP__\" data-outcome=\"action\" data-action=\"filter_clean_yes\" data-part=\"\" data-critical=\"false\" onclick=\"handleDiagBtn(this)\">Yes — error cleared</button><button class=\"diag-btn\" data-step=\"__STEP__\" data-outcome=\"action\" data-action=\"filter_clean_no\" data-part=\"\" data-critical=\"false\" onclick=\"handleDiagBtn(this)\">No — still showing</button></div>';
         break;
 
       case 'filter_clean_yes':
@@ -2471,6 +2473,7 @@ app.post("/api/diag-button", async (req, res) => {
         stepResult.passed = false;
         advanceNow = false;
         partCard = 'filter';
+        partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button></div>';
         break;
 
       case 'filter_clean_no':
@@ -2480,22 +2483,16 @@ app.post("/api/diag-button", async (req, res) => {
         break;
 
       case 'filter_dirty':
-        responseMsg = "Let's test your filters. With the filters out, run the spa. Does the error clear?";
+        responseMsg = '"A little dirty" can still cause a big bottleneck. Even if they don\'t look completely filthy, microscopic debris, body oils, or mineral scaling can severely restrict water flow and cause an error.\n\nLet\'s perform a quick test to see if the filters are the true culprit.\n\n1. Turn off the power to your spa at the GFCI breaker.\n2. Remove the filter cartridge(s) completely from the skimmer well.\n3. Check the area to ensure no floating debris can get sucked into the plumbing.\n4. Turn the power back on and run the spa briefly without the filters.\n\nDoes the error clear up?';
         advanceNow = false;
-        deadEndButtons = [
-          { l: 'Yes — error cleared', o: 'action', a: 'filter_dirty_yes' },
-          { l: 'No — still showing', o: 'action', a: 'filter_dirty_no' },
-        ];
+        partCardButtons = '<div class=\"diag-step-btns\" style=\"margin-top:10px;\"><button class=\"diag-btn\" data-step=\"__STEP__\" data-outcome=\"action\" data-action=\"filter_dirty_yes\" data-part=\"\" data-critical=\"false\" onclick=\"handleDiagBtn(this)\">Yes — error cleared</button><button class=\"diag-btn\" data-step=\"__STEP__\" data-outcome=\"action\" data-action=\"filter_dirty_no\" data-part=\"\" data-critical=\"false\" onclick=\"handleDiagBtn(this)\">No — still showing</button></div>';
         break;
 
       case 'filter_dirty_yes':
-        responseMsg = "Perfect — we've found our culprit! If the spa runs fine without them, those filters are just a bit too restricted to let the water through. Filters are the unsung heroes of your spa, but they do need a refresh every now and then. Since yours are looking a little tired, we can either look at some heavy-duty cleaning supplies to revive them or just grab a new set so you can get back to soaking. What sounds best to you?";
+        responseMsg = `Perfect — we've found our culprit! If the spa runs fine without them, those filters are just a bit too restricted to let the water through. Even a "little dirty" can cause enough micro-resistance to trip a flow error.\n\nFilters are the first line of defense for your ${spaLabel}, protecting your pump and maintaining flow. Since yours are feeling a bit tired, you can either give them a deep chemical soak to clear out hidden oils and mineral buildup, or grab a fresh set to get back to soaking immediately.\n\nWhat sounds best to you?`;
         stepResult.passed = false;
         advanceNow = false;
-        deadEndButtons = [
-          { l: 'Clean them', o: 'action', a: 'suggest_filter_cleaning' },
-          { l: 'Replace them', o: 'action', a: 'suggest_filter_replace' },
-        ];
+        partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="action" data-action="suggest_filter_cleaning" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Clean them</button><button class="diag-btn" data-step="__STEP__" data-outcome="action" data-action="suggest_filter_replace" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Replace them</button></div>';
         break;
 
       case 'filter_dirty_no':
@@ -2510,6 +2507,7 @@ app.post("/api/diag-button", async (req, res) => {
         stepResult.passed = false;
         advanceNow = false;
         partCard = 'filter';
+        partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button></div>';
         break;
 
       case 'filter_keep_testing':
@@ -2521,19 +2519,15 @@ app.post("/api/diag-button", async (req, res) => {
       case 'suggest_filter_cleaning':
         responseMsg = "Here are some filter cleaning products that can help restore flow:";
         partCard = 'filter cleaning';
+        partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button></div>';
         advanceNow = false;
-        deadEndButtons = [
-          { l: 'Continue diagnosis', o: 'pass', a: '' },
-        ];
         break;
 
       case 'suggest_filter_replace':
         responseMsg = "Here are replacement filter options for your spa:";
         partCard = 'filter';
+        partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button></div>';
         advanceNow = false;
-        deadEndButtons = [
-          { l: 'Continue diagnosis', o: 'pass', a: '' },
-        ];
         break;
 
       case 'stop_diagnosis':
@@ -2546,12 +2540,31 @@ app.post("/api/diag-button", async (req, res) => {
         break;
 
       case 'cant_find_inlet':
-        responseMsg = "The filter inlet is the opening where your filter(s) sit — typically a circular opening a few inches in diameter inside the filter compartment. If you don't feel any suction, make sure the spa jets are running — some spas won't draw water through the filter inlet until the jets are active. <a href=\"#\" onclick=\"openManualFinder();return false;\" style=\"color:var(--teal-light);text-decoration:underline;\">Check your manual</a> or upload a photo of the filter bay and I'll help you identify it.";
+        responseMsg = "The filter inlet is the opening where your filter(s) sit — typically a circular opening a few inches in diameter inside the filter compartment. If you don't feel any suction, make sure the spa jets are running — some spas won't draw water through the filter inlet until the jets are active. [MANUAL_LINK] or upload a photo of the filter bay and I'll help you identify it.";
         advanceNow = false;
         deadEndButtons = [
           { l: 'Found it — testing now', o: 'action', a: 'S3_found_inlet' },
+          { l: '📸 Upload a Photo', o: 'action', a: 'upload_filter_bay_photo' },
+          { l: "Check Owner's Manual", o: 'action', a: 'open_manual_finder' },
           { l: 'Skip this step', o: 'skip', a: '' },
         ];
+        break;
+
+      case 'S3_found_inlet':
+        // User found the inlet — render S3 buttons so they can report suction
+        responseMsg = "Great — now check the suction. A healthy spa will have a strong, noticeable pull at the inlet.";
+        advanceNow = false;
+        deadEndButtons = [
+          { l: 'Strong suction', o: 'pass', a: '' },
+          { l: 'Weak or no suction', o: 'possible', a: '' },
+          { l: 'Skip this step', o: 'skip', a: '' },
+        ];
+        break;
+
+      case 'open_manual_finder':
+        responseMsg = null;
+        advanceNow = false;
+        deadEndButtons = [{ l: 'Back to diagnosis', o: 'pass', a: '' }];
         break;
 
       case 'airlock_cleared':
@@ -2565,11 +2578,12 @@ app.post("/api/diag-button", async (req, res) => {
         break;
 
       case 'filter_confirmed':
-        responseMsg = "⚠️ Never run your spa without filters during normal use — it can damage the pump and plumbing. Running without filters is for testing purposes only and only with clean water.\n\nSubmerge your filter fully until no air bubbles come out, then reinstall it immediately. Did the error return?";
+        responseMsg = "⚠️ Never run your spa without filters during normal use — it can damage the pump and plumbing. Running without filters is for testing purposes only and only with clean water.\n\nBefore reinstalling: submerge each filter completely in the spa water and gently squeeze it until no more air bubbles come out. Reinstall immediately while keeping it submerged — this prevents air from reintroducing into the system.\n\nDid the error return after reinstalling the filter?";
         stepResult.passed = false;
         stepResult.filterIssue = true;
         advanceNow = false;
         partCard = 'filter';
+        partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Yes — error returned</button><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">No — spa is running fine!</button></div>';
         break;
 
       case 'valve_closed':
@@ -2772,10 +2786,8 @@ app.post("/api/diag-button", async (req, res) => {
       case 'suggest_multimeter':
         responseMsg = "A multimeter is a handy tool to have for spa diagnosis and general home use. Here are some options:";
         partCard = 'multimeter';
+        partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue without multimeter</button></div>';
         advanceNow = false;
-        deadEndButtons = [
-          { l: 'Continue without multimeter', o: 'pass', a: '' },
-        ];
         break;
 
       case 'identify_board':
@@ -2968,8 +2980,8 @@ app.post("/api/diag-button", async (req, res) => {
       case 'show_descaler':
         responseMsg = "Here are spa descaler options:";
         partCard = 'spa descaler';
+        partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button></div>';
         advanceNow = false;
-        deadEndButtons = [{ l: 'Continue diagnosis', o: 'pass', a: '' }];
         break;
 
       // ── FLAG: Default — unhandled action branch ──
@@ -3021,7 +3033,7 @@ _If you're testing, please send this code to support@spafix.app_`;
   }
 
   // ── FLAG: dead-end detector ──
-  if (!advanceNow && !skipPending && !deadEndButtons && !responseMsg && outcome !== 'action') {
+  if (!advanceNow && !skipPending && !deadEndButtons && !partCardButtons && !responseMsg && outcome !== 'action') {
     responseMsg = `⚑ Undefined sequence — flagged for review.
 \`FLAG: dead-end → ${stepId} → ${state.topic || 'unknown'}\`
 _If you're testing, please send this code to support@spafix.app_`;
@@ -3032,6 +3044,7 @@ _If you're testing, please send this code to support@spafix.app_`;
     diagState: getDiagState(clientId),
     responseMsg,
     partCard,
+    partCardButtons,
     nextStep: nextStepData,
     advanceNow,
     skipPending,
@@ -3311,6 +3324,182 @@ app.get("/", (req, res) => res.json({ message: "SpaFix API v4 running ✓" }));
 const partsCache = {};
 
 // ── Unknown make validation + logging ──────────────────────────
+// ── Unknown Error Code Validation ────────────────────────────
+app.post('/api/validate-error-code', async (req, res) => {
+  const { code, spa_make, spa_model, spa_year, deviceId } = req.body;
+  if (!code || code.length < 1) return res.json({ ok: false, reason: 'invalid_code' });
+  try {
+    const haikuRes = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 120,
+        system: 'You are a hot tub and spa diagnostics expert. Reply only with valid JSON, no markdown.',
+        messages: [{ role: 'user', content: `Is "${code}" a real error code for a ${spa_make || ''} ${spa_model || ''} spa? If yes, what does it mean and what type is it? Reply with JSON only: {"valid": true/false, "confidence": "high"/"medium"/"low", "description": "brief description or null", "code_type": "fault"/"warning"/"status"/"unknown"}` }]
+      })
+    });
+    const haikuData = await haikuRes.json();
+    const rawText = haikuData.content?.[0]?.text || '{}';
+    let parsed = {};
+    try { parsed = JSON.parse(rawText.replace(/```json|```/g, '').trim()); } catch(e) {}
+
+    const isValid = parsed.valid === true;
+    const confidence = parsed.confidence || 'low';
+    const description = parsed.description || null;
+    const code_type = parsed.code_type || 'unknown';
+
+    // Log to Supabase if valid with medium/high confidence
+    if (isValid && confidence !== 'low') {
+      try {
+        await fetch(`${process.env.SUPABASE_URL}/rest/v1/unknown_error_codes`, {
+          method: 'POST',
+          headers: {
+            'apikey': process.env.SUPABASE_ANON_KEY,
+            'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY}`,
+            'Content-Type': 'application/json',
+            'Prefer': 'return=minimal'
+          },
+          body: JSON.stringify({ code, description, code_type, spa_make: spa_make || null, spa_model: spa_model || null, spa_year: spa_year || null, confidence, created_at: new Date().toISOString() })
+        });
+        console.log(`[unknown-error-code] Logged: "${code}" type=${code_type} confidence=${confidence}`);
+      } catch(e) { console.warn('[unknown-error-code] Supabase log failed:', e.message); }
+    } else {
+      console.log(`[unknown-error-code] Not logged: "${code}" valid=${isValid} confidence=${confidence}`);
+    }
+
+    return res.json({ ok: true, valid: isValid, confidence, description, code_type });
+  } catch(e) {
+    console.error('[validate-error-code] Error:', e.message);
+    return res.json({ ok: false, reason: 'error' });
+  }
+});
+
+// ── Admin: Unknown Error Codes ──────────────────────────────────
+app.get('/api/admin/unknown-error-codes', async (req, res) => {
+  const { key, showAll, showPromoted, showDismissed } = req.query;
+  if (!ADMIN_KEY || !accessCodesMatch(key, ADMIN_KEY)) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    let query = `${process.env.SUPABASE_URL}/rest/v1/unknown_error_codes?select=*&order=created_at.desc`;
+    const sbRes = await fetch(query, {
+      headers: { 'apikey': process.env.SUPABASE_ANON_KEY, 'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY}` }
+    });
+    let rows = await sbRes.json();
+    // Group by code+spa_make+spa_model
+    const groups = {};
+    rows.forEach(r => {
+      const k = `${r.code}|${r.spa_make}|${r.spa_model}`;
+      if (!groups[k]) groups[k] = { code: r.code, spa_make: r.spa_make, spa_model: r.spa_model, spa_year: r.spa_year, code_type: r.code_type, description: r.description, confidence: r.confidence, count: 0, first_seen: r.created_at, last_seen: r.created_at, promoted_at: r.promoted_at, dismissed_at: r.dismissed_at };
+      groups[k].count++;
+      if (r.created_at < groups[k].first_seen) groups[k].first_seen = r.created_at;
+      if (r.created_at > groups[k].last_seen) groups[k].last_seen = r.created_at;
+      if (r.promoted_at) groups[k].promoted_at = r.promoted_at;
+      if (r.dismissed_at) groups[k].dismissed_at = r.dismissed_at;
+    });
+    let result = Object.values(groups).sort((a,b) => b.count - a.count);
+    if (!showPromoted) result = result.filter(r => !r.promoted_at);
+    if (!showDismissed) result = result.filter(r => !r.dismissed_at);
+    if (!showAll) result = result.filter(r => r.confidence === 'high');
+    res.json({ ok: true, rows: result });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/admin/promote-error-code', async (req, res) => {
+  const { key, code, spa_make, spa_model, description, code_type } = req.body;
+  if (!ADMIN_KEY || !accessCodesMatch(key, ADMIN_KEY)) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    // Find matching spa_model row
+    const modelRes = await fetch(`${process.env.SUPABASE_URL}/rest/v1/spa_models?brand=eq.${encodeURIComponent(spa_make)}&model_name=eq.${encodeURIComponent(spa_model)}&select=id,error_codes,code_types`, {
+      headers: { 'apikey': process.env.SUPABASE_ANON_KEY, 'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY}` }
+    });
+    const models = await modelRes.json();
+    if (!models || !models.length) return res.status(404).json({ error: 'Spa model not found' });
+    const model = models[0];
+    // Merge using jsonb || operator via RPC or direct update
+    const patchRes = await fetch(`${process.env.SUPABASE_URL}/rest/v1/spa_models?id=eq.${model.id}`, {
+      method: 'PATCH',
+      headers: { 'apikey': process.env.SUPABASE_ANON_KEY, 'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+      body: JSON.stringify({
+        error_codes: { ...(model.error_codes || {}), [code]: description },
+        code_types: { ...(model.code_types || {}), [code]: code_type || 'fault' }
+      })
+    });
+    if (!patchRes.ok) { const e = await patchRes.text(); return res.status(500).json({ error: e }); }
+    // Mark as promoted
+    await fetch(`${process.env.SUPABASE_URL}/rest/v1/unknown_error_codes?code=eq.${encodeURIComponent(code)}&spa_make=eq.${encodeURIComponent(spa_make)}&spa_model=eq.${encodeURIComponent(spa_model)}`, {
+      method: 'PATCH',
+      headers: { 'apikey': process.env.SUPABASE_ANON_KEY, 'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+      body: JSON.stringify({ promoted_at: new Date().toISOString() })
+    });
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/admin/dismiss-error-code', async (req, res) => {
+  const { key, code, spa_make, spa_model } = req.body;
+  if (!ADMIN_KEY || !accessCodesMatch(key, ADMIN_KEY)) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    await fetch(`${process.env.SUPABASE_URL}/rest/v1/unknown_error_codes?code=eq.${encodeURIComponent(code)}&spa_make=eq.${encodeURIComponent(spa_make)}&spa_model=eq.${encodeURIComponent(spa_model)}`, {
+      method: 'PATCH',
+      headers: { 'apikey': process.env.SUPABASE_ANON_KEY, 'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+      body: JSON.stringify({ dismissed_at: new Date().toISOString() })
+    });
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Admin: Unknown Makes ──────────────────────────────────────
+app.get('/api/admin/unknown-makes', async (req, res) => {
+  const { key, showAll, showPromoted, showDismissed } = req.query;
+  if (!ADMIN_KEY || !accessCodesMatch(key, ADMIN_KEY)) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    const sbRes = await fetch(`${process.env.SUPABASE_URL}/rest/v1/unknown_makes?select=*&order=created_at.desc`, {
+      headers: { 'apikey': process.env.SUPABASE_ANON_KEY, 'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY}` }
+    });
+    let rows = await sbRes.json();
+    const groups = {};
+    rows.forEach(r => {
+      const k = r.make_entered;
+      if (!groups[k]) groups[k] = { make_entered: r.make_entered, model_entered: r.model_entered, year: r.year, device_id: r.device_id, count: 0, first_seen: r.created_at, last_seen: r.created_at, promoted_at: r.promoted_at, dismissed_at: r.dismissed_at };
+      groups[k].count++;
+      if (r.created_at < groups[k].first_seen) groups[k].first_seen = r.created_at;
+      if (r.created_at > groups[k].last_seen) groups[k].last_seen = r.created_at;
+      if (r.promoted_at) groups[k].promoted_at = r.promoted_at;
+      if (r.dismissed_at) groups[k].dismissed_at = r.dismissed_at;
+    });
+    let result = Object.values(groups).sort((a,b) => b.count - a.count);
+    if (!showPromoted) result = result.filter(r => !r.promoted_at);
+    if (!showDismissed) result = result.filter(r => !r.dismissed_at);
+    res.json({ ok: true, rows: result });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/admin/dismiss-unknown-make', async (req, res) => {
+  const { key, make_entered } = req.body;
+  if (!ADMIN_KEY || !accessCodesMatch(key, ADMIN_KEY)) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    await fetch(`${process.env.SUPABASE_URL}/rest/v1/unknown_makes?make_entered=eq.${encodeURIComponent(make_entered)}`, {
+      method: 'PATCH',
+      headers: { 'apikey': process.env.SUPABASE_ANON_KEY, 'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+      body: JSON.stringify({ dismissed_at: new Date().toISOString() })
+    });
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/admin/promote-unknown-make', async (req, res) => {
+  const { key, make_entered } = req.body;
+  if (!ADMIN_KEY || !accessCodesMatch(key, ADMIN_KEY)) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    await fetch(`${process.env.SUPABASE_URL}/rest/v1/unknown_makes?make_entered=eq.${encodeURIComponent(make_entered)}`, {
+      method: 'PATCH',
+      headers: { 'apikey': process.env.SUPABASE_ANON_KEY, 'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+      body: JSON.stringify({ promoted_at: new Date().toISOString() })
+    });
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.post('/api/log-unknown-make', async (req, res) => {
   const { make, model, year, deviceId } = req.body;
   if (!make || make.length < 2) return res.json({ ok: false, reason: 'too_short' });
