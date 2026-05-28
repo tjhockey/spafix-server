@@ -1,5 +1,5 @@
-// SpaFix Server v4.9.17
-process.env.APP_VERSION = "v4.9.17";
+// SpaFix Server v4.9.18m
+process.env.APP_VERSION = "v4.9.18m";
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -1735,7 +1735,7 @@ app.get("/api/model/:year/:make/:model", async (req, res) => {
 
   const [rows, partsRows] = await Promise.all([
     supabaseGet('spa_models', {
-      'select': 'brand,model_name,year_start,year_end,control_system,common_failures,error_codes,code_types,pump_configs,verified,key_part_numbers,filter_count,has_spa_boy',
+      'select': 'brand,model_name,year_start,year_end,control_system,common_failures,error_codes,code_types,pump_configs,verified,key_part_numbers,filter_count,has_spa_boy,heater_relay_type,high_limit_switch,high_limit_switch_location,heater_manifold_notes,sensor_serviceability',
       'brand': `ilike.*${make}*`,
       'model_name': `ilike.*${model}*`,
       ...yearFilter,
@@ -1798,6 +1798,11 @@ app.get("/api/model/:year/:make/:model", async (req, res) => {
     key_part_numbers: profile.key_part_numbers || null,
     compatible_parts: partsRows || [],
     has_spa_boy: profile.has_spa_boy || false,
+    heater_relay_type: profile.heater_relay_type || 'unknown',
+    high_limit_switch: profile.high_limit_switch || false,
+    high_limit_switch_location: profile.high_limit_switch_location || null,
+    heater_manifold_notes: profile.heater_manifold_notes || null,
+    sensor_serviceability: profile.sensor_serviceability || 'unknown',
   });
 });
 
@@ -2017,11 +2022,49 @@ app.get("/api/models-for-make", async (req, res) => {
   res.json({ models });
 });
 
+// Version endpoint — used by bug reporter to detect client/server mismatch
+app.get("/api/version", (req, res) => {
+  res.json({ version: process.env.APP_VERSION || 'unknown' });
+});
+
 app.get("/api/brands", (req, res) => {
   // Detect country from Cloudflare header first, then X-Forwarded-For fallback
   const cfCountry = req.headers['cf-ipcountry'] || '';
   const countryCode = cfCountry && cfCountry !== 'XX' ? cfCountry : 'US';
   res.json(getBrandsForCountry(countryCode));
+});
+
+// ── Random spa for dev/test — returns a random verified spa from DB ──
+app.get("/api/random-spa", async (req, res) => {
+  const provided = normalizeAccessCode(req.headers['x-spafix-access-code'] || '');
+  const isAdmin = !!ADMIN_KEY && accessCodesMatch(provided, ADMIN_KEY);
+  const isTester = TESTER_KEYS.some(k => accessCodesMatch(provided, k));
+  if (!isAdmin && !isTester) return res.status(403).json({ error: 'Admin or tester access required' });
+  try {
+    const rows = await supabaseGet('spa_models', {
+      select: 'brand,model_name,year_start,year_end,error_codes,code_types',
+      limit: 150,
+      order: 'id.asc'
+    });
+    if (!rows || !rows.length) return res.json({ found: false });
+    // Filter client-side to rows that have error_codes
+    const withCodes = rows.filter(r => r.error_codes && typeof r.error_codes === 'object' && Object.keys(r.error_codes).length > 0);
+    const pool = withCodes.length ? withCodes : rows;
+    const pick = pool[Math.floor(Math.random() * pool.length)];
+    const ys = parseInt(pick.year_start) || 2005;
+    const ye = parseInt(pick.year_end) || new Date().getFullYear();
+    const year = ys + Math.floor(Math.random() * (ye - ys + 1));
+    // Pick a random error code if available
+    let errorCode = null;
+    if (pick.error_codes && typeof pick.error_codes === 'object') {
+      const codes = Object.keys(pick.error_codes);
+      if (codes.length) errorCode = codes[Math.floor(Math.random() * codes.length)];
+    }
+    return res.json({ found: true, year: String(year), make: pick.brand, model: pick.model_name, errorCode });
+  } catch(e) {
+    console.error('[random-spa]', e.message);
+    return res.json({ found: false });
+  }
 });
 
 app.get("/api/usage", (req, res) => {
@@ -2180,10 +2223,10 @@ app.post("/api/diag-button", async (req, res) => {
     const spaMake = req.body.spaMake || '';
     const spaModel = req.body.spaModel || '';
     const rawErrorCode = req.body.errorCode || null;
-    const errorCode = rawErrorCode ? rawErrorCode.replace(/[^A-Za-z0-9]/g, '').toUpperCase() || null : null;
+    const errorCode = rawErrorCode ? rawErrorCode.replace(/[^A-Za-z0-9\/_\-\s_]/g, '').trim().toUpperCase() || null : null;
     const topic = req.body.topic || 'flow';
     const spaLabel = [spaYear, spaMake, spaModel].filter(v => v && v !== 'Unknown').join(' ') || 'Unknown';
-    const startStep = topic === 'heat' ? 'H2a' : topic === 'jets' ? 'J2a' : topic === 'noise' ? 'N_LOC' : topic === 'water' ? 'W1' : 'S2a';
+    const startStep = topic === 'heat' ? 'H2a' : topic === 'jets' ? 'J2a' : topic === 'noise' ? 'N_LOC' : topic === 'water' ? 'W1' : topic === 'overheat' ? 'OH1' : 'S2a';
     setDiagState(clientId, { spa: spaLabel, errorCode, topic, steps: [], currentStep: startStep, lastUpdated: Date.now() });
     return res.json({ ok: true, diagState: getDiagState(clientId) });
   }
@@ -2335,24 +2378,30 @@ app.post("/api/diag-button", async (req, res) => {
 
       case 'water_dirty_clean':
         responseMsg = [
-          "Here's what to do before we continue:",
+          "Here is what to do before we continue:",
           "",
-          "**Step 1: Check and clean the filters** — Remove your filter cartridges and rinse them thoroughly with a high-pressure hose. If they have oily buildup or haven't been changed recently, use a dedicated filter cleaner soak or replace them.",
-          "**Step 2: Skim and vacuum debris** — Use a spa net or spa vacuum to remove any large visible particles, leaves, or settling debris from the footwell and seats.",
+          "* **Step 1: Clean the filters** — Remove your filter cartridges and rinse them thoroughly using a standard garden hose with a spray nozzle. Never use a pressure washer, as it will damage the filter fabric.",
+          "* **Step 2: Clear out debris** — Use a spa net or spa vacuum to remove leaves, grit, and settling debris from the seats and footwell.",
           "",
-          "* **The 4-Month Rule:** If your water is more than 3–4 months old, or if it remains heavily contaminated after skimming, we strongly recommend a complete drain, shell wipe-down, and fresh refill. Trying to chemically treat heavily soiled water wastes time and money.",
+          "✱ **The 4-Month Rule:** If your water is more than 3–4 months old, save your time and money on chemicals. We strongly recommend a complete drain, wipe-down, and fresh refill.",
           "",
-          "Once the water is physically clean and circulating, tap below to continue.",
+          "Need supplies? If your filters are worn out or you need the right cleaning tools, check out our recommended items below.",
+          "",
+          "Once the water is physically clean and circulating, tap the button below to continue.",
         ].join("\n");
         advanceNow = false;
-        partCard = 'water dirty';
-        partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="action" data-action="water_dirty_supplies" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Show Recommended Items</button><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">I have cleaned the water — Continue Diagnosis</button></div>';
+        partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="action" data-action="water_dirty_supplies" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Show Recommended Items</button><button class="diag-btn" data-step="__STEP__" data-outcome="action" data-action="water_dirty_done" data-part="" data-critical="false" onclick="handleDiagBtn(this)">I have cleaned the water — Continue Diagnosis</button></div>';
+        break;
+
+      case 'water_dirty_done':
+        stepResult.passed = true;
+        advanceNow = true;
         break;
 
       case 'water_dirty_supplies':
         partCard = 'water dirty';
         advanceNow = false;
-        partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">I have cleaned the water — Continue Diagnosis</button></div>';
+        partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="action" data-action="water_dirty_done" data-part="" data-critical="false" onclick="handleDiagBtn(this)">I have cleaned the water — Continue Diagnosis</button></div>';
         break;
 
       case 'water_cloudy':
@@ -2437,7 +2486,7 @@ app.post("/api/diag-button", async (req, res) => {
         stepResult.passed = true;
         stepResult.possible = true;
         advanceNow = false;
-        partCardButtons = '\n<div class=\"diag-step-btns\" style=\"margin-top:10px;\"><button class=\"diag-btn\" data-step=\"__STEP__\" data-outcome=\"pass\" data-action=\"\" data-part=\"\" data-critical=\"false\" onclick=\"handleDiagBtn(this)\">Continue anyway</button><button class=\"diag-btn\" data-step=\"__STEP__\" data-outcome=\"action\" data-action=\"water_dirty_clean\" data-part=\"\" data-critical=\"false\" onclick=\"handleDiagBtn(this)\">I\'ll clean the water first</button></div>';
+        partCardButtons = '<div class=\"diag-step-btns\" style=\"margin-top:10px;\"><button class=\"diag-btn\" data-step=\"__STEP__\" data-outcome=\"pass\" data-action=\"\" data-part=\"\" data-critical=\"false\" onclick=\"handleDiagBtn(this)\">Continue anyway</button><button class=\"diag-btn\" data-step=\"__STEP__\" data-outcome=\"action\" data-action=\"water_dirty_clean\" data-part=\"\" data-critical=\"false\" onclick=\"handleDiagBtn(this)\">I\'ll clean the water first</button></div>';
         break;
 
       case 'show_water_treatment':
@@ -3100,7 +3149,7 @@ app.post("/api/chat", async (req, res) => {
     }
     const errMatch = lastMsgContent.match(/Error code(?:[^:]*)?:\s*([A-Z0-9]+)/i);
     const rawErrCode = errMatch ? errMatch[1] : null;
-    const cleanErrCode = rawErrCode ? rawErrCode.replace(/[^A-Za-z0-9]/g, '').toUpperCase() || null : null;
+    const cleanErrCode = rawErrCode ? rawErrCode.replace(/[^A-Za-z0-9\/_\-\s_]/g, '').trim().toUpperCase() || null : null;
     const newState = { spa: spaLabel, errorCode: cleanErrCode, steps: [], currentStep: 'S2a', lastUpdated: Date.now() };
     setDiagState(clientId, newState);
   }
@@ -3184,6 +3233,11 @@ app.post("/api/chat", async (req, res) => {
     : '';
 
   let effectiveSystemPrompt = spaPrefix + systemPrompt;
+
+  // systemOverride — client supplies its own system prompt (used by _fireNonFaultCodeExplanation)
+  if (req.body.systemOverride && typeof req.body.systemOverride === 'string') {
+    effectiveSystemPrompt = req.body.systemOverride;
+  }
 
   if (hasDiagStateActive) {
     const stateBlock = buildDiagStateBlock(diagStateEffective);
@@ -3328,6 +3382,22 @@ const partsCache = {};
 app.post('/api/validate-error-code', async (req, res) => {
   const { code, spa_make, spa_model, spa_year, deviceId } = req.body;
   if (!code || code.length < 1) return res.json({ ok: false, reason: 'invalid_code' });
+
+  // ── Sn brand fork — same code, three different meanings by manufacturer ──
+  if (code.trim().toUpperCase() === 'SN' && spa_make) {
+    const make = spa_make.toLowerCase();
+    // Gecko/Aeware platforms (Arctic Spas, Bullfrog, Clearwater, Dimension One) — normal boot display, status only
+    if (/arctic|bullfrog|clearwater|dimension.?one|coyote|horizon/i.test(make)) {
+      return res.json({ ok: true, valid: true, confidence: 'high', description: 'Normal boot/startup display on Gecko-based systems — not a fault. No action required.', code_type: 'status' });
+    }
+    // Brett Aqualine / In.Pro / HydroQuip — peripheral communication error
+    if (/brett|aqualine|in\.?pro|hydroquip|hydroquip/i.test(make)) {
+      return res.json({ ok: true, valid: true, confidence: 'high', description: 'Peripheral communication error — control board has lost contact with a connected component.', code_type: 'fault' });
+    }
+    // Balboa / Sundance / Jacuzzi — heating sensor fault → overheat path
+    return res.json({ ok: true, valid: true, confidence: 'high', description: 'Temperature sensor fault — sensors are out of balance or one has failed.', code_type: 'fault' });
+  }
+
   try {
     const haikuRes = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -3584,6 +3654,145 @@ Do NOT include: spa covers, test kits, chemicals, generic accessories, or any it
 IMPORTANT — PART NUMBERS: Only include a part_number value when you have verified OEM data for this specific model. If unsure, set part_number to null. Never invent part numbers. However, you MUST always return a complete JSON array — even for unknown models, return generic commonly-replaced parts for that type of spa with part_number: null for all items.
 
 CRITICAL: Return ONLY a raw JSON array. Start with [ and end with ]. No markdown, no backticks, no explanation, no preamble. Keep total response under 2500 tokens.`;
+
+// GET: check code_explanations in spa_models
+app.get('/api/code-explanation', async (req, res) => {
+  const { code, make, model } = req.query;
+  if (!code || !make || !model) return res.json({ explanation: null });
+  try {
+    // Check approved explanations in spa_models.code_explanations first
+    const url = `${process.env.SUPABASE_URL}/rest/v1/spa_models?select=code_explanations&brand=ilike.${encodeURIComponent(make)}&model_name=ilike.${encodeURIComponent(model)}&code_explanations=not.is.null&limit=5`;
+    const r = await fetch(url, { headers: { 'apikey': process.env.SUPABASE_ANON_KEY, 'Authorization': `Bearer ${process.env.SUPABASE_ANON_KEY}` } });
+    if (r.ok) {
+      const rows = await r.json();
+      const upperCode = code.toUpperCase();
+      for (const row of (rows || [])) {
+        const expl = row.code_explanations;
+        if (expl && (expl[code] || expl[upperCode])) return res.json({ explanation: expl[code] || expl[upperCode], source: 'approved' });
+      }
+    }
+    // Fallback — check pending_code_explanations (unapproved but already generated)
+    // Serves existing Sonnet response to avoid duplicate API calls
+    const pendUrl = `${process.env.SUPABASE_URL}/rest/v1/pending_code_explanations?select=explanation&code=eq.${encodeURIComponent(code.toUpperCase())}&dismissed_at=is.null&order=created_at.desc&limit=1`;
+    const pr = await fetch(pendUrl, { headers: { 'apikey': process.env.SUPABASE_ANON_KEY, 'Authorization': `Bearer ${process.env.SUPABASE_ANON_KEY}` } });
+    if (pr.ok) {
+      const prows = await pr.json();
+      if (prows && prows.length && prows[0].explanation) return res.json({ explanation: prows[0].explanation, source: 'pending' });
+    }
+    return res.json({ explanation: null });
+  } catch(e) { return res.json({ explanation: null }); }
+});
+
+// POST: write Sonnet response to pending_code_explanations for admin review
+app.post('/api/pending-code-explanation', async (req, res) => {
+  const { code, spa_make, spa_model, spa_year, explanation } = req.body;
+  if (!code || !explanation) return res.status(400).json({ error: 'code and explanation required' });
+  try {
+    const SB_HDR = { 'apikey': process.env.SUPABASE_ANON_KEY, 'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY}`, 'Content-Type': 'application/json' };
+    // Don't duplicate — skip if same code+make+model already pending
+    const checkUrl = `${process.env.SUPABASE_URL}/rest/v1/pending_code_explanations?select=id&code=eq.${encodeURIComponent(code.toUpperCase())}&spa_make=ilike.${encodeURIComponent(spa_make||'')}&spa_model=ilike.${encodeURIComponent(spa_model||'')}&approved_at=is.null&dismissed_at=is.null&limit=1`;
+    const checkR = await fetch(checkUrl, { headers: SB_HDR });
+    const existing = checkR.ok ? await checkR.json() : [];
+    if (existing && existing.length > 0) return res.json({ ok: true, skipped: true });
+    const insertR = await fetch(`${process.env.SUPABASE_URL}/rest/v1/pending_code_explanations`, {
+      method: 'POST',
+      headers: { ...SB_HDR, 'Prefer': 'return=minimal' },
+      body: JSON.stringify({ code: code.toUpperCase(), spa_make, spa_model, spa_year, explanation, created_at: new Date().toISOString() })
+    });
+    if (!insertR.ok) { const err = await insertR.text(); console.error('[pending-code-explanation] insert error:', err); return res.status(500).json({ error: err }); }
+    res.json({ ok: true });
+  } catch(e) { console.error('[pending-code-explanation] Exception:', e.message); res.status(500).json({ error: e.message }); }
+});
+
+// POST: admin approve — merge into spa_models.code_explanations
+app.post('/api/admin/approve-code-explanation', async (req, res) => {
+  const { id, code, spa_make, spa_model, explanation } = req.body;
+  const provided = req.headers['x-spafix-access-code'] || req.body.accessCode || '';
+  if (!accessCodesMatch(provided, process.env.ADMIN_KEY)) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    const SB_HDR = { 'apikey': process.env.SUPABASE_ANON_KEY, 'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY}`, 'Content-Type': 'application/json' };
+    // Find matching spa_models row
+    const findUrl = `${process.env.SUPABASE_URL}/rest/v1/spa_models?select=id,code_explanations&brand=ilike.${encodeURIComponent(spa_make)}&model_name=ilike.${encodeURIComponent(spa_model)}&limit=1`;
+    const findR = await fetch(findUrl, { headers: SB_HDR });
+    const rows = findR.ok ? await findR.json() : [];
+    if (!rows || !rows.length) return res.status(404).json({ error: 'Spa model not found' });
+    const row = rows[0];
+    const merged = { ...(row.code_explanations || {}), [code.toUpperCase()]: explanation };
+    await fetch(`${process.env.SUPABASE_URL}/rest/v1/spa_models?id=eq.${row.id}`, {
+      method: 'PATCH', headers: { ...SB_HDR, 'Prefer': 'return=minimal' },
+      body: JSON.stringify({ code_explanations: merged })
+    });
+    await fetch(`${process.env.SUPABASE_URL}/rest/v1/pending_code_explanations?id=eq.${id}`, {
+      method: 'PATCH', headers: { ...SB_HDR, 'Prefer': 'return=minimal' },
+      body: JSON.stringify({ approved_at: new Date().toISOString() })
+    });
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST: admin dismiss pending code explanation
+app.post('/api/admin/dismiss-code-explanation', async (req, res) => {
+  const { id } = req.body;
+  const provided = req.headers['x-spafix-access-code'] || req.body.accessCode || '';
+  if (!accessCodesMatch(provided, process.env.ADMIN_KEY)) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    const SB_HDR = { 'apikey': process.env.SUPABASE_ANON_KEY, 'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY}`, 'Content-Type': 'application/json' };
+    await fetch(`${process.env.SUPABASE_URL}/rest/v1/pending_code_explanations?id=eq.${id}`, {
+      method: 'PATCH', headers: { ...SB_HDR, 'Prefer': 'return=minimal' },
+      body: JSON.stringify({ dismissed_at: new Date().toISOString() })
+    });
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET: admin list pending code explanations
+app.get('/api/admin/pending-code-explanations', async (req, res) => {
+  const key = req.query.key || req.headers['x-spafix-access-code'] || '';
+  if (!accessCodesMatch(key, process.env.ADMIN_KEY)) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    const SB_HDR = { 'apikey': process.env.SUPABASE_ANON_KEY, 'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY}` };
+    const r = await fetch(`${process.env.SUPABASE_URL}/rest/v1/pending_code_explanations?select=*&order=created_at.desc`, { headers: SB_HDR });
+    if (!r.ok) { const err = await r.text(); console.error('[pending-code-explanations] fetch error:', err); return res.status(500).json({ error: err }); }
+    const data = await r.json();
+    const pending = data.filter(r => !r.approved_at && !r.dismissed_at);
+    const approved = data.filter(r => r.approved_at);
+    const dismissed = data.filter(r => r.dismissed_at);
+    res.json({ ok: true, pending, approved, dismissed });
+  } catch(e) { console.error('[pending-code-explanations] Exception:', e.message); res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/parts-set-generic', async (req, res) => {
+  const { cacheKey, partNumber, partName, generic } = req.body;
+  if (!cacheKey) return res.status(400).json({ error: 'cacheKey required' });
+  // Verify admin
+  const provided = req.headers['x-spafix-access-code'] || req.body.accessCode || '';
+  if (!accessCodesMatch(provided, process.env.ADMIN_KEY)) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    // Fetch existing cache row
+    const { data: row, error: fetchErr } = await supabase
+      .from('parts_cache')
+      .select('parts')
+      .eq('cache_key', cacheKey)
+      .single();
+    if (fetchErr || !row) return res.status(404).json({ error: 'Cache entry not found' });
+    // Update the matching part's generic flag
+    const parts = row.parts || [];
+    const updated = parts.map(p => {
+      const matchPN = partNumber && p.part_number === partNumber;
+      const matchName = !partNumber && p.name === partName;
+      if (matchPN || matchName) return { ...p, generic: !!generic };
+      return p;
+    });
+    const { error: updateErr } = await supabase
+      .from('parts_cache')
+      .update({ parts: updated })
+      .eq('cache_key', cacheKey);
+    if (updateErr) return res.status(500).json({ error: 'Failed to update cache' });
+    res.json({ ok: true });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 app.post('/api/parts-list', async (req, res) => {
   const { year, make, model, cacheKey, keyPartNumbers, compatibleParts } = req.body;
