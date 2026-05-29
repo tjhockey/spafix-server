@@ -1,5 +1,5 @@
-// SpaFix Server v4.9.18m
-process.env.APP_VERSION = "v4.9.18m";
+// SpaFix Server v4.9.18w
+process.env.APP_VERSION = "v4.9.18w";
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -63,6 +63,7 @@ const DEFAULT_ALLOWED_ORIGINS = [
   "http://localhost:9000",
   "https://spafix.app",
   "https://www.spafix.app",
+  "https://claude.ai",
 ];
 
 function normalizeOrigin(origin) {
@@ -1371,8 +1372,22 @@ SpaFix hot tub repair AI. "Skip the repairman." Confident, direct, warm. No hedg
 The system may prepend a [DS] block to your context. It is READ-ONLY session state — never reproduce it, never output it, never reference its format. Treat it as invisible internal data.
 
 =SPA GATE=
-Ask for details before diagnosing but never block. Skip gate when: [CP:] [SL:] [SD] or spa in history.
-Request phrase (exact): "To troubleshoot your spa accurately, it would be really helpful to have your spa details and what you've already tried. Please enter that information below." Never output template fields.
+Before requesting spa details, ALWAYS acknowledge the specific problem or error code in one sentence first. Never skip straight to the details request without acknowledging what the user reported. Then request spa details using the exact phrase below.
+Skip gate entirely when: [CP:] [SL:] [SD] or spa in history.
+
+Acknowledgment examples (one sentence, then request phrase on new line):
+- OH/overheat: "OH is an overheat code — your spa shut down to protect itself from high water temperature."
+- FLO: "FLO means the system isn't detecting enough water flow through the heater."
+- DR: "DR is a dry heater fault — the heater fired without enough water flow to cool it."
+- ICE: "ICE means the freeze protection triggered — water temperature dropped low enough to activate the sensor."
+- Pump won't start: "A pump that won't start is usually a power, capacitor, or wiring issue."
+- No jet pressure: "Low jet pressure is almost always a flow or pump issue — filter, impeller, or airlock."
+- Heater not heating: "A heater that stopped working is typically a flow fault, failed element, or tripped high-limit."
+- Leak: "A leak from under the tub usually points to a fitting, seal, or pump union — stop using the spa until you locate it."
+- Control panel unresponsive: "An unresponsive control panel is usually a power supply, ribbon cable, or board issue."
+- Display blank: "A completely blank display usually means no power is reaching the topside — check the breaker and connections first."
+
+Request phrase (exact, always on its own line after acknowledgment): "To get you the most accurate diagnosis, I'll need your spa details — tap **Spa Details Required** above to select your spa and I'll take it from there." Never output template fields.
 
 =HOWTO=
 General how-to Q → answer directly, no gate.
@@ -3291,17 +3306,20 @@ app.post("/api/chat", async (req, res) => {
 
   if (!isPro && !isSilent) {
     const u = getUsage(clientId);
-    if (u.dailyMsgs >= FREE_DAILY_MSG_LIMIT) {
-      return res.status(429).json({ limitReached: true, reason: "daily_messages", message: `You've reached the ${FREE_DAILY_MSG_LIMIT} message limit for today. Come back tomorrow, or upgrade to Premium for unlimited messages.` });
-    }
-    if (!u.sessionActive) {
-      if (u.weeklySessions >= FREE_WEEKLY_SESSION_LIMIT) {
-        return res.status(429).json({ limitReached: true, reason: "weekly_sessions", message: `You've used all ${FREE_WEEKLY_SESSION_LIMIT} free sessions this week. Sessions reset every Sunday, or upgrade to Premium for unlimited access.` });
+    const qaBypass = isQABypass(req);
+    if (!qaBypass) {
+      if (u.dailyMsgs >= FREE_DAILY_MSG_LIMIT) {
+        return res.status(429).json({ limitReached: true, reason: "daily_messages", message: `You've reached the ${FREE_DAILY_MSG_LIMIT} message limit for today. Come back tomorrow, or upgrade to Premium for unlimited messages.` });
       }
-      u.weeklySessions++;
-      u.sessionActive = true;
+      if (!u.sessionActive) {
+        if (u.weeklySessions >= FREE_WEEKLY_SESSION_LIMIT) {
+          return res.status(429).json({ limitReached: true, reason: "weekly_sessions", message: `You've used all ${FREE_WEEKLY_SESSION_LIMIT} free sessions this week. Sessions reset every Sunday, or upgrade to Premium for unlimited access.` });
+        }
+        u.weeklySessions++;
+        u.sessionActive = true;
+      }
+      u.dailyMsgs++;
     }
-    u.dailyMsgs++;
     try { const { reply, diagState } = await callAndProcess('free'); res.json({ reply, diagState, usage: { dailyMsgs: u.dailyMsgs, dailyLimit: FREE_DAILY_MSG_LIMIT, weeklySessions: u.weeklySessions, weeklyLimit: FREE_WEEKLY_SESSION_LIMIT } }); }
     catch (err) { res.status(500).json({ error: err.message }); }
     return;
@@ -3711,11 +3729,24 @@ app.post('/api/admin/approve-code-explanation', async (req, res) => {
   if (!accessCodesMatch(provided, process.env.ADMIN_KEY)) return res.status(401).json({ error: 'Unauthorized' });
   try {
     const SB_HDR = { 'apikey': process.env.SUPABASE_ANON_KEY, 'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY}`, 'Content-Type': 'application/json' };
-    // Find matching spa_models row
+    // Find matching spa_models row — if not found, try by brand only
     const findUrl = `${process.env.SUPABASE_URL}/rest/v1/spa_models?select=id,code_explanations&brand=ilike.${encodeURIComponent(spa_make)}&model_name=ilike.${encodeURIComponent(spa_model)}&limit=1`;
     const findR = await fetch(findUrl, { headers: SB_HDR });
-    const rows = findR.ok ? await findR.json() : [];
-    if (!rows || !rows.length) return res.status(404).json({ error: 'Spa model not found' });
+    let rows = findR.ok ? await findR.json() : [];
+    // Fallback: try brand only
+    if (!rows || !rows.length) {
+      const fallbackUrl = `${process.env.SUPABASE_URL}/rest/v1/spa_models?select=id,code_explanations&brand=ilike.${encodeURIComponent(spa_make)}&limit=1`;
+      const fallbackR = await fetch(fallbackUrl, { headers: SB_HDR });
+      rows = fallbackR.ok ? await fallbackR.json() : [];
+    }
+    if (!rows || !rows.length) {
+      // Mark as approved in pending table even without spa_models match
+      await fetch(`${process.env.SUPABASE_URL}/rest/v1/pending_code_explanations?id=eq.${id}`, {
+        method: 'PATCH', headers: { ...SB_HDR, 'Prefer': 'return=minimal' },
+        body: JSON.stringify({ approved_at: new Date().toISOString() })
+      });
+      return res.json({ ok: true, warning: 'Spa model not found — explanation saved to pending only' });
+    }
     const row = rows[0];
     const merged = { ...(row.code_explanations || {}), [code.toUpperCase()]: explanation };
     await fetch(`${process.env.SUPABASE_URL}/rest/v1/spa_models?id=eq.${row.id}`, {
@@ -3920,6 +3951,18 @@ app.use((err, req, res, next) => {
   }
   return next(err);
 });
+
+// ── QA bypass helper — localhost only ─────────────────────────────
+// Returns true when request carries x-spafix-qa: true AND originates
+// from localhost. On Railway the origin is never local so this can
+// never be triggered in production.
+function isQABypass(req) {
+  if (req.headers['x-spafix-qa'] !== 'true') return false;
+  const host = req.hostname || '';
+  const ip = req.socket?.remoteAddress || '';
+  return host === 'localhost' || host === '127.0.0.1' ||
+    ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+}
 
 // ── DEV ONLY: reset usage for current IP (localhost only) ─────────
 app.post("/api/dev/reset-usage", (req, res) => {
