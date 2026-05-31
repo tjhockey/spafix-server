@@ -1,5 +1,5 @@
-// SpaFix Server v4.9.18w
-process.env.APP_VERSION = "v4.9.18w";
+// SpaFix Server v4.9.19
+process.env.APP_VERSION = "v4.9.19c";
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -8,7 +8,7 @@ const fs = require("fs");
 const path = require("path");
 const rateLimit = require("express-rate-limit");
 
-let cachedEnvLoadState = null;
+var cachedEnvLoadState = null;
 
 function loadServerEnv() {
   if (cachedEnvLoadState) return cachedEnvLoadState;
@@ -61,6 +61,7 @@ if (!envLoadState.dotenvInitialized && envLoadState.envFileLoaded) {
 
 const DEFAULT_ALLOWED_ORIGINS = [
   "http://localhost:9000",
+  "http://localhost:8080",
   "https://spafix.app",
   "https://www.spafix.app",
   "https://claude.ai",
@@ -558,16 +559,14 @@ const DIAG_STEPS = {
     question:'',
     buttons:[
       {label:'Error cleared', outcome:'action', action:'airlock_cleared'},
-      {label:'Error still showing', outcome:'pass'},
-      {label:'Skip Step', outcome:'skip'},
+      {label:'Error still showing', outcome:'pass'}
     ]
   },
   S5: { id:'S5', next:'BREAKER', label:'Heater indicator',
     question:'Set the target temp above the current water temp. Do you see a heating indicator — a light, flame icon, or the word Heat — on the topside panel?',
     buttons:[
       {label:'Yes, I see it', outcome:'pass'},
-      {label:'No indicator showing', outcome:'action', action:'heater_no_indicator'},
-      {label:'Skip Step', outcome:'skip'},
+      {label:'No indicator showing', outcome:'action', action:'heater_no_indicator'}
     ]
   },
   BREAKER: { id:'BREAKER', next:'S6', label:'Breaker reset',
@@ -575,8 +574,7 @@ const DIAG_STEPS = {
     question:'',
     buttons:[
       {label:'Error cleared', outcome:'pass'},
-      {label:'Error still showing', outcome:'pass'},
-      {label:'Skip Step', outcome:'skip'},
+      {label:'Error still showing', outcome:'pass'}
     ]
   },
   S6: { id:'S6', next:'S6b', label:'Gate valves',
@@ -585,8 +583,7 @@ const DIAG_STEPS = {
     buttons:[
       {label:'All fully open', outcome:'pass'},
       {label:'Found one closed', outcome:'action', action:'valve_closed'},
-      {label:"My spa doesn't have these", outcome:'skip'},
-      {label:'Skip Step', outcome:'skip'},
+      {label:"My spa doesn't have these", outcome:'skip'}
     ]
   },
   S6b: { id:'S6b', next:'S7', label:'Air purge valve',
@@ -594,8 +591,7 @@ const DIAG_STEPS = {
     question:'Some spas have an air purge valve on the pump or plumbing — it looks like a small bleed valve or knurled cap. Not all spas have one. If yours has one and you see air bubbling out when you open it, keep it open until only water flows, then close it.',
     buttons:[
       {label:'Error cleared', outcome:'pass'},
-      {label:'Still showing / No valve', outcome:'pass'},
-      {label:'Skip Step', outcome:'skip'},
+      {label:'Still showing / No valve', outcome:'pass'}
     ]
   },
   S7: { id:'S7', next:'S8a', label:'Air lock phase 2',
@@ -604,8 +600,7 @@ const DIAG_STEPS = {
     question:'',
     buttons:[
       {label:'Error cleared', outcome:'pass'},
-      {label:'Still showing', outcome:'pass'},
-      {label:'Skip Step', outcome:'skip'},
+      {label:'Still showing', outcome:'pass'}
     ]
   },
   S8a: { id:'S8a', next:'S8b', label:'Circ pump',
@@ -616,8 +611,7 @@ const DIAG_STEPS = {
       {label:'Humming / warm', outcome:'action', action:'circ_flow_check'},
       {label:'Silent', outcome:'fail', part:'circulation pump'},
       {label:'Grinding / very hot', outcome:'fail', part:'circulation pump'},
-      {label:'Leaking', outcome:'fail', part:'circ pump seal'},
-      {label:'Skip Step', outcome:'skip'},
+      {label:'Leaking', outcome:'fail', part:'circ pump seal'}
     ]
   },
   S8b: { id:'S8b', next:'S8c', label:'Flow switch visual',
@@ -627,8 +621,7 @@ const DIAG_STEPS = {
       {label:'Paddle moves freely, making contact', outcome:'pass'},
       {label:'Paddle stuck or not making contact', outcome:'fail', part:'flow switch'},
       {label:'Arrow pointing wrong way', outcome:'fail', part:'flow switch'},
-      {label:"Can't find it", outcome:'action', action:'cant_find_flow_switch'},
-      {label:'Skip Step', outcome:'skip'},
+      {label:"Can't find it", outcome:'action', action:'cant_find_flow_switch'}
     ]
   },
   S8c: { id:'S8c', next:'S9', label:'Flow switch jumper',
@@ -637,8 +630,7 @@ const DIAG_STEPS = {
     question:'We\'re going to temporarily bypass the flow switch to test if it\'s the cause. With power OFF, photograph your wire connections, disconnect the flow switch wires, and bridge the two terminals with a small wire or jumper. Restore power and check if the error clears.',
     buttons:[
       {label:"Error cleared — it's the flow switch", outcome:'fail', part:'flow switch'},
-      {label:'Error still showing', outcome:'pass'},
-      {label:'Skip Step', outcome:'skip'},
+      {label:'Error still showing', outcome:'pass'}
     ]
   },
   S9: { id:'S9', next:'S10', label:'Visual inspection',
@@ -647,8 +639,7 @@ const DIAG_STEPS = {
     buttons:[
       {label:'Everything looks clean', outcome:'pass'},
       {label:'Found burn marks or corrosion', outcome:'fail', part:'control board'},
-      {label:'Found something unusual', outcome:'action', action:'unusual_finding'},
-      {label:'Skip Step', outcome:'skip'},
+      {label:'Found something unusual', outcome:'action', action:'unusual_finding'}
     ]
   },
   S10: { id:'S10', next:'S11', label:'Fuses',
@@ -656,24 +647,21 @@ const DIAG_STEPS = {
     question:'Check all fuses in the equipment bay — look at both the housing and the filament inside. A blown fuse is a symptom, not a root cause — we\'ll need to find what caused it.',
     buttons:[
       {label:'All fuses intact', outcome:'pass'},
-      {label:'Found a blown fuse', outcome:'possible', part:'fuse kit'},
-      {label:'Skip Step', outcome:'skip'},
+      {label:'Found a blown fuse', outcome:'possible', part:'fuse kit'}
     ]
   },
   S11: { id:'S11', next:'S12', label:'Temp sensor',
     question:'Compare the water temperature shown on your topside panel against how the water actually feels. A significant difference can indicate a faulty temp sensor.',
     buttons:[
       {label:'Readings match', outcome:'pass'},
-      {label:'Big difference between display and actual', outcome:'fail', part:'temp sensor'},
-      {label:'Skip Step', outcome:'skip'},
+      {label:'Big difference between display and actual', outcome:'fail', part:'temp sensor'}
     ]
   },
   S12: { id:'S12', next:'S13', label:'Hi-limit sensor',
     question:"Find the hi-limit sensor and check for a small reset button — press it if present. The hi-limit cuts power to the heater if water gets too hot. Check if your water feels dangerously hot.",
     buttons:[
       {label:'Reset button found and pressed / No button', outcome:'pass'},
-      {label:'Water feels dangerously hot', outcome:'fail', part:'hi-limit sensor', critical:true},
-      {label:'Skip Step', outcome:'skip'},
+      {label:'Water feels dangerously hot', outcome:'fail', part:'hi-limit sensor', critical:true}
     ]
   },
   S13: { id:'S13', next:'S14', label:'Heater element',
@@ -681,8 +669,7 @@ const DIAG_STEPS = {
     buttons:[
       {label:'Yes, I have one', outcome:'action', action:'multimeter_test'},
       {label:"No, I don't", outcome:'action', action:'visual_element_check'},
-      {label:"I'd like one", outcome:'action', action:'suggest_multimeter'},
-      {label:'Skip Step', outcome:'skip'},
+      {label:"I'd like one", outcome:'action', action:'suggest_multimeter'}
     ]
   },
   S14: { id:'S14', next:null, label:'Control board',
@@ -718,12 +705,11 @@ const DIAG_STEPS = {
     ]
   },
   H5: { id:'H5', next:'H3', label:'Mode settings',
-    question:'Check your topside control panel. Is the spa set to Standard or Ready mode?',
+    question:'Some spas have operating modes that silently prevent heating -- Economy and Sleep mode only heat during scheduled filter cycles, not continuously. Check your topside panel: what mode is the spa set to?\n\nIf you\'re not sure and the panel looks normal, tap Standard / Ready mode.',
     buttons:[
       {label:'Standard / Ready mode', outcome:'pass'},
       {label:'Economy / Sleep / Rest mode', outcome:'action', action:'heat_mode_wrong'},
-      {label:"I'm not sure", outcome:'action', action:'heat_mode_unsure'},
-      {label:'Skip Step', outcome:'skip'},
+      {label:"I'm not sure", outcome:'action', action:'heat_mode_unsure'}
     ]
   },
   H3: { id:'H3', next:'H4', label:'Suction test',
@@ -739,8 +725,7 @@ const DIAG_STEPS = {
     question:'',
     buttons:[
       {label:'Spa is now heating', outcome:'action', action:'heat_airlock_cleared'},
-      {label:'Still not heating', outcome:'neutral'},
-      {label:'Skip Step', outcome:'skip'},
+      {label:'Still not heating', outcome:'neutral'}
     ]
   },
   HBREAKER: { id:'HBREAKER', next:'H6', label:'Breaker reset',
@@ -748,8 +733,7 @@ const DIAG_STEPS = {
     question:'',
     buttons:[
       {label:'Spa is now heating', outcome:'pass'},
-      {label:'Still not heating', outcome:'pass'},
-      {label:'Skip Step', outcome:'skip'},
+      {label:'Still not heating', outcome:'pass'}
     ]
   },
   H6: { id:'H6', next:'H6b', label:'Gate valves',
@@ -758,8 +742,7 @@ const DIAG_STEPS = {
     buttons:[
       {label:'All fully open', outcome:'pass'},
       {label:'Found one closed or partially closed', outcome:'action', action:'valve_closed'},
-      {label:"My spa doesn't have these", outcome:'skip'},
-      {label:'Skip Step', outcome:'skip'},
+      {label:"My spa doesn't have these", outcome:'skip'}
     ]
   },
   H6b: { id:'H6b', next:'H7', label:'Air purge valve',
@@ -767,8 +750,7 @@ const DIAG_STEPS = {
     question:'Some spas have an air purge valve on the pump or plumbing — a small bleed valve or knurled cap. If yours has one and you see air bubbling out when you open it, keep it open until only water flows, then close it.',
     buttons:[
       {label:'Spa is now heating', outcome:'pass'},
-      {label:'Still not heating / No valve', outcome:'pass'},
-      {label:'Skip Step', outcome:'skip'},
+      {label:'Still not heating / No valve', outcome:'pass'}
     ]
   },
   H7: { id:'H7', next:'H8a', label:'Air lock phase 2',
@@ -777,8 +759,7 @@ const DIAG_STEPS = {
     question:'',
     buttons:[
       {label:'Spa is now heating', outcome:'pass'},
-      {label:'Still not heating', outcome:'neutral'},
-      {label:'Skip Step', outcome:'skip'},
+      {label:'Still not heating', outcome:'neutral'}
     ]
   },
   H8a: { id:'H8a', next:'H11', label:'Circ pump',
@@ -789,8 +770,7 @@ const DIAG_STEPS = {
       {label:'Humming / warm', outcome:'pass'},
       {label:'Silent', outcome:'fail', part:'circulation pump'},
       {label:'Grinding / very hot', outcome:'fail', part:'circulation pump'},
-      {label:'Leaking', outcome:'fail', part:'circ pump seal'},
-      {label:'Skip Step', outcome:'skip'},
+      {label:'Leaking', outcome:'fail', part:'circ pump seal'}
     ]
   },
   H11: { id:'H11', next:'H12', label:'Temp sensor',
@@ -798,8 +778,7 @@ const DIAG_STEPS = {
     buttons:[
       {label:'Readings match', outcome:'pass'},
       {label:'Panel reads higher than actual', outcome:'fail', part:'temp sensor'},
-      {label:'Big difference either way', outcome:'fail', part:'temp sensor'},
-      {label:'Skip Step', outcome:'skip'},
+      {label:'Big difference either way', outcome:'fail', part:'temp sensor'}
     ]
   },
   H12: { id:'H12', next:'H13', label:'Hi-limit sensor / reset',
@@ -808,8 +787,7 @@ const DIAG_STEPS = {
     buttons:[
       {label:'Reset button found and pressed', outcome:'action', action:'heat_hilimit_reset'},
       {label:'No reset button found', outcome:'pass'},
-      {label:'Water feels dangerously hot', outcome:'fail', part:'hi-limit sensor', critical:true},
-      {label:'Skip Step', outcome:'skip'},
+      {label:'Water feels dangerously hot', outcome:'fail', part:'hi-limit sensor', critical:true}
     ]
   },
   H13: { id:'H13', next:'H9', label:'Heater element',
@@ -817,8 +795,7 @@ const DIAG_STEPS = {
     buttons:[
       {label:'Yes, I have one', outcome:'action', action:'heat_multimeter_test'},
       {label:"No, I don't", outcome:'action', action:'heat_visual_element_check'},
-      {label:"I'd like one", outcome:'action', action:'suggest_multimeter'},
-      {label:'Skip Step', outcome:'skip'},
+      {label:"I'd like one", outcome:'action', action:'suggest_multimeter'}
     ]
   },
   H9: { id:'H9', next:'H10', label:'Visual inspection',
@@ -828,8 +805,7 @@ const DIAG_STEPS = {
       {label:'Everything looks clean', outcome:'pass'},
       {label:'Found burn marks on heater', outcome:'fail', part:'heater element'},
       {label:'Found burn marks on control board', outcome:'fail', part:'control board'},
-      {label:'Found something unusual', outcome:'action', action:'unusual_finding'},
-      {label:'Skip Step', outcome:'skip'},
+      {label:'Found something unusual', outcome:'action', action:'unusual_finding'}
     ]
   },
   H10: { id:'H10', next:'H14', label:'Fuses',
@@ -837,8 +813,7 @@ const DIAG_STEPS = {
     question:'Check all fuses in the equipment bay — look at both the housing and the filament inside. A blown fuse is a symptom, not the root cause — we\'ll need to understand what caused it.',
     buttons:[
       {label:'All fuses intact', outcome:'pass'},
-      {label:'Found a blown fuse', outcome:'possible', part:'fuse kit'},
-      {label:'Skip Step', outcome:'skip'},
+      {label:'Found a blown fuse', outcome:'possible', part:'fuse kit'}
     ]
   },
   H14: { id:'H14', next:null, label:'Control board',
@@ -878,8 +853,7 @@ const DIAG_STEPS = {
     buttons:[
       {label:'All jets are open', outcome:'pass'},
       {label:'Found closed jets — now fixed!', outcome:'action', action:'jets_face_fixed'},
-      {label:'Jets are open but still no pressure', outcome:'pass'},
-      {label:'Skip Step', outcome:'skip'},
+      {label:'Jets are open but still no pressure', outcome:'pass'}
     ]
   },
   J_DV: { id:'J_DV', next:'J4', label:'Diverter valves',
@@ -887,8 +861,7 @@ const DIAG_STEPS = {
     buttons:[
       {label:'All diverters move freely', outcome:'pass'},
       {label:'Found a stuck valve — now fixed!', outcome:'action', action:'jets_diverter_fixed'},
-      {label:'Valves move but still no pressure', outcome:'pass'},
-      {label:'Skip Step', outcome:'skip'},
+      {label:'Valves move but still no pressure', outcome:'pass'}
     ]
   },
   J4: { id:'J4', next:'J_SS', label:'Air lock purge',
@@ -896,8 +869,7 @@ const DIAG_STEPS = {
     question:'',
     buttons:[
       {label:'Jets are working now!', outcome:'action', action:'jets_airlock_cleared'},
-      {label:'Still no jets', outcome:'neutral'},
-      {label:'Skip Step', outcome:'skip'},
+      {label:'Still no jets', outcome:'neutral'}
     ]
   },
   J_SS: { id:'J_SS', next:'J10', label:'Sound signature',
@@ -906,8 +878,7 @@ const DIAG_STEPS = {
       {label:'Complete silence — nothing happens', outcome:'action', action:'jets_sound_silent'},
       {label:'Loud hum but jets don\'t spin up', outcome:'action', action:'jets_sound_hum'},
       {label:'Screech or squeal when running', outcome:'action', action:'jets_sound_squeal'},
-      {label:'Runs normally but weak pressure', outcome:'pass'},
-      {label:'Skip Step', outcome:'skip'},
+      {label:'Runs normally but weak pressure', outcome:'pass'}
     ]
   },
   J10: { id:'J10', next:'J_SH', label:'Fuses',
@@ -915,8 +886,7 @@ const DIAG_STEPS = {
     question:'Most control packs have dedicated fuses for each pump. Turn off the breaker, locate the fuse panel inside the equipment bay, and check the fuse for the corresponding jet pump. Look at both the housing and the filament inside — a blown fuse is a symptom, not the root cause.',
     buttons:[
       {label:'All fuses intact', outcome:'pass'},
-      {label:'Found a blown fuse', outcome:'possible', part:'fuse kit'},
-      {label:'Skip Step', outcome:'skip'},
+      {label:'Found a blown fuse', outcome:'possible', part:'fuse kit'}
     ]
   },
   J_SH: { id:'J_SH', next:'J_VT', label:'Shaft & impeller check',
@@ -925,8 +895,7 @@ const DIAG_STEPS = {
     buttons:[
       {label:'Shaft turns freely', outcome:'pass'},
       {label:'Shaft is locked solid', outcome:'action', action:'jets_shaft_locked'},
-      {label:'Can\'t access the shaft', outcome:'skip'},
-      {label:'Skip Step', outcome:'skip'},
+      {label:'Can\'t access the shaft', outcome:'skip'}
     ]
   },
   J_VT: { id:'J_VT', next:'J9', label:'Voltage test',
@@ -935,8 +904,7 @@ const DIAG_STEPS = {
     buttons:[
       {label:'Yes, I have one', outcome:'action', action:'jets_voltage_test'},
       {label:"No, I don't", outcome:'action', action:'jets_no_multimeter'},
-      {label:"I'd like one", outcome:'action', action:'suggest_multimeter'},
-      {label:'Skip Step', outcome:'skip'},
+      {label:"I'd like one", outcome:'action', action:'suggest_multimeter'}
     ]
   },
   J9: { id:'J9', next:'J13', label:'Visual inspection',
@@ -946,8 +914,7 @@ const DIAG_STEPS = {
       {label:'Everything looks clean', outcome:'pass'},
       {label:'Found burn marks on pump wiring', outcome:'fail', part:'jet pump'},
       {label:'Found burn marks on control board', outcome:'fail', part:'control board'},
-      {label:'Found something unusual', outcome:'action', action:'unusual_finding'},
-      {label:'Skip Step', outcome:'skip'},
+      {label:'Found something unusual', outcome:'action', action:'unusual_finding'}
     ]
   },
   J13: { id:'J13', next:'J14', label:'Jet pump',
@@ -955,8 +922,7 @@ const DIAG_STEPS = {
     question:'Based on everything we\'ve checked, the jet pump itself is the likely cause. Before ordering, confirm the pump model number from the label on the pump housing. Also check the wiring harness for any damage — a new pump with damaged wiring will fail immediately.',
     buttons:[
       {label:'Show me jet pump options', outcome:'fail', part:'jet pump'},
-      {label:'I need help identifying my pump', outcome:'action', action:'identify_pump'},
-      {label:'Skip Step', outcome:'skip'},
+      {label:'I need help identifying my pump', outcome:'action', action:'identify_pump'}
     ]
   },
   J14: { id:'J14', next:null, label:'Control board / wiring',
@@ -991,8 +957,7 @@ const DIAG_STEPS = {
     question:'Turn off the spa breaker completely. Wait 10 seconds, then listen — is the noise still there?',
     buttons:[
       {label:'Noise stopped — spa confirmed', outcome:'action', action:'noise_confirmed_spa'},
-      {label:'Still noisy — external source', outcome:'action', action:'noise_external_end'},
-      {label:'Skip Step', outcome:'skip'},
+      {label:'Still noisy — external source', outcome:'action', action:'noise_external_end'}
     ]
   },
   N_TYPE: { id:'N_TYPE', next:'N_PNL', label:'Sound type',
@@ -1020,8 +985,7 @@ const DIAG_STEPS = {
     question:'Remove your filters completely, then run the spa. Did the noise stop or noticeably improve?',
     buttons:[
       {label:'Yes — noise stopped', outcome:'action', action:'noise_cavitation'},
-      {label:'No — still noisy', outcome:'pass'},
-      {label:'Skip Step', outcome:'skip'},
+      {label:'No — still noisy', outcome:'pass'}
     ]
   },
   N_BAY: { id:'N_BAY', next:'N_TEMP', label:'Equipment bay visual',
@@ -1031,8 +995,7 @@ const DIAG_STEPS = {
       {label:'Dripping or scale around shaft seal', outcome:'fail', part:'circ pump seal'},
       {label:'Scale or burn marks on heater tube', outcome:'action', action:'noise_heater_scale'},
       {label:'Rapid clicking from control pack', outcome:'action', action:'noise_chattering'},
-      {label:'Everything looks dry and normal', outcome:'pass'},
-      {label:'Skip Step', outcome:'skip'},
+      {label:'Everything looks dry and normal', outcome:'pass'}
     ]
   },
   N_TEMP: { id:'N_TEMP', next:'N_IMP', label:'Motor temperature',
@@ -1041,8 +1004,7 @@ const DIAG_STEPS = {
     buttons:[
       {label:'Abnormally hot — very hot to the touch', outcome:'fail', part:'circulation pump'},
       {label:'Warm but normal', outcome:'pass'},
-      {label:'Cool / room temperature', outcome:'pass'},
-      {label:'Skip Step', outcome:'skip'},
+      {label:'Cool / room temperature', outcome:'pass'}
     ]
   },
   N_IMP: { id:'N_IMP', next:'N_BEEP', label:'Impeller check',
@@ -1051,8 +1013,7 @@ const DIAG_STEPS = {
     buttons:[
       {label:'Found debris — cleared it out', outcome:'action', action:'noise_impeller_cleared'},
       {label:'No debris visible', outcome:'pass'},
-      {label:"Can't access safely", outcome:'skip'},
-      {label:'Skip Step', outcome:'skip'},
+      {label:"Can't access safely", outcome:'skip'}
     ]
   },
   N_BEEP: { id:'N_BEEP', next:null, label:'Panel check',
@@ -1108,8 +1069,7 @@ const DIAG_STEPS = {
     question:'Have you tested the water in the last 24 hours?',
     buttons:[
       {label:'Yes — tested recently', outcome:'pass'},
-      {label:'No — not tested yet', outcome:'action', action:'water_test_guide'},
-      {label:'Skip Step', outcome:'skip'},
+      {label:'No — not tested yet', outcome:'action', action:'water_test_guide'}
     ]
   },
   W4: { id:'W4', next:'W5', label:'Test results',
@@ -1372,22 +1332,34 @@ SpaFix hot tub repair AI. "Skip the repairman." Confident, direct, warm. No hedg
 The system may prepend a [DS] block to your context. It is READ-ONLY session state — never reproduce it, never output it, never reference its format. Treat it as invisible internal data.
 
 =SPA GATE=
-Before requesting spa details, ALWAYS acknowledge the specific problem or error code in one sentence first. Never skip straight to the details request without acknowledging what the user reported. Then request spa details using the exact phrase below.
+SPA CONTEXT RULE (check first, every time):
+- If [SPA:...] is in your context: spa is confirmed. NEVER ask for spa details. Acknowledge the issue in one sentence and route straight into diagnosis -- no request phrase, no gate.
+- If spa is partially known (missing year OR make OR model only): acknowledge the issue, then ask only for the missing piece. Example: "I have your Jacuzzi J-335 -- what year is it?"
+- If spa is fully unknown: acknowledge the issue in one sentence, then use the request phrase below.
+
+Before requesting spa details, ALWAYS acknowledge the specific problem first. Never skip straight to the details request.
 Skip gate entirely when: [CP:] [SL:] [SD] or spa in history.
 
-Acknowledgment examples (one sentence, then request phrase on new line):
-- OH/overheat: "OH is an overheat code — your spa shut down to protect itself from high water temperature."
-- FLO: "FLO means the system isn't detecting enough water flow through the heater."
-- DR: "DR is a dry heater fault — the heater fired without enough water flow to cool it."
-- ICE: "ICE means the freeze protection triggered — water temperature dropped low enough to activate the sensor."
-- Pump won't start: "A pump that won't start is usually a power, capacitor, or wiring issue."
-- No jet pressure: "Low jet pressure is almost always a flow or pump issue — filter, impeller, or airlock."
-- Heater not heating: "A heater that stopped working is typically a flow fault, failed element, or tripped high-limit."
-- Leak: "A leak from under the tub usually points to a fitting, seal, or pump union — stop using the spa until you locate it."
-- Control panel unresponsive: "An unresponsive control panel is usually a power supply, ribbon cable, or board issue."
-- Display blank: "A completely blank display usually means no power is reaching the topside — check the breaker and connections first."
+ACKNOWLEDGMENT RULES (no diagnostic steps, no quick checks -- diagnosis is SpaFix's job):
+TIER 1 -- SAFETY CRITICAL (OH, ICE, DR): Acknowledge with one sentence + 1 immediate safety action only + request phrase if spa unknown.
+- OH/overheat: "OH is an overheat code -- your spa shut down to protect itself from overheating. Turn it off at the panel and remove the cover while we sort this out."
+- ICE/freeze: "ICE means freeze protection triggered -- water temp dropped low enough to risk pipe damage. Make sure the spa has power so the freeze protection cycle can run."
+- DR/dry heater: "DR is a dry heater fault -- the heater fired without enough water to cool it. Don't run the heater again until we've checked the water level."
+- SY/sensor failure: "SY is a sensor system failure -- your spa has shut down to protect itself. The control board can't read the water temperature sensor. Don't attempt to restart it until we've checked the sensor connections."
 
-Request phrase (exact, always on its own line after acknowledgment): "To get you the most accurate diagnosis, I'll need your spa details — tap **Spa Details Required** above to select your spa and I'll take it from there." Never output template fields.
+TIER 2 -- URGENT (FLO, Sn codes, pump, jets, heater, leak): Acknowledge in one sentence only + request phrase if spa unknown. No quick checks.
+- FLO: "FLO means the system isn't detecting enough water flow."
+- Sn/sensor: "That's a temperature sensor fault -- either a bad reading or a failed sensor."
+- Pump won't start: "A pump that won't start is usually power, capacitor, or wiring."
+- No jet pressure: "Low jet pressure points to a flow or filter issue."
+- Heater not heating: "A heater that's stopped working is typically a flow fault, failed element, or tripped high-limit."
+- Leak: "A leak from under the tub usually points to a fitting, seal, or pump union -- stop using the spa and turn it off at the breaker until we find the source."
+- Control panel unresponsive: "An unresponsive control panel is usually power, ribbon cable, or board."
+- Display blank: "A completely blank display usually means no power is reaching the topside."
+
+TIER 3 -- ALL OTHER CODES/ISSUES: Acknowledge in one sentence only + request phrase if spa unknown.
+
+Request phrase: Do NOT output any "tap Spa Details Required" or similar CTA text. The UI renders entry point buttons automatically when spa details are missing. Your job is only to acknowledge the issue warmly. Never output template fields. Never say "above".
 
 =HOWTO=
 General how-to Q → answer directly, no gate.
@@ -1427,7 +1399,8 @@ ABSOLUTE HARD LIMITS — never under any circumstances:
 - Never output <br> tags`;
 
 const SP_PERSONALITY = `=STYLE=
-Never dismiss answers. No resets. One Q, wait, move on. Don't restate what user said. No "usually/typically/often/probably/might." Never suggest calling tech for standard repairs.`;
+Never dismiss answers. No resets. One Q, wait, move on. Don't restate what user said. No "usually/typically/often/probably/might." Never suggest calling tech for standard repairs.
+TONE: Always warm, friendly, and approachable -- even when brief. Never terse, clipped, or abrupt. Every response should feel like it comes from someone who genuinely wants to help.`;
 
 const SP_DIAG_FLOW = `=DIAG RULES=
 DEFAULT: output the step question verbatim — nothing else. No tips, no context, no pricing.
@@ -1694,6 +1667,9 @@ function isShortGuidedReply(text) {
 }
 
 function maybeNormalizeGuidedChatInput(req, res, next) {
+  // systemOverride requests are standalone explanation calls -- skip normalization entirely
+  if (req.body && req.body.systemOverride) return next();
+
   const field = getChatInputField(req.body);
   if (!field) return next();
 
@@ -1963,6 +1939,12 @@ app.post("/api/increment-msg", (req, res) => {
   const proAuth = getProAuth(req);
   if (proAuth.session) {
     return res.json({ limitReached: false, dailyMsgs: 0, dailyLimit: FREE_DAILY_MSG_LIMIT, isPro: true });
+  }
+  // QA bypass -- never increment or limit during automated test runs
+  if (isQABypass(req)) {
+    const clientId = getClientId(req);
+    const u = getUsage(clientId);
+    return res.json({ limitReached: false, dailyMsgs: u.dailyMsgs, dailyLimit: FREE_DAILY_MSG_LIMIT, isPro: false });
   }
   const clientId = getClientId(req);
   const u = getUsage(clientId);
@@ -2289,6 +2271,7 @@ app.post("/api/diag-button", async (req, res) => {
         'S2b': "Good — water level is fine.",
         'S1': "Filters ruled out — let's keep going.",
         'S3': "Good suction confirmed — the pump is moving water.",
+        'H3': "Good — strong suction confirmed. The pump is moving water normally.",
         'S4': "Great — the air lock purge worked. Let's keep an eye on it and continue checking.",
         'S5': "Good — the heating indicator is showing, so the control board is commanding heat.",
         'BREAKER': buttonLabel === 'Error cleared' ? "Great — the breaker reset cleared the error. Let's continue to confirm everything is working." : "Noted — the breaker reset didn't resolve it. Let's keep working through the checklist.",
@@ -2318,6 +2301,10 @@ app.post("/api/diag-button", async (req, res) => {
       if (stepId === 'S3') {
         const _s3Msg = "Weak or no suction at the inlet is a concern — I've flagged the suction test as a possible issue. This can be caused by trapped air in the plumbing, a struggling circulation pump, or a blockage somewhere in the system. Let's work through the most likely causes one by one.";
         if (!briefMode) { responseMsg = _s3Msg; } else { briefOmitted = _s3Msg; }
+      }
+      if (stepId === 'H3') {
+        const _h3Msg = "Weak or no suction means water isn't moving through the system properly -- this is likely contributing to your heating issue. It could be trapped air, a struggling circ pump, or a blockage. Let's work through the most likely causes.";
+        if (!briefMode) { responseMsg = _h3Msg; } else { briefOmitted = _h3Msg; }
       }
       break;
     case 'neutral':
@@ -2393,19 +2380,24 @@ app.post("/api/diag-button", async (req, res) => {
 
       case 'water_dirty_clean':
         responseMsg = [
-          "Here is what to do before we continue:",
+          "**Dealing with Visibly Dirty Water**",
+          "Recommended Action Plan: The Fresh Start",
           "",
-          "* **Step 1: Clean the filters** — Remove your filter cartridges and rinse them thoroughly using a standard garden hose with a spray nozzle. Never use a pressure washer, as it will damage the filter fabric.",
-          "* **Step 2: Clear out debris** — Use a spa net or spa vacuum to remove leaves, grit, and settling debris from the seats and footwell.",
+          "* **Drain and wipe down** -- Safely drain the spa and wipe down the shell to remove ring lines, grit, or biofilm residue.",
+          "* **Clean or replace filters** -- Visibly dirty water heavily clogs filters. Rinse cartridges thoroughly with a hose or replace if worn.",
+          "* **Fresh refill** -- Refill the spa with clean water (use a hose pre-filter if you have high mineral content).",
+          "* **Balance the baseline** -- Test fresh water and adjust pH (7.2-7.8) and total alkalinity (80-120 ppm).",
+          "* **Sanitize and shock** -- Apply primary sanitizer and a startup shock dose.",
+          "* **Run filtration** -- Circulate for at least 4-6 hours to mix chemicals and bring to temperature.",
           "",
-          "✱ **The 4-Month Rule:** If your water is more than 3–4 months old, save your time and money on chemicals. We strongly recommend a complete drain, wipe-down, and fresh refill.",
+          "#When water is visibly dirty with heavy grit, leaves, or severe organic buildup, attempting to fix it with chemicals alone is often a losing battle. Heavy debris can rapidly clog filters, strain the circulation pump, and completely consume your sanitizer, leaving the water unsafe. For heavily compromised water, a complete drain and refill is highly recommended to protect your equipment and ensure a clean, healthy soak.#",
           "",
-          "Need supplies? If your filters are worn out or you need the right cleaning tools, check out our recommended items below.",
-          "",
-          "Once the water is physically clean and circulating, tap the button below to continue.",
+          "[HALF_BREAK]",
+          "⚠️ Safety First: Always read product labels before handling spa chemicals. Never mix chemicals together directly -- always add chemicals to water, never water to chemicals. Keep all products safely stored away from children and pets.",
         ].join("\n");
+        partCard = 'water dirty';
         advanceNow = false;
-        partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="action" data-action="water_dirty_supplies" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Show Recommended Items</button><button class="diag-btn" data-step="__STEP__" data-outcome="action" data-action="water_dirty_done" data-part="" data-critical="false" onclick="handleDiagBtn(this)">I have cleaned the water — Continue Diagnosis</button></div>';
+        partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="action" data-action="water_dirty_supplies" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Show Recommended Items</button><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button></div>';
         break;
 
       case 'water_dirty_done':
@@ -2439,7 +2431,7 @@ app.post("/api/diag-button", async (req, res) => {
         stepResult.passed = true;
         stepResult.possible = true;
         advanceNow = false;
-        responseMsg += '\n\n<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="action" data-action="water_show_items_cloudy" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Show Recommended Items</button><button class="diag-btn" data-step="__STEP__" data-outcome="action" data-action="view_water_guides" data-part="" data-critical="false" onclick="handleDiagBtn(this)">View Water Care Guides</button><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button></div>';
+        responseMsg += '\n\n<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="action" data-action="water_show_items_cloudy" data-part="" data-critical="false" onclick="handleDiagBtn(this)" style="border-color:rgba(0,183,255,0.7);background:rgba(0,183,255,0.18);font-weight:600;">Show Recommended Items</button><button class="diag-btn" data-step="__STEP__" data-outcome="action" data-action="view_water_guides" data-part="" data-critical="false" onclick="handleDiagBtn(this)">View Water Care Guides</button><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button></div>';
         break;
 
       case 'water_foamy':
@@ -2461,7 +2453,7 @@ app.post("/api/diag-button", async (req, res) => {
         stepResult.passed = true;
         stepResult.possible = true;
         advanceNow = false;
-        responseMsg += '\n\n<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="action" data-action="water_show_items_foamy" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Show Recommended Items</button><button class="diag-btn" data-step="__STEP__" data-outcome="action" data-action="view_water_guides" data-part="" data-critical="false" onclick="handleDiagBtn(this)">View Water Care Guides</button><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button></div>';
+        responseMsg += '\n\n<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="action" data-action="water_show_items_foamy" data-part="" data-critical="false" onclick="handleDiagBtn(this)" style="border-color:rgba(0,183,255,0.7);background:rgba(0,183,255,0.18);font-weight:600;">Show Recommended Items</button><button class="diag-btn" data-step="__STEP__" data-outcome="action" data-action="view_water_guides" data-part="" data-critical="false" onclick="handleDiagBtn(this)">View Water Care Guides</button><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button></div>';
         break;
 
       case 'water_show_items_cloudy':
@@ -2501,7 +2493,7 @@ app.post("/api/diag-button", async (req, res) => {
         stepResult.passed = true;
         stepResult.possible = true;
         advanceNow = false;
-        partCardButtons = '<div class=\"diag-step-btns\" style=\"margin-top:10px;\"><button class=\"diag-btn\" data-step=\"__STEP__\" data-outcome=\"pass\" data-action=\"\" data-part=\"\" data-critical=\"false\" onclick=\"handleDiagBtn(this)\">Continue anyway</button><button class=\"diag-btn\" data-step=\"__STEP__\" data-outcome=\"action\" data-action=\"water_dirty_clean\" data-part=\"\" data-critical=\"false\" onclick=\"handleDiagBtn(this)\">I\'ll clean the water first</button></div>';
+        partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn spa-gate-pulse" style="border-color:rgba(0,183,255,0.7);background:rgba(0,183,255,0.18);font-weight:600;" data-step="__STEP__" data-outcome="action" data-action="water_dirty_clean" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Clean the water first</button><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue anyway</button></div>';
         break;
 
       case 'show_water_treatment':
@@ -2604,13 +2596,12 @@ app.post("/api/diag-button", async (req, res) => {
         break;
 
       case 'cant_find_inlet':
-        responseMsg = "The filter inlet is the opening where your filter(s) sit — typically a circular opening a few inches in diameter inside the filter compartment. If you don't feel any suction, make sure the spa jets are running — some spas won't draw water through the filter inlet until the jets are active. [MANUAL_LINK] or upload a photo of the filter bay and I'll help you identify it.";
+        responseMsg = "The filter inlet is the opening where your filter(s) sit — typically a circular opening a few inches in diameter inside the filter compartment. If you don't feel any suction, make sure the spa jets are running — some spas won't draw water through the filter inlet until the jets are active. Check your [MANUAL_LINK] if you need help locating it, or upload a photo of the filter bay and I'll help you identify it.";
         advanceNow = false;
         deadEndButtons = [
           { l: 'Found it — testing now', o: 'action', a: 'S3_found_inlet' },
           { l: '📸 Upload a Photo', o: 'action', a: 'upload_filter_bay_photo' },
-          { l: "Check Owner's Manual", o: 'action', a: 'open_manual_finder' },
-          { l: 'Skip this step', o: 'skip', a: '' },
+          { l: "Check Owner's Manual", o: 'action', a: 'open_manual_finder' }
         ];
         break;
 
@@ -2620,8 +2611,7 @@ app.post("/api/diag-button", async (req, res) => {
         advanceNow = false;
         deadEndButtons = [
           { l: 'Strong suction', o: 'pass', a: '' },
-          { l: 'Weak or no suction', o: 'possible', a: '' },
-          { l: 'Skip this step', o: 'skip', a: '' },
+          { l: 'Weak or no suction', o: 'possible', a: '' }
         ];
         break;
 
@@ -2664,8 +2654,7 @@ app.post("/api/diag-button", async (req, res) => {
         advanceNow = false;
         deadEndButtons = [
           { l: 'Yes — set it higher, still no heat', o: 'pass', a: '' },
-          { l: 'No — let me try that now', o: 'action', a: 'heater_temp_retry' },
-          { l: 'Skip Step', o: 'skip', a: '' },
+          { l: 'No — let me try that now', o: 'action', a: 'heater_temp_retry' }
         ];
         break;
 
@@ -3120,6 +3109,7 @@ _If you're testing, please send this code to support@spafix.app_`;
 // ─────────────────────────────────────────────────────────────────
 
 app.post("/api/chat", async (req, res) => {
+  try {
   const { messages } = req.body;
   const isSilent = req.body.silent === true;
   const clientId = getClientId(req);
@@ -3170,7 +3160,7 @@ app.post("/api/chat", async (req, res) => {
   }
 
   // Re-read diagState after potential init above
-  const diagStateEffective = getDiagState(clientId) || diagStateIn;
+  let diagStateEffective = getDiagState(clientId) || diagStateIn;
 
   console.log(`[/api/chat] ${new Date().toISOString()} clientId=${clientId} msgs=${messages?.length || 0} step=${diagStateEffective?.currentStep || 'none'}`);
 
@@ -3193,17 +3183,20 @@ app.post("/api/chat", async (req, res) => {
     const hasDiagState = !!(diagStateEffective && diagStateEffective.spa);
     const spaConfirmed = req.body.spaConfirmed === true;
     const conversationInProgress = messages.filter(m => m.role === 'user').length > 1 || messages.some(m => m.role === 'assistant');
-    const check = (isSpaForm || spaSubmitted || spaConfirmed || conversationInProgress || hasSpaContext || hasDiagState) ? { valid: true } : await isValidMessage(content);    if (!check.valid) {
+    const check = (isSpaForm || spaSubmitted || spaConfirmed || conversationInProgress || hasSpaContext || hasDiagState || req.body.systemOverride) ? { valid: true } : await isValidMessage(content);    if (!check.valid) {
       const msgs = { too_short: "Please describe your hot tub issue in a bit more detail.", too_long: "Your message is too long — please keep it under 300 characters.", off_topic: "SpaFix can only help with hot tub and spa questions. Please describe your spa issue and I'll be happy to help!" };
       return res.status(400).json({ error: msgs[check.reason] || "Please ask a spa-related question." });
     }
   }
 
+  // systemOverride -- null diagStateEffective BEFORE detectRequestContext so context is built cleanly
+  if (req.body.systemOverride && typeof req.body.systemOverride === 'string') {
+    diagStateEffective = null;
+  }
+
   const promptContext = detectRequestContext(messages, diagStateEffective, req.body);
   const systemPrompt = buildSystemPrompt(promptContext);
-  const hasDiagStateActive = !!(diagStateEffective && (diagStateEffective.currentStep || (diagStateEffective.steps && diagStateEffective.steps.length > 0)));
-  const msgLimit = hasDiagStateActive ? 3 : 6;
-  const trimmedMessages = messages.slice(-msgLimit);
+  let hasDiagStateActive = !!(diagStateEffective && (diagStateEffective.currentStep || (diagStateEffective.steps && diagStateEffective.steps.length > 0)));
 
   // Always inject spa identity during active diagnosis — prevents drift when messages scroll out of window
   const spaYearVal = req.body.spaYear || '';
@@ -3249,12 +3242,17 @@ app.post("/api/chat", async (req, res) => {
 
   let effectiveSystemPrompt = spaPrefix + systemPrompt;
 
-  // systemOverride — client supplies its own system prompt (used by _fireNonFaultCodeExplanation)
+  // systemOverride -- use client-supplied prompt, diagStateEffective already nulled above
   if (req.body.systemOverride && typeof req.body.systemOverride === 'string') {
     effectiveSystemPrompt = req.body.systemOverride;
   }
 
-  if (hasDiagStateActive) {
+  // Re-evaluate after potential systemOverride null -- must be after the block above
+  hasDiagStateActive = !!(diagStateEffective && (diagStateEffective.currentStep || (diagStateEffective.steps && diagStateEffective.steps.length > 0)));
+  const msgLimit = hasDiagStateActive ? 3 : 6;
+  const trimmedMessages = messages.slice(-msgLimit);
+
+  if (hasDiagStateActive && !req.body.systemOverride) {
     const stateBlock = buildDiagStateBlock(diagStateEffective);
     if (stateBlock) effectiveSystemPrompt = stateBlock + '\n\n' + spaPrefix + systemPrompt;
   }
@@ -3304,9 +3302,9 @@ app.post("/api/chat", async (req, res) => {
     return;
   }
 
-  if (!isPro && !isSilent) {
+  if (!isPro) {
     const u = getUsage(clientId);
-    const qaBypass = isQABypass(req);
+    const qaBypass = isQABypass(req) || isSilent;
     if (!qaBypass) {
       if (u.dailyMsgs >= FREE_DAILY_MSG_LIMIT) {
         return res.status(429).json({ limitReached: true, reason: "daily_messages", message: `You've reached the ${FREE_DAILY_MSG_LIMIT} message limit for today. Come back tomorrow, or upgrade to Premium for unlimited messages.` });
@@ -3327,6 +3325,10 @@ app.post("/api/chat", async (req, res) => {
 
   try { const { reply, diagState } = await callAndProcess('pro'); res.json({ reply, diagState, usage: null }); }
   catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (outerErr) {
+    console.error('[/api/chat] UNHANDLED ERROR:', outerErr.message, outerErr.stack);
+    if (!res.headersSent) res.status(500).json({ error: outerErr.message });
+  }
 });
 
 
@@ -3527,11 +3529,12 @@ app.post('/api/admin/dismiss-error-code', async (req, res) => {
   const { key, code, spa_make, spa_model } = req.body;
   if (!ADMIN_KEY || !accessCodesMatch(key, ADMIN_KEY)) return res.status(401).json({ error: 'Unauthorized' });
   try {
-    await fetch(`${process.env.SUPABASE_URL}/rest/v1/unknown_error_codes?code=eq.${encodeURIComponent(code)}&spa_make=eq.${encodeURIComponent(spa_make)}&spa_model=eq.${encodeURIComponent(spa_model)}`, {
+    const patchRes = await fetch(`${process.env.SUPABASE_URL}/rest/v1/unknown_error_codes?code=eq.${encodeURIComponent(code)}&spa_make=eq.${encodeURIComponent(spa_make)}&spa_model=eq.${encodeURIComponent(spa_model)}`, {
       method: 'PATCH',
       headers: { 'apikey': process.env.SUPABASE_ANON_KEY, 'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
       body: JSON.stringify({ dismissed_at: new Date().toISOString() })
     });
+    if (!patchRes.ok) { const e = await patchRes.text(); return res.status(500).json({ error: e }); }
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -3795,30 +3798,40 @@ app.get('/api/admin/pending-code-explanations', async (req, res) => {
 app.post('/api/parts-set-generic', async (req, res) => {
   const { cacheKey, partNumber, partName, generic } = req.body;
   if (!cacheKey) return res.status(400).json({ error: 'cacheKey required' });
-  // Verify admin
   const provided = req.headers['x-spafix-access-code'] || req.body.accessCode || '';
   if (!accessCodesMatch(provided, process.env.ADMIN_KEY)) return res.status(401).json({ error: 'Unauthorized' });
   try {
-    // Fetch existing cache row
-    const { data: row, error: fetchErr } = await supabase
-      .from('parts_cache')
-      .select('parts')
-      .eq('cache_key', cacheKey)
-      .single();
-    if (fetchErr || !row) return res.status(404).json({ error: 'Cache entry not found' });
-    // Update the matching part's generic flag
-    const parts = row.parts || [];
+    // Try Supabase first
+    const fetchRes = await fetch(`${process.env.SUPABASE_URL}/rest/v1/parts_cache?cache_key=eq.${encodeURIComponent(cacheKey)}&select=parts`, {
+      headers: { 'apikey': process.env.SUPABASE_ANON_KEY, 'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY}` }
+    });
+    let parts = null;
+    if (fetchRes.ok) {
+      const rows = await fetchRes.json();
+      if (rows && rows.length) parts = rows[0].parts || [];
+    }
+    // Fall back to in-memory cache if Supabase has no entry
+    if (!parts && partsCache[cacheKey]) {
+      parts = partsCache[cacheKey];
+    }
+    if (!parts) return res.status(404).json({ error: 'Cache entry not found -- load the parts list first' });
+    // Update the matching part generic flag
     const updated = parts.map(p => {
       const matchPN = partNumber && p.part_number === partNumber;
       const matchName = !partNumber && p.name === partName;
       if (matchPN || matchName) return { ...p, generic: !!generic };
       return p;
     });
-    const { error: updateErr } = await supabase
-      .from('parts_cache')
-      .update({ parts: updated })
-      .eq('cache_key', cacheKey);
-    if (updateErr) return res.status(500).json({ error: 'Failed to update cache' });
+    // Update in-memory cache immediately
+    partsCache[cacheKey] = updated;
+    // Try to persist to Supabase (best effort)
+    try {
+      await fetch(`${process.env.SUPABASE_URL}/rest/v1/parts_cache?cache_key=eq.${encodeURIComponent(cacheKey)}`, {
+        method: 'PATCH',
+        headers: { 'apikey': process.env.SUPABASE_ANON_KEY, 'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+        body: JSON.stringify({ parts: updated })
+      });
+    } catch(e) { console.warn('[parts-set-generic] Supabase persist failed:', e.message); }
     res.json({ ok: true });
   } catch(e) {
     res.status(500).json({ error: e.message });
@@ -3828,8 +3841,7 @@ app.post('/api/parts-set-generic', async (req, res) => {
 app.post('/api/parts-list', async (req, res) => {
   const { year, make, model, cacheKey, keyPartNumbers, compatibleParts } = req.body;
   if (!make || !model) return res.status(400).json({ error: 'make and model required' });
-  const session = requireProSession(req, res);
-  if (!session) return;
+  // Parts list is free for all tiers -- no session required
   const key = cacheKey || [year,make,model].map(v=>(v||'').toLowerCase().trim()).join('-').replace(/[^a-z0-9-]/g,'');
   // Check in-memory cache first (fastest)
   if (partsCache[key]) return res.json({ parts: partsCache[key], cached: true });
@@ -3943,6 +3955,114 @@ app.post('/api/parts-list', async (req, res) => {
     })();
     res.json({ parts, cached: false });
   } catch(e) { console.error('Parts list error:', e.message); res.status(500).json({ error: e.message }); }
+});
+
+// ── QA Agent evaluation proxy ─────────────────────────────────────
+// Forwards a prompt to Anthropic and returns the response text.
+// Used by the SpaFix QA Agent evaluation stage only.
+// Does not count against user usage limits.
+// ── QA Discrepancies -- in-memory, resets on deploy ──────────────────────────
+const QA_DISCREPANCIES_MAX = 50;
+let qaDiscrepancies = [];
+
+app.post('/api/qa-discrepancy', (req, res) => {
+  if (!isQABypass(req)) return res.status(403).json({ error: 'QA bypass required' });
+  const d = req.body;
+  if (!d || !d.scenario_id) return res.status(400).json({ error: 'scenario_id required' });
+  qaDiscrepancies.unshift({ ...d, logged_at: new Date().toISOString(), resolved: false, id: Date.now() });
+  if (qaDiscrepancies.length > QA_DISCREPANCIES_MAX) qaDiscrepancies = qaDiscrepancies.slice(0, QA_DISCREPANCIES_MAX);
+  console.log(`[qa-discrepancy] Logged scenario ${d.scenario_id}: expected=${d.expected_seq} actual=${d.actual_seq}`);
+  res.json({ ok: true });
+});
+
+app.get('/api/admin/qa-discrepancies', (req, res) => {
+  const key = req.headers['x-admin-key'] || req.query.key || '';
+  if (!ADMIN_KEY || !accessCodesMatch(key, ADMIN_KEY)) return res.status(401).json({ error: 'Unauthorized' });
+  res.json({ discrepancies: qaDiscrepancies, count: qaDiscrepancies.length });
+});
+
+app.post('/api/admin/qa-discrepancies/resolve', (req, res) => {
+  const { key, id } = req.body;
+  if (!ADMIN_KEY || !accessCodesMatch(key, ADMIN_KEY)) return res.status(401).json({ error: 'Unauthorized' });
+  const entry = qaDiscrepancies.find(d => d.id === id);
+  if (!entry) return res.status(404).json({ error: 'Not found' });
+  entry.resolved = true;
+  res.json({ ok: true });
+});
+
+app.post('/api/admin/qa-discrepancies/clear', (req, res) => {
+  const { key } = req.body;
+  if (!ADMIN_KEY || !accessCodesMatch(key, ADMIN_KEY)) return res.status(401).json({ error: 'Unauthorized' });
+  qaDiscrepancies = [];
+  res.json({ ok: true });
+});
+
+// GET /api/spas/qa-manifest -- returns testable spa records for QA agent
+// Fetches all spa_models rows, filters server-side by error_codes presence
+app.get('/api/spas/qa-manifest', async (req, res) => {
+  try {
+    const url = `${SUPABASE_URL}/rest/v1/spa_models?select=brand,model_name,model_code,year_start,year_end,control_panel_variant,error_codes,code_types&order=brand.asc,model_name.asc&limit=1000`;
+    const r = await fetch(url, {
+      headers: {
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+        'Content-Type': 'application/json',
+      }
+    });
+    if (!r.ok) {
+      const errText = await r.text();
+      console.error('[qa-manifest] Supabase error:', errText);
+      return res.status(502).json({ error: 'Supabase query failed' });
+    }
+    const rows = await r.json();
+    const testable = [];
+    const skipped = [];
+    for (const row of (rows || [])) {
+      const ec = row.error_codes;
+      // Exclude null, empty object, or object with no keys
+      if (!ec || typeof ec !== 'object' || Array.isArray(ec) || Object.keys(ec).length === 0) {
+        skipped.push({ brand: row.brand, model_name: row.model_name, reason: 'no error codes' });
+        continue;
+      }
+      testable.push({
+        brand: row.brand,
+        model_name: row.model_name,
+        model_code: row.model_code || null,
+        year_start: row.year_start || null,
+        year_end: row.year_end || null,
+        control_panel_variant: row.control_panel_variant || null,
+        error_codes: ec,
+        code_types: row.code_types || {},
+      });
+    }
+    console.log(`[qa-manifest] ${testable.length} testable, ${skipped.length} skipped`);
+    res.json({ testable, skipped });
+  } catch (e) {
+    console.error('[qa-manifest] Exception:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post("/api/qa-evaluate", async (req, res) => {
+  const { prompt } = req.body;
+  if (!prompt || typeof prompt !== 'string') {
+    return res.status(400).json({ error: "prompt string required" });
+  }
+  // QA bypass -- this endpoint is only called by the QA agent, but guard explicitly
+  // No usage counting or rate limiting applies here
+  try {
+    const response = await callAnthropicWithRetry({
+      model: "claude-sonnet-4-6",
+      max_tokens: 1000,
+      messages: [{ role: "user", content: prompt }]
+    });
+    const data = await response.json();
+    if (!response.ok) return res.status(500).json({ error: data?.error?.message || "API error" });
+    const result = (data.content || []).map(b => b.text || "").join("").trim();
+    res.json({ result });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.use((err, req, res, next) => {
