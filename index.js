@@ -1,5 +1,5 @@
-// SpaFix Server v4.9.19
-process.env.APP_VERSION = "v4.9.19c";
+// SpaFix Server
+process.env.APP_VERSION = "v4.9.19i";
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -501,6 +501,8 @@ const DISCLAIMER = ``;
 // ── FIRE templates — server-side static text, zero prompt tokens ──
 const FIRE_TEMPLATES = {
   'F:AP': `Step 5 — Air Lock Purge:
+
+##If the spa was recently drained or refilled, an air pocket may be trapped in the pump housing -- this prevents water from circulating and can trigger both flow and overheat errors. Let's flush it out.##
 
 ⚠️ Be sure to only use a plain garden hose for these steps — no sprayer, nozzle or attachments. Forcing pressurized air or a hard stream can damage internal components.
 
@@ -1351,7 +1353,7 @@ TIER 2 -- URGENT (FLO, Sn codes, pump, jets, heater, leak): Acknowledge in one s
 - FLO: "FLO means the system isn't detecting enough water flow."
 - Sn/sensor: "That's a temperature sensor fault -- either a bad reading or a failed sensor."
 - Pump won't start: "A pump that won't start is usually power, capacitor, or wiring."
-- No jet pressure: "Low jet pressure points to a flow or filter issue."
+- No jet pressure: "Low jet pressure is usually a pump, airlock, filter, or jet face issue -- let's run through it."
 - Heater not heating: "A heater that's stopped working is typically a flow fault, failed element, or tripped high-limit."
 - Leak: "A leak from under the tub usually points to a fitting, seal, or pump union -- stop using the spa and turn it off at the breaker until we find the source."
 - Control panel unresponsive: "An unresponsive control panel is usually power, ribbon cable, or board."
@@ -1369,6 +1371,9 @@ General how-to Q → answer directly, no gate.
 [MF] → 1 sentence only: "Perfect — you have a **[Y M Mo]** and I have detailed specs on file."
 [MNF] → "Got it — you have a **[Y M Mo]**." Proceed. No re-ask.
 Already tried X → mark ✅, skip to next. Error code in issue → skip asking, start S1.
+
+=KNOWN SPA + CODE=
+When spa AND error code are both already known (pre-loaded via [SPA:] prefix): respond in 1-2 sentences ONLY -- identify the code, say what it means, nothing else. NO causes list. NO fix steps. NO numbered steps. NO troubleshooting guide. The diagnostic sequence delivers the detail -- your job is acknowledgement only. Treat this exactly like TIER 2 acknowledgement rules.
 
 =FORMAT=
 **bold** parts/key terms. No <br>. No blank line spam. Blank line before Qs. Blank line between numbered steps.
@@ -2267,7 +2272,7 @@ app.post("/api/diag-button", async (req, res) => {
       stepResult.passed = true;
       // Step-specific pass messages
       const passMessages = {
-        'S2a': `Right on, let\'s keep digging! We\'ll head to the next step, but remember: treating the water is a crucial part of the fix. Unbalanced water can trick sensors or mimic flow issues, so having clean water is essential to getting accurate results from the rest of this diagnostic procedure. Once you\'ve added your treatments, you\'ll be in the perfect spot to confirm everything is running flawlessly.\n\n[TELL_ME_MORE:s2a_water][HOLD_ADVANCE]`,
+        'S2a': null,
         'S2b': "Good — water level is fine.",
         'S1': "Filters ruled out — let's keep going.",
         'S3': "Good suction confirmed — the pump is moving water.",
@@ -2392,23 +2397,14 @@ app.post("/api/diag-button", async (req, res) => {
           "",
           "#When water is visibly dirty with heavy grit, leaves, or severe organic buildup, attempting to fix it with chemicals alone is often a losing battle. Heavy debris can rapidly clog filters, strain the circulation pump, and completely consume your sanitizer, leaving the water unsafe. For heavily compromised water, a complete drain and refill is highly recommended to protect your equipment and ensure a clean, healthy soak.#",
           "",
+          "[SHOP_LINK:supplies:🔧 Recommended Supplies]",
+          "",
           "[HALF_BREAK]",
           "⚠️ Safety First: Always read product labels before handling spa chemicals. Never mix chemicals together directly -- always add chemicals to water, never water to chemicals. Keep all products safely stored away from children and pets.",
         ].join("\n");
         partCard = 'water dirty';
         advanceNow = false;
-        partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="action" data-action="water_dirty_supplies" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Show Recommended Items</button><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button></div>';
-        break;
-
-      case 'water_dirty_done':
-        stepResult.passed = true;
-        advanceNow = true;
-        break;
-
-      case 'water_dirty_supplies':
-        partCard = 'water dirty';
-        advanceNow = false;
-        partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="action" data-action="water_dirty_done" data-part="" data-critical="false" onclick="handleDiagBtn(this)">I have cleaned the water — Continue Diagnosis</button></div>';
+        partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">I have cleaned the water — Continue Diagnosis</button></div>';
         break;
 
       case 'water_cloudy':
@@ -2489,11 +2485,10 @@ app.post("/api/diag-button", async (req, res) => {
         break;
 
       case 'water_dirty':
-        responseMsg = "**Dirty water needs to be addressed before we can run certain tests accurately.** We can continue up to that point, but we strongly recommend sorting out the water issue first.";
-        stepResult.passed = true;
-        stepResult.possible = true;
+        responseMsg = "**Dirty water needs to be addressed before we can run certain tests accurately.** We strongly recommend sorting out the water issue first before continuing the diagnostic.";
+        stepResult.passed = false;
         advanceNow = false;
-        partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn spa-gate-pulse" style="border-color:rgba(0,183,255,0.7);background:rgba(0,183,255,0.18);font-weight:600;" data-step="__STEP__" data-outcome="action" data-action="water_dirty_clean" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Clean the water first</button><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue anyway</button></div>';
+        partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn spa-gate-pulse" style="border-color:rgba(0,183,255,0.7);background:rgba(0,183,255,0.18);font-weight:600;" data-step="__STEP__" data-outcome="action" data-action="water_dirty_clean" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Clean the water first</button></div>';
         break;
 
       case 'show_water_treatment':
@@ -2706,6 +2701,18 @@ app.post("/api/diag-button", async (req, res) => {
         break;
 
       // ── Jets actions ──────────────────────────────────────────
+      case 'jets_scope_single':
+        responseMsg = "Got it -- a single jet with low pressure usually means a closed or clogged jet face, or a stuck diverter routing flow away from that nozzle. We'll check both. Let's start with the basics first.";
+        stepResult.passed = true;
+        advanceNow = true;
+        break;
+
+      case 'jets_scope_zone':
+        responseMsg = "Got it -- a full zone with low pressure is often a diverter valve stuck in the middle position, starving that whole seat. We'll check that shortly. Let's start with the basics first.";
+        stepResult.passed = true;
+        advanceNow = true;
+        break;
+
       case 'jets_face_fixed':
         deadEndButtons = [{ l: 'Yes — jets working now!', o: 'pass', a: '' }, { l: 'Still having issues', o: 'pass', a: '' }];
         if (!briefMode) { responseMsg = "Closed jet faces are a surprisingly common cause — calcium buildup and grit lock them in place over time. Give them a good clean while you have them open. If everything is working now, you're all set! Would you like to keep testing to make sure nothing else is contributing?"; } else { briefOmitted = "Closed jet faces are a surprisingly common cause — calcium buildup and grit lock them in place over time. Give them a good clean while you have them open. If everything is working now, you're all set! Would you like to keep testing to make sure nothing else is contributing?"; }
@@ -3418,6 +3425,15 @@ app.post('/api/validate-error-code', async (req, res) => {
     return res.json({ ok: true, valid: true, confidence: 'high', description: 'Temperature sensor fault — sensors are out of balance or one has failed.', code_type: 'fault' });
   }
 
+  // Skip Haiku + unknown logging for well-known universal codes we already handle
+  const _knownCodes = ['OH','OHH','HFL','HL','DR','DRY','FLO','FLOW','FLC','FLT','FLC1','FLC2','FLC3','FLC4',
+    'HTR','HH','HOT','COOL','ICE','FREEZE','FRZ','COLD','HEAT','LO','HI','SN','SN1','SN2','SN3','SNA','SNB',
+    'E1','E2','E3','E4','E5','E6','E7','E8','EC1','EC2','EC3','PRHT','PRHOT','PRTCT','P-HI','HiLimt','PANEL','ICE',
+    'COOL','LO','HI','SL1','SL2','SL3','SL4'];
+  if (_knownCodes.includes(code.trim().toUpperCase().replace(/[^A-Z0-9]/g,''))) {
+    return res.json({ ok: true, valid: true, confidence: 'high', description: null, code_type: 'fault', known: true });
+  }
+
   try {
     const haikuRes = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -3516,7 +3532,8 @@ app.post('/api/admin/promote-error-code', async (req, res) => {
     });
     if (!patchRes.ok) { const e = await patchRes.text(); return res.status(500).json({ error: e }); }
     // Mark as promoted
-    await fetch(`${process.env.SUPABASE_URL}/rest/v1/unknown_error_codes?code=eq.${encodeURIComponent(code)}&spa_make=eq.${encodeURIComponent(spa_make)}&spa_model=eq.${encodeURIComponent(spa_model)}`, {
+    const _promModelFilter2 = spa_model ? `&spa_model=eq.${encodeURIComponent(spa_model)}` : '&spa_model=is.null';
+    await fetch(`${process.env.SUPABASE_URL}/rest/v1/unknown_error_codes?code=eq.${encodeURIComponent(code)}&spa_make=eq.${encodeURIComponent(spa_make)}${_promModelFilter2}`, {
       method: 'PATCH',
       headers: { 'apikey': process.env.SUPABASE_ANON_KEY, 'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
       body: JSON.stringify({ promoted_at: new Date().toISOString() })
@@ -3529,7 +3546,8 @@ app.post('/api/admin/dismiss-error-code', async (req, res) => {
   const { key, code, spa_make, spa_model } = req.body;
   if (!ADMIN_KEY || !accessCodesMatch(key, ADMIN_KEY)) return res.status(401).json({ error: 'Unauthorized' });
   try {
-    const patchRes = await fetch(`${process.env.SUPABASE_URL}/rest/v1/unknown_error_codes?code=eq.${encodeURIComponent(code)}&spa_make=eq.${encodeURIComponent(spa_make)}&spa_model=eq.${encodeURIComponent(spa_model)}`, {
+    const _modelFilter = spa_model ? `&spa_model=eq.${encodeURIComponent(spa_model)}` : '&spa_model=is.null';
+    const patchRes = await fetch(`${process.env.SUPABASE_URL}/rest/v1/unknown_error_codes?code=eq.${encodeURIComponent(code)}&spa_make=eq.${encodeURIComponent(spa_make)}${_modelFilter}`, {
       method: 'PATCH',
       headers: { 'apikey': process.env.SUPABASE_ANON_KEY, 'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
       body: JSON.stringify({ dismissed_at: new Date().toISOString() })
