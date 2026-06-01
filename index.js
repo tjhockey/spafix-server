@@ -1,5 +1,4 @@
-// SpaFix Server
-process.env.APP_VERSION = "v4.9.19i";
+process.env.APP_VERSION = "v4.9.19m";
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -1342,6 +1341,9 @@ SPA CONTEXT RULE (check first, every time):
 Before requesting spa details, ALWAYS acknowledge the specific problem first. Never skip straight to the details request.
 Skip gate entirely when: [CP:] [SL:] [SD] or spa in history.
 
+=VAGUE INPUT=
+If the user's message is too vague to identify a specific symptom (e.g. "my hot tub isn't working", "it's broken", "something's wrong", "help"), ask ONE clarifying symptom question BEFORE requesting spa details. Example: "What's it doing — or not doing?" or "What symptoms are you seeing?" NEVER ask for spa details as the first response to a vague input. Gather the symptom first, then gate on spa details if needed.
+
 ACKNOWLEDGMENT RULES (no diagnostic steps, no quick checks -- diagnosis is SpaFix's job):
 TIER 1 -- SAFETY CRITICAL (OH, ICE, DR): Acknowledge with one sentence + 1 immediate safety action only + request phrase if spa unknown.
 - OH/overheat: "OH is an overheat code -- your spa shut down to protect itself from overheating. Turn it off at the panel and remove the cover while we sort this out."
@@ -1373,7 +1375,14 @@ General how-to Q → answer directly, no gate.
 Already tried X → mark ✅, skip to next. Error code in issue → skip asking, start S1.
 
 =KNOWN SPA + CODE=
-When spa AND error code are both already known (pre-loaded via [SPA:] prefix): respond in 1-2 sentences ONLY -- identify the code, say what it means, nothing else. NO causes list. NO fix steps. NO numbered steps. NO troubleshooting guide. The diagnostic sequence delivers the detail -- your job is acknowledgement only. Treat this exactly like TIER 2 acknowledgement rules.
+When spa AND error code are both already known (pre-loaded via [SPA:] prefix or systemOverride): respond in 1-2 sentences MAXIMUM. Identify the code and say what it means in plain language. HARD STOPS -- the following are STRICTLY FORBIDDEN in this response:
+- Numbered steps of any kind (1. 2. 3.)
+- Bullet points listing causes or fixes
+- "Here's what to check" or any equivalent lead-in to a list
+- Phrases like "first", "next", "then", "finally" that imply a sequence
+- Any mention of specific repair actions (replacing parts, testing voltages, bypassing, etc.)
+- Any mention of what to do next beyond "let's start the diagnostic sequence"
+The diagnostic sequence is the product. The opening message is ONLY an acknowledgement. If you find yourself writing more than 2 sentences, you are doing it wrong -- stop and shorten.
 
 =FORMAT=
 **bold** parts/key terms. No <br>. No blank line spam. Blank line before Qs. Blank line between numbered steps.
@@ -1465,7 +1474,8 @@ GECKO M-CLASS (Arctic Spas, Marquis/SSPA/MTS): flow error=3 FLASHING DOTS. "Dots
 HOT SPRING/TIGER RIVER: flow error=blinking Power/Ready lights. Ask about light pattern, not code.
 ALL OTHERS: standard text codes (FL1/FL2/FLO/FLOW).
 Accept any code user reports. Unrecognized: "Not familiar with [code] for [brand] — did you mean [closest]?"
-Auto-correct typos. Emit >>COR. Confirm: "Got it — **[corrected]**."`;
+Auto-correct typos. Emit >>COR. Confirm: "Got it — **[corrected]**."
+BRAND MENTION RULE: If the user explicitly names a brand (e.g. "my Balboa system", "it's a Hot Spring"), ALWAYS reference that brand name in your acknowledgement. Never treat a named brand as generic. Example: user says "my Balboa HFL code" → response must include "Balboa" not just "your spa".`;
 
 const SP_MISC = `=MISC=
 SHOP BTN ("I need help finding parts/water care/Can you help me find") → 1-sentence intro + >>PT. No Q first.
