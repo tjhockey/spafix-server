@@ -1,4 +1,4 @@
-process.env.APP_VERSION = "v4.9.19n";
+process.env.APP_VERSION = "v4.9.19u";
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -1475,7 +1475,8 @@ HOT SPRING/TIGER RIVER: flow error=blinking Power/Ready lights. Ask about light 
 ALL OTHERS: standard text codes (FL1/FL2/FLO/FLOW).
 Accept any code user reports. Unrecognized: "Not familiar with [code] for [brand] — did you mean [closest]?"
 Auto-correct typos. Emit >>COR. Confirm: "Got it — **[corrected]**."
-BRAND MENTION RULE: If the user explicitly names a brand (e.g. "my Balboa system", "it's a Hot Spring"), ALWAYS reference that brand name in your acknowledgement. Never treat a named brand as generic. Example: user says "my Balboa HFL code" → response must include "Balboa" not just "your spa".`;
+BRAND MENTION RULE: If the user explicitly names a brand (e.g. "my Balboa system", "it's a Hot Spring"), ALWAYS reference that brand name in your acknowledgement. Never treat a named brand as generic. Example: user says "my Balboa HFL code" → response must include "Balboa" not just "your spa".
+SYMBOL CODE RULE: If an error code is a symbol description in ALL_CAPS (e.g. EXCLAMATION_ICON, FLASHING_LIGHT, WARNING_TRIANGLE), humanize it in your response — never repeat the raw token back to the user. "EXCLAMATION_ICON" → "exclamation mark (⚠️)" or "warning symbol". Describe what the user sees on their panel, not the internal code name.`;
 
 const SP_MISC = `=MISC=
 SHOP BTN ("I need help finding parts/water care/Can you help me find") → 1-sentence intro + >>PT. No Q first.
