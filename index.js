@@ -1,4 +1,4 @@
-process.env.APP_VERSION = "v4.9.19u";
+process.env.APP_VERSION = "v4.9.19y";
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -2272,6 +2272,7 @@ app.post("/api/diag-button", async (req, res) => {
   let nextStep = step.next;
   let responseMsg = null;
   let partCard = null;
+  let clientAction = null;
   let advanceNow = true;
   let skipPending = false;
   let deadEndButtons = null;
@@ -2465,14 +2466,14 @@ app.post("/api/diag-button", async (req, res) => {
 
       case 'water_show_items_cloudy':
         responseMsg = null;
-        partCard = 'water treatment cloudy items';
+        clientAction = 'openShopTabs:water-care';
         partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button><button class="diag-btn" data-step="__STEP__" data-outcome="action" data-action="water_treatment_ordered" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Order Placed — I\'ll treat first</button></div>';
         advanceNow = false;
         break;
 
       case 'water_show_items_foamy':
         responseMsg = null;
-        partCard = 'water treatment foamy items';
+        clientAction = 'openShopTabs:water-care';
         partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button><button class="diag-btn" data-step="__STEP__" data-outcome="action" data-action="water_treatment_ordered" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Order Placed — I\'ll treat first</button></div>';
         advanceNow = false;
         break;
@@ -3121,6 +3122,7 @@ _If you're testing, please send this code to support@spafix.app_`;
     skipPending,
     deadEndButtons,
     briefOmitted,
+    clientAction,
   });
 });
 
