@@ -1,4 +1,4 @@
-process.env.APP_VERSION = "v4.9.19y";
+process.env.APP_VERSION = "v4.9.19aa";
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -1342,7 +1342,7 @@ Before requesting spa details, ALWAYS acknowledge the specific problem first. Ne
 Skip gate entirely when: [CP:] [SL:] [SD] or spa in history.
 
 =VAGUE INPUT=
-If the user's message is too vague to identify a specific symptom (e.g. "my hot tub isn't working", "it's broken", "something's wrong", "help"), ask ONE clarifying symptom question BEFORE requesting spa details. Example: "What's it doing — or not doing?" or "What symptoms are you seeing?" NEVER ask for spa details as the first response to a vague input. Gather the symptom first, then gate on spa details if needed.
+If the user's message is too vague to identify a specific symptom (e.g. "my hot tub isn't working", "it's broken", "something's wrong", "help"), ask ONE warm clarifying question BEFORE requesting spa details. Example: "Happy to help! What's it doing — or not doing? For example: an error code on the display, not heating up, jets not working, or something else?" NEVER ask for spa details as the first response to a vague input. Gather the symptom first, then gate on spa details if needed.
 
 ACKNOWLEDGMENT RULES (no diagnostic steps, no quick checks -- diagnosis is SpaFix's job):
 TIER 1 -- SAFETY CRITICAL (OH, ICE, DR): Acknowledge with one sentence + 1 immediate safety action only + request phrase if spa unknown.
@@ -1353,15 +1353,16 @@ TIER 1 -- SAFETY CRITICAL (OH, ICE, DR): Acknowledge with one sentence + 1 immed
 
 TIER 2 -- URGENT (FLO, Sn codes, pump, jets, heater, leak): Acknowledge in one sentence only + request phrase if spa unknown. No quick checks.
 - FLO: "FLO means the system isn't detecting enough water flow."
-- Sn/sensor: "That's a temperature sensor fault -- either a bad reading or a failed sensor."
+- Sn/sensor: "That's a temperature sensor fault -- the spa has shut down to protect itself. **Sn1** is the water temp sensor; **Sn3** is the hi-limit sensor. Either way, it won't run again until the fault is resolved."
 - Pump won't start: "A pump that won't start is usually power, capacitor, or wiring."
 - No jet pressure: "Low jet pressure is usually a pump, airlock, filter, or jet face issue -- let's run through it."
-- Heater not heating: "A heater that's stopped working is typically a flow fault, failed element, or tripped high-limit."
+- Heater not heating: "A heater that's stopped working usually comes down to one of three things: not enough water flowing through it (flow fault), a burned-out heating element (the part that actually makes heat), or a safety switch that tripped to prevent overheating (high-limit). Let's figure out which one."
 - Leak: "A leak from under the tub usually points to a fitting, seal, or pump union -- stop using the spa and turn it off at the breaker until we find the source."
 - Control panel unresponsive: "An unresponsive control panel is usually power, ribbon cable, or board."
-- Display blank: "A completely blank display usually means no power is reaching the topside."
+- Display blank: "A completely blank display usually means no power is reaching the topside -- check if the breaker has tripped or the GFCI outlet has popped before we go further."
 
 TIER 3 -- ALL OTHER CODES/ISSUES: Acknowledge in one sentence only + request phrase if spa unknown.
+- Green water: "Green water is almost always algae -- it means the sanitizer level has dropped and algae has taken hold. We'll need to shock the water and get the pH back in range to clear it."
 
 Request phrase: Do NOT output any "tap Spa Details Required" or similar CTA text. The UI renders entry point buttons automatically when spa details are missing. Your job is only to acknowledge the issue warmly. Never output template fields. Never say "above".
 
@@ -1382,6 +1383,7 @@ When spa AND error code are both already known (pre-loaded via [SPA:] prefix or 
 - Phrases like "first", "next", "then", "finally" that imply a sequence
 - Any mention of specific repair actions (replacing parts, testing voltages, bypassing, etc.)
 - Any mention of what to do next beyond "let's start the diagnostic sequence"
+- Substituting a different spa model name from your training data (you MUST use the exact model from [SPA:] -- never a "similar" or "more commonly associated" model)
 The diagnostic sequence is the product. The opening message is ONLY an acknowledgement. If you find yourself writing more than 2 sentences, you are doing it wrong -- stop and shorten.
 
 =FORMAT=
@@ -1475,7 +1477,7 @@ HOT SPRING/TIGER RIVER: flow error=blinking Power/Ready lights. Ask about light 
 ALL OTHERS: standard text codes (FL1/FL2/FLO/FLOW).
 Accept any code user reports. Unrecognized: "Not familiar with [code] for [brand] — did you mean [closest]?"
 Auto-correct typos. Emit >>COR. Confirm: "Got it — **[corrected]**."
-BRAND MENTION RULE: If the user explicitly names a brand (e.g. "my Balboa system", "it's a Hot Spring"), ALWAYS reference that brand name in your acknowledgement. Never treat a named brand as generic. Example: user says "my Balboa HFL code" → response must include "Balboa" not just "your spa".
+BRAND MENTION RULE: If the user explicitly names a brand (e.g. "my Balboa system", "it's a Hot Spring"), ALWAYS reference that brand name in your acknowledgement. Never treat a named brand as generic. Example: user says "my Balboa HFL code" → response must open with "On Balboa systems, HFL means..." not "your spa has...". The brand name must appear in the first sentence.
 SYMBOL CODE RULE: If an error code is a symbol description in ALL_CAPS (e.g. EXCLAMATION_ICON, FLASHING_LIGHT, WARNING_TRIANGLE), humanize it in your response — never repeat the raw token back to the user. "EXCLAMATION_ICON" → "exclamation mark (⚠️)" or "warning symbol". Describe what the user sees on their panel, not the internal code name.`;
 
 const SP_MISC = `=MISC=
@@ -3257,14 +3259,14 @@ app.post("/api/chat", async (req, res) => {
   const spaPrefix = spaLine
     ? (spaNotInDb
         ? `[SPA:${spaLine}] This spa is NOT in the SpaFix database. CRITICAL RULES: (1) Never describe specifications, seating capacity, jet count, pump sizes, heater ratings, or any hardware details for this spa — you do not have this data. (2) Never treat unrecognized error codes as valid — if an error code was entered that you don't have data for, tell the user you don't recognize it and ask them to verify it. (3) You can still run the full diagnostic flow without model-specific data. (4) Never ask for spa details again.${errorCodeNote}\n\n`
-        : `[SPA:${spaLine}] This is the user's confirmed spa. Never ask for spa details again. Never change or hallucinate a different spa.${errorCodeNote}${errorCodeDescLine}\n\n`)
+        : `[SPA:${spaLine}] This is the user's confirmed spa. Never ask for spa details again. Never change or hallucinate a different spa. When referencing this spa by name in any response, you MUST use exactly "${spaLine}" -- never substitute a different model name from your training data, even if you believe another model is more commonly associated with the code being discussed.${errorCodeNote}${errorCodeDescLine}\n\n`)
     : '';
 
   let effectiveSystemPrompt = spaPrefix + systemPrompt;
 
   // systemOverride -- use client-supplied prompt, diagStateEffective already nulled above
   if (req.body.systemOverride && typeof req.body.systemOverride === 'string') {
-    effectiveSystemPrompt = req.body.systemOverride;
+    effectiveSystemPrompt = req.body.systemOverride + `\n\n=CRITICAL RESPONSE RULES=\nThis is an INITIAL CODE IDENTIFICATION response only. HARD STOPS -- the following are STRICTLY FORBIDDEN:\n- Numbered steps of any kind (1. 2. 3.)\n- Bullet points listing causes or fixes\n- Any mention of specific repair actions (replacing parts, testing voltages, adjusting settings, etc.)\n- "Here's what to check" or any equivalent lead-in to a list\n- Phrases like "first", "next", "then", "finally" that imply a sequence\n- Any mention of what to do next beyond offering to start the diagnostic sequence\nRespond in 1-2 sentences MAXIMUM: identify the code and explain what it means in plain language. Nothing more. The diagnostic sequence handles all repair steps.`;
   }
 
   // Re-evaluate after potential systemOverride null -- must be after the block above
