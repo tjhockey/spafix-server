@@ -1,4 +1,4 @@
-process.env.APP_VERSION = "v4.9.19aa";
+process.env.APP_VERSION = "v4.9.19ab";
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -1735,7 +1735,6 @@ app.get("/api/model/:year/:make/:model", async (req, res) => {
   const { year, make, model } = req.params;
   if (!year || !make || !model) return res.status(400).json({ error: "year, make, model required" });
 
-  // Query spa_models and parts table in parallel — single round trip
   const yearNum = parseInt(year);
   const yearFilter = !isNaN(yearNum) && yearNum > 1980 ? {
     'year_start': `lte.${yearNum}`,
@@ -1744,11 +1743,11 @@ app.get("/api/model/:year/:make/:model", async (req, res) => {
 
   const [rows, partsRows] = await Promise.all([
     supabaseGet('spa_models', {
-      'select': 'brand,model_name,year_start,year_end,control_system,common_failures,error_codes,code_types,pump_configs,verified,key_part_numbers,filter_count,has_spa_boy,heater_relay_type,high_limit_switch,high_limit_switch_location,heater_manifold_notes,sensor_serviceability',
+      'select': 'id,brand,model_name,year_start,year_end,control_system,common_failures,error_codes,code_types,pump_configs,verified,key_part_numbers,filter_count,has_spa_boy,heater_relay_type,high_limit_switch,high_limit_switch_location,heater_manifold_notes,sensor_serviceability',
       'brand': `ilike.*${make}*`,
       'model_name': `ilike.*${model}*`,
       ...yearFilter,
-      'limit': 1
+      'limit': 10
     }),
     supabaseGet('parts', {
       'select': 'part_number,description,category,manufacturer,oem_cross_references,oem_part_number,superseded_by,notes',
@@ -1761,57 +1760,81 @@ app.get("/api/model/:year/:make/:model", async (req, res) => {
     return res.json({ found: false });
   }
 
-  const profile = rows[0];
+  // Helper: extract codes array from a profile's error_codes field
+  function extractCodes(ec) {
+    if (!ec) return [];
+    if (typeof ec === 'object' && !Array.isArray(ec)) return Object.keys(ec).filter(Boolean);
+    if (Array.isArray(ec)) return ec.map(e => (typeof e === 'object' && e !== null) ? (e.code || e.name || Object.values(e)[0]) : String(e)).filter(Boolean);
+    if (typeof ec === 'string') {
+      const validCode = c => /^[A-Za-z0-9][A-Za-z0-9\s\-_./]{0,11}$/.test(c) && c.length >= 2;
+      return ec.split(',').map(c => c.trim()).filter(validCode);
+    }
+    return [];
+  }
+
+  // Helper: build full profile response shape from a single row
+  function buildProfile(profile) {
+    const ec = profile.error_codes;
+    const codes = extractCodes(ec);
+    return {
+      found: true,
+      verified: profile.verified || false,
+      make: profile.brand,
+      model: profile.model_name,
+      filter_count: profile.filter_count || null,
+      control_system: profile.control_system || null,
+      common_failures: Array.isArray(profile.common_failures)
+        ? profile.common_failures.slice(0, 5).join('; ')
+        : (profile.common_failures || null),
+      error_codes: codes.length ? codes.join(', ') : null,
+      error_code_descriptions: (typeof ec === 'object' && ec !== null && !Array.isArray(ec)) ? ec : null,
+      code_types: (typeof profile.code_types === 'object' && profile.code_types !== null && !Array.isArray(profile.code_types))
+        ? profile.code_types : null,
+      pump_configs: Array.isArray(profile.pump_configs)
+        ? profile.pump_configs.map(p => `Pump ${p.pump_num}: ${p.hp}hp ${p.speeds}-speed`).join(', ')
+        : (profile.pump_configs || null),
+      key_part_numbers: profile.key_part_numbers || null,
+      compatible_parts: partsRows || [],
+      has_spa_boy: profile.has_spa_boy || false,
+      heater_relay_type: profile.heater_relay_type || 'unknown',
+      high_limit_switch: profile.high_limit_switch || false,
+      high_limit_switch_location: profile.high_limit_switch_location || null,
+      heater_manifold_notes: profile.heater_manifold_notes || null,
+      sensor_serviceability: profile.sensor_serviceability || 'unknown',
+    };
+  }
+
+  // Single row — existing behavior unchanged
+  if (rows.length === 1) {
+    return res.json(buildProfile(rows[0]));
+  }
+
+  // Multiple rows — return disambiguation payload
+  const controlSystems = rows.map(r => (r.control_system || '').toLowerCase());
+  const has880 = controlSystems.some(cs => cs.includes('880'));
+  const has850 = controlSystems.some(cs => cs.includes('850'));
+  const hasPanelTypeSplit = has880 && has850;
+
+  const disambigRows = rows.map(r => ({
+    id: r.id,
+    control_system: r.control_system || null,
+    year_start: r.year_start,
+    year_end: r.year_end,
+    codes: extractCodes(r.error_codes),
+    code_types: (typeof r.code_types === 'object' && r.code_types !== null && !Array.isArray(r.code_types)) ? r.code_types : null,
+    error_code_descriptions: (typeof r.error_codes === 'object' && r.error_codes !== null && !Array.isArray(r.error_codes)) ? r.error_codes : null,
+    profile: buildProfile(r),
+  }));
+
+  const allCodes = [...new Set(disambigRows.flatMap(r => r.codes))].sort();
+
   return res.json({
     found: true,
-    verified: profile.verified || false,
-    make: profile.brand,
-    model: profile.model_name,
-    filter_count: profile.filter_count || null,
-    control_system: profile.control_system || null,
-    common_failures: Array.isArray(profile.common_failures)
-      ? profile.common_failures.slice(0, 5).join('; ')
-      : (profile.common_failures || null),
-    error_codes: (() => {
-      const ec = profile.error_codes;
-      if (!ec) return null;
-      // Plain JSON object: {"LF":"description","Pr":"description"} — extract keys as codes
-      if (typeof ec === 'object' && !Array.isArray(ec)) {
-        const codes = Object.keys(ec).filter(Boolean);
-        return codes.length ? codes.join(', ') : null;
-      }
-      if (Array.isArray(ec)) {
-        const mapped = ec.map(e => (typeof e === 'object' && e !== null) ? (e.code || e.name || Object.values(e)[0]) : String(e)).filter(Boolean);
-        return mapped.length ? mapped.join(', ') : null;
-      }
-      if (typeof ec === 'string') {
-        const codes = ec.split(',').map(c => c.trim()).filter(Boolean);
-        const validCode = c => /^[A-Za-z0-9][A-Za-z0-9\s\-_.\/]{0,11}$/.test(c) && c.length >= 2;
-        const cleaned = codes.filter(validCode);
-        return cleaned.length ? cleaned.join(', ') : null;
-      }
-      return null;
-    })(),
-    error_code_descriptions: (() => {
-      const ec = profile.error_codes;
-      if (!ec) return null;
-      if (typeof ec === 'object' && !Array.isArray(ec)) return ec;
-      return null;
-    })(),
-    code_types: (typeof profile.code_types === 'object' && profile.code_types !== null && !Array.isArray(profile.code_types))
-      ? profile.code_types
-      : null,
-    pump_configs: Array.isArray(profile.pump_configs)
-      ? profile.pump_configs.map(p => `Pump ${p.pump_num}: ${p.hp}hp ${p.speeds}-speed`).join(', ')
-      : (profile.pump_configs || null),
-    key_part_numbers: profile.key_part_numbers || null,
+    multipleRows: true,
+    hasPanelTypeSplit,
+    allCodes,
+    rows: disambigRows,
     compatible_parts: partsRows || [],
-    has_spa_boy: profile.has_spa_boy || false,
-    heater_relay_type: profile.heater_relay_type || 'unknown',
-    high_limit_switch: profile.high_limit_switch || false,
-    high_limit_switch_location: profile.high_limit_switch_location || null,
-    heater_manifold_notes: profile.heater_manifold_notes || null,
-    sensor_serviceability: profile.sensor_serviceability || 'unknown',
   });
 });
 
@@ -2033,7 +2056,7 @@ app.get("/api/models-for-make", async (req, res) => {
     'order': 'model_name',
     'limit': 100
   });
-  const models = (rows || []).map(r => r.model_name).filter(Boolean).sort();
+  const models = [...new Set((rows || []).map(r => r.model_name).filter(Boolean))].sort();
   res.json({ models });
 });
 
@@ -3224,6 +3247,7 @@ app.post("/api/chat", async (req, res) => {
   const spaYearVal = req.body.spaYear || '';
   const spaMakeVal = req.body.spaMake || '';
   const spaModelVal = req.body.spaModel || '';
+  const spaControlSystemVal = req.body.spaControlSystem || '';
   const spaFromState = diagStateEffective?.spa;
   const spaLine = spaFromState || [spaYearVal, spaMakeVal, spaModelVal].filter(v => v && v !== 'Unknown').join(' ');
   // Detect if client flagged this spa as NOT confirmed in DB
@@ -3259,7 +3283,7 @@ app.post("/api/chat", async (req, res) => {
   const spaPrefix = spaLine
     ? (spaNotInDb
         ? `[SPA:${spaLine}] This spa is NOT in the SpaFix database. CRITICAL RULES: (1) Never describe specifications, seating capacity, jet count, pump sizes, heater ratings, or any hardware details for this spa — you do not have this data. (2) Never treat unrecognized error codes as valid — if an error code was entered that you don't have data for, tell the user you don't recognize it and ask them to verify it. (3) You can still run the full diagnostic flow without model-specific data. (4) Never ask for spa details again.${errorCodeNote}\n\n`
-        : `[SPA:${spaLine}] This is the user's confirmed spa. Never ask for spa details again. Never change or hallucinate a different spa. When referencing this spa by name in any response, you MUST use exactly "${spaLine}" -- never substitute a different model name from your training data, even if you believe another model is more commonly associated with the code being discussed.${errorCodeNote}${errorCodeDescLine}\n\n`)
+        : `[SPA:${spaLine}] This is the user's confirmed spa. Never ask for spa details again. Never change or hallucinate a different spa. When referencing this spa by name in any response, you MUST use exactly "${spaLine}" -- never substitute a different model name from your training data, even if you believe another model is more commonly associated with the code being discussed.${spaControlSystemVal ? ` Control system: ${spaControlSystemVal}.` : ''}${errorCodeNote}${errorCodeDescLine}\n\n`)
     : '';
 
   let effectiveSystemPrompt = spaPrefix + systemPrompt;
