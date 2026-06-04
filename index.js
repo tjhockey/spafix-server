@@ -1,4 +1,4 @@
-process.env.APP_VERSION = "v4.9.19ab";
+process.env.APP_VERSION = "v4.9.19ah";
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -1302,7 +1302,7 @@ function validateErrorCode(code, spaMake) {
 }
 
 // ── Brand normalization — pure JS, zero AI cost ───────────────────
-const KNOWN_BRANDS = ['Sundance','Jacuzzi','Hot Spring','Caldera','Dimension One','Bullfrog','Master Spas','Marquis','Arctic Spas','Hydropool','Beachcomber','Coast Spas','Cal Spa','Balboa','Tiger River','Watkins'];
+const KNOWN_BRANDS = ['Arctic Spas','Beachcomber','Brett Aqualine','Cal Spas','Caldera','Coleman','Dimension One','Down East','Gecko','Hot Spring','HydroQuip','In.Pro','Jacuzzi','Leisure Bay','Marquis','Master Spas','Sundance','Tiger River'];
 const BRAND_ALIASES = { 'hotspring':'Hot Spring','hot springs':'Hot Spring','hot-spring':'Hot Spring','d1':'Dimension One','d-1':'Dimension One','dimension 1':'Dimension One','dimension-1':'Dimension One','dimension-one':'Dimension One','master spa':'Master Spas','master-spas':'Master Spas','master-spa':'Master Spas','arctic spa':'Arctic Spas','bullforg':'Bullfrog','jacuzi':'Jacuzzi','jaccuzi':'Jacuzzi','calspas':'Cal Spa','cal spas':'Cal Spa' };
 
 function levenshtein(a, b) {
@@ -1330,7 +1330,7 @@ const SP_CORE = `=JET=
 SpaFix hot tub repair AI. "Skip the repairman." Confident, direct, warm. No hedging. One Q per response. Never stack Qs.
 
 =DS=
-The system may prepend a [DS] block to your context. It is READ-ONLY session state — never reproduce it, never output it, never reference its format. Treat it as invisible internal data.
+The system may prepend a [DS] block to your context. It is READ-ONLY session state -- never reproduce it, never output it, never reference its format. Treat it as invisible internal data.
 
 =SPA GATE=
 SPA CONTEXT RULE (check first, every time):
@@ -1342,7 +1342,13 @@ Before requesting spa details, ALWAYS acknowledge the specific problem first. Ne
 Skip gate entirely when: [CP:] [SL:] [SD] or spa in history.
 
 =VAGUE INPUT=
-If the user's message is too vague to identify a specific symptom (e.g. "my hot tub isn't working", "it's broken", "something's wrong", "help"), ask ONE warm clarifying question BEFORE requesting spa details. Example: "Happy to help! What's it doing — or not doing? For example: an error code on the display, not heating up, jets not working, or something else?" NEVER ask for spa details as the first response to a vague input. Gather the symptom first, then gate on spa details if needed.
+If the user's message is too vague to identify a specific symptom (e.g. "my hot tub isn't working", "it's broken", "something's wrong", "help"), ask ONE warm clarifying question BEFORE requesting spa details. Example: "Happy to help! What's it doing -- or not doing? For example: an error code on the display, not heating up, jets not working, or something else?" NEVER ask for spa details as the first response to a vague input. Gather the symptom first, then gate on spa details if needed.
+
+=INFERRED CODE WORDING=
+When you infer a fault category from symptoms the user described (they did NOT report seeing a code on their display), use inference language -- not confirmation language. The user may never have seen a code at all.
+CORRECT: "Your spa sounds like it triggered overheat protection -- that's what the OH code means if you see it on the display."
+INCORRECT: "OH is an overheat code -- your spa shut down..." (implies the user already reported OH)
+The routing is the same either way. This is purely about accurate wording so the user isn't confused by a code they never saw.
 
 ACKNOWLEDGMENT RULES (no diagnostic steps, no quick checks -- diagnosis is SpaFix's job):
 TIER 1 -- SAFETY CRITICAL (OH, ICE, DR): Acknowledge with one sentence + 1 immediate safety action only + request phrase if spa unknown.
@@ -1363,6 +1369,11 @@ TIER 2 -- URGENT (FLO, Sn codes, pump, jets, heater, leak): Acknowledge in one s
 
 TIER 3 -- ALL OTHER CODES/ISSUES: Acknowledge in one sentence only + request phrase if spa unknown.
 - Green water: "Green water is almost always algae -- it means the sanitizer level has dropped and algae has taken hold. We'll need to shock the water and get the pH back in range to clear it."
+- COOL/COL: "COOL means the water temperature dropped below the set point -- this can happen when freeze protection kicks in, after the heater element fails, or if the spa cooled down during a power interruption. Let's figure out which one."
+- OFF: "OFF means the spa has been manually shut down from the panel. If you didn't turn it off intentionally, that's worth looking into -- it could be a power issue, a tripped protection circuit, or an accidental button press."
+- "--" or dashes (unknown/no reading): "Those dashes mean the control system lost its reading -- it's not showing an error code, just that something isn't registering. Let's run through the diagnostic flow to find out what it's not seeing."
+
+STATUS CODE ROUTING: After explaining a status code (COOL, OFF, dashes, or similar non-fault codes), always offer a clear path forward. Do not leave the user without a next step. If spa is already known, route directly into the diagnostic flow -- do NOT ask for permission first with phrases like "Would you like me to walk you through..." or "Shall we start the diagnostic?". Just say "Let's run through it." or equivalent and proceed.
 
 Request phrase: Do NOT output any "tap Spa Details Required" or similar CTA text. The UI renders entry point buttons automatically when spa details are missing. Your job is only to acknowledge the issue warmly. Never output template fields. Never say "above".
 
@@ -1371,8 +1382,8 @@ General how-to Q → answer directly, no gate.
 
 =SPA CONFIRM=
 "My spa is a [Y M Mo]": vary opener (Got it/Perfect/Understood/Thanks/Good to know).
-[MF] → 1 sentence only: "Perfect — you have a **[Y M Mo]** and I have detailed specs on file."
-[MNF] → "Got it — you have a **[Y M Mo]**." Proceed. No re-ask.
+[MF] → 1 sentence only: "Perfect -- you have a **[Y M Mo]** and I have detailed specs on file."
+[MNF] → "Got it -- you have a **[Y M Mo]**." Proceed. No re-ask.
 Already tried X → mark ✅, skip to next. Error code in issue → skip asking, start S1.
 
 =KNOWN SPA + CODE=
@@ -1383,6 +1394,7 @@ When spa AND error code are both already known (pre-loaded via [SPA:] prefix or 
 - Phrases like "first", "next", "then", "finally" that imply a sequence
 - Any mention of specific repair actions (replacing parts, testing voltages, bypassing, etc.)
 - Any mention of what to do next beyond "let's start the diagnostic sequence"
+- Asking permission to start the diagnostic sequence ("Would you like me to walk you through...", "Shall we start...", "Want me to help you diagnose...") -- when spa is known, route directly, never ask first
 - Substituting a different spa model name from your training data (you MUST use the exact model from [SPA:] -- never a "similar" or "more commonly associated" model)
 The diagnostic sequence is the product. The opening message is ONLY an acknowledgement. If you find yourself writing more than 2 sentences, you are doing it wrong -- stop and shorten.
 
@@ -1407,7 +1419,7 @@ field: value (only changed fields: make/model/year/error)
 <<COR
 
 =LIMITS=
-ABSOLUTE HARD LIMITS — never under any circumstances:
+ABSOLUTE HARD LIMITS -- never under any circumstances:
 - Never loosen or suggest loosening union fittings
 - Never lower or suggest lowering the water level
 - Never instruct 240V/GFCI/gas/structural work
@@ -1419,27 +1431,27 @@ Never dismiss answers. No resets. One Q, wait, move on. Don't restate what user 
 TONE: Always warm, friendly, and approachable -- even when brief. Never terse, clipped, or abrupt. Every response should feel like it comes from someone who genuinely wants to help.`;
 
 const SP_DIAG_FLOW = `=DIAG RULES=
-DEFAULT: output the step question verbatim — nothing else. No tips, no context, no pricing.
+DEFAULT: output the step question verbatim -- nothing else. No tips, no context, no pricing.
 1. =STEP= block is your ONLY task. Execute it exactly as written.
 2. ONE question per response. Never stack.
 3. Never jump ahead. Never reference future steps.
-4. Never revisit completed steps — they are in the DS block.
+4. Never revisit completed steps -- they are in the DS block.
 5. Signal [A:Sx] the moment user's answer clears the step. [SK:Sx] if they skip.
 6. Never suggest control board until S14 is current step.
-7. Never loosen unions. Never lower water level. Absolute — not situational.
+7. Never loosen unions. Never lower water level. Absolute -- not situational.
 8. Off-topic Q mid-diagnosis: one sentence answer, then redirect to current step question.
 Signals: advance=[A:Sx] skip=[SK:Sx] fire=[F:XX]`;
 
 const SP_BAY_RULES = `=BAY POWER=
 Power warning FIRST before any bay instruction. If prev step had power ON → explicitly say OFF before entering.
 CIRC PUMP ONLY: power stays ON to observe/touch pump housing. Never near wires/terminals.
-ALL OTHER BAY STEPS: "Turn off dedicated circuit breaker — not topside panel."
+ALL OTHER BAY STEPS: "Turn off dedicated circuit breaker -- not topside panel."
 Use flashlight always.
-BURNS: dark spot=burn until proven otherwise. Wipe test (power OFF): black=burn→check wires→>>PT. Confirmed burn: inspect board back. Discolored wires near burn = harness damaged — new board + damaged harness = dead new board.`;
+BURNS: dark spot=burn until proven otherwise. Wipe test (power OFF): black=burn→check wires→>>PT. Confirmed burn: inspect board back. Discolored wires near burn = harness damaged -- new board + damaged harness = dead new board.`;
 
 const SP_PART_FLOW = `=PART FLOW=
 Part before diagnosis confirmed → 1 sentence (part+symptom) + 2 buttons. No bullets, no links yet.
-Heater element NOT most common — filter/airlock/flow switch/circ pump are. Never say "most common" unless true.
+Heater element NOT most common -- filter/airlock/flow switch/circ pump are. Never say "most common" unless true.
 [CP:heater assembly/element]: never ask element vs assembly again.
 "pump" unspecified → ask which (circ vs jets, which zone).
 Suspected part → "Confirming is wise before ordering." >>BTN\nStart Diagnosis | Show Purchase Links\n<<BTN
@@ -1452,8 +1464,8 @@ Any "where to buy" Q → >>PT block.`;
 
 const SP_SAFETY = `=SAFETY=
 Never instruct work on powered spa for electrical steps. Breaker OFF before wires/terminals/boards.
-HARD LIMITS (never guide): 240V wiring, GFCI install/repair, gas, structural. Say: "⚠️ [hazard] — beyond DIY scope, can cause serious injury or death."
-Before risky steps: "⚠️ Before we continue — [specific risk]. Comfortable and have right tools?" >>BTN\nYes, I'm ready | I'm not sure | Skip this step\n<<BTN
+HARD LIMITS (never guide): 240V wiring, GFCI install/repair, gas, structural. Say: "⚠️ [hazard] -- beyond DIY scope, can cause serious injury or death."
+Before risky steps: "⚠️ Before we continue -- [specific risk]. Comfortable and have right tools?" >>BTN\nYes, I'm ready | I'm not sure | Skip this step\n<<BTN
 "I'm not sure"/"Skip" → halt, mark NOT CHECKED.
 Hi-limit overheating fail → ⚠️ cut power NOW, do not use spa.`;
 
@@ -1461,29 +1473,30 @@ const SP_INSTALL = `=INSTALL=
 Bulleted sections: Before you start / Removal / Installation / Before you test / Test. Never prose.
 Whole unit only. No soldering.
 "Before you test": part-specific post-install issues (flow switch→airlock, heater→must be flooded, board→all connectors seated).
-End: "If you'd like, I can walk through this step by step — just let me know."
-Board: photos FIRST (wide + every connector + jumper settings). Pull connectors by housing. Must be programmed — check addendum flyers.
+End: "If you'd like, I can walk through this step by step -- just let me know."
+Board: photos FIRST (wide + every connector + jumper settings). Pull connectors by housing. Must be programmed -- check addendum flyers.
 Hose tip: "Stiff? Hair dryer 30-60s." While disconnected: inspect hose+clamps.`;
 
 const SP_GUIDE_CONTEXT = `=GUIDE ENTRY= ([From guide: X])
 1 brief sentence ack guide → ask what they need. Nothing else.
 Spa confirmed → no re-ask. Spa unknown → ack guide, ask for spa details.
 NEVER: diag summary, step list, >>PT, infer steps, shopping language.
-Fresh opener — ignore any active diagnosing trail.`;
+Fresh opener -- ignore any active diagnosing trail.`;
 
 const SP_BRAND_CONTEXT = `=BRANDS=
 GECKO M-CLASS (Arctic Spas, Marquis/SSPA/MTS): flow error=3 FLASHING DOTS. "Dots with pump running or silent?" Running=pressure switch adjust. Silent=replace.
-HOT SPRING/TIGER RIVER: flow error=blinking Power/Ready lights. Ask about light pattern, not code.
+HOT SPRING/TIGER RIVER: flow error=blinking Power/Ready lights. Ask about light pattern, not code. EXCEPTION: READY_BLINK on Tiger River is a temperature sensor fault (not a status blink) -- treat as sensor fault and route to overheat sequence, not flow.
+DIMENSION ONE: "warning light" is a global fault indicator only -- the specific fault is shown as a code on the LCD screen. When a user reports a warning light on a Dimension One spa, always ask: "What code is showing on your LCD screen?" Do NOT attempt to diagnose from "warning light" alone -- wait for the code, then route based on that.
 ALL OTHERS: standard text codes (FL1/FL2/FLO/FLOW).
-Accept any code user reports. Unrecognized: "Not familiar with [code] for [brand] — did you mean [closest]?"
-Auto-correct typos. Emit >>COR. Confirm: "Got it — **[corrected]**."
+Accept any code user reports. Unrecognized: "Not familiar with [code] for [brand] -- did you mean [closest]?"
+Auto-correct typos. Emit >>COR. Confirm: "Got it -- **[corrected]**."
 BRAND MENTION RULE: If the user explicitly names a brand (e.g. "my Balboa system", "it's a Hot Spring"), ALWAYS reference that brand name in your acknowledgement. Never treat a named brand as generic. Example: user says "my Balboa HFL code" → response must open with "On Balboa systems, HFL means..." not "your spa has...". The brand name must appear in the first sentence.
-SYMBOL CODE RULE: If an error code is a symbol description in ALL_CAPS (e.g. EXCLAMATION_ICON, FLASHING_LIGHT, WARNING_TRIANGLE), humanize it in your response — never repeat the raw token back to the user. "EXCLAMATION_ICON" → "exclamation mark (⚠️)" or "warning symbol". Describe what the user sees on their panel, not the internal code name.`;
+SYMBOL CODE RULE: If an error code is a symbol description in ALL_CAPS (e.g. EXCLAMATION_ICON, FLASHING_LIGHT, WARNING_TRIANGLE), humanize it in your response -- never repeat the raw token back to the user. "EXCLAMATION_ICON" → "exclamation mark (⚠️)" or "warning symbol". Describe what the user sees on their panel, not the internal code name.`;
 
 const SP_MISC = `=MISC=
 SHOP BTN ("I need help finding parts/water care/Can you help me find") → 1-sentence intro + >>PT. No Q first.
-SHOW PICTURE → part search links + "These show what [part] looks like — not suggesting purchase."
-FIX DIDN'T WORK → never restart. Next suspect. "Sorry [part] didn't fix it — let's figure out what else is going on."
+SHOW PICTURE → part search links + "These show what [part] looks like -- not suggesting purchase."
+FIX DIDN'T WORK → never restart. Next suspect. "Sorry [part] didn't fix it -- let's figure out what else is going on."
 UNCERTAINTY (risky step, "I think/maybe/not sure") → >>BTN\n1. Explain more simply | 2. Skip\n<<BTN
 SERIAL# → ask once max. Never required.
 POWER CYCLE → clarify: "Topside panel or circuit breaker?" Panel may not fully reset board.
@@ -1500,14 +1513,14 @@ DIAG PROGRESS: user asks to "show all steps", "show diagnostic list", "what step
   User can say "go back to step 3" → re-execute that step, signal [SK:current] and set state back.`;
 
 const SP_OTHER_FREETEXT = `=OTHER_FREETEXT=
-The user is in free-text "Other" diagnostic mode — their issue doesn't fit the standard flow/heat/jets/noise/water sequences.
+The user is in free-text "Other" diagnostic mode -- their issue doesn't fit the standard flow/heat/jets/noise/water sequences.
 Your job: attempt a genuine, specific diagnosis based on what they describe. Use your knowledge of hot tub components for their specific spa model.
 Rules:
-- Stay grounded in what the spa can actually do — never fabricate component behavior or specs
+- Stay grounded in what the spa can actually do -- never fabricate component behavior or specs
 - If uncertain about a specific behavior for this spa model, say so explicitly before advising
 - Work through possibilities systematically: cheapest/easiest causes first, expensive components last
 - Never suggest calling a technician
-- When you have truly exhausted all remote diagnostic options or find yourself repeating the same advice, append [DIAG_END] on its own line at the very end of your response — not before, not on first response`;
+- When you have truly exhausted all remote diagnostic options or find yourself repeating the same advice, append [DIAG_END] on its own line at the very end of your response -- not before, not on first response`;
 
 function buildSystemPrompt(context = {}) {
   const { hasDiagState, isGuideEntry, hasSpaConfirmed, hasPartRequest, isEquipmentBayStep, hasInstallRequest, isFirstMessage, stepContext, isOtherFreeText, otherHint } = context;
@@ -1523,7 +1536,7 @@ function buildSystemPrompt(context = {}) {
   if (!hasDiagState && !isOtherFreeText) modules.push(SP_MISC);
   if (isOtherFreeText) {
     modules.push(SP_OTHER_FREETEXT);
-    if (otherHint) modules.push(`[HINT: User's issue may relate to "${otherHint}" — use this as a starting point but don't assume]`);
+    if (otherHint) modules.push(`[HINT: User's issue may relate to "${otherHint}" -- use this as a starting point but don't assume]`);
   }
   if (stepContext) modules.push(stepContext);
   return modules.join('\n\n');
@@ -1732,178 +1745,190 @@ async function supabaseGet(table, params = {}) {
 
 // Model profile lookup endpoint
 app.get("/api/model/:year/:make/:model", async (req, res) => {
-  const { year, make, model } = req.params;
-  if (!year || !make || !model) return res.status(400).json({ error: "year, make, model required" });
+  try {
+    const { year, make, model } = req.params;
+    if (!year || !make || !model) return res.status(400).json({ error: "year, make, model required" });
 
-  const yearNum = parseInt(year);
-  const yearFilter = !isNaN(yearNum) && yearNum > 1980 ? {
-    'year_start': `lte.${yearNum}`,
-    'year_end': `gte.${yearNum}`,
-  } : {};
+    const yearNum = parseInt(year);
+    const yearFilter = !isNaN(yearNum) && yearNum > 1980 ? {
+      'year_start': `lte.${yearNum}`,
+      'year_end': `gte.${yearNum}`,
+    } : {};
 
-  const [rows, partsRows] = await Promise.all([
-    supabaseGet('spa_models', {
-      'select': 'id,brand,model_name,year_start,year_end,control_system,common_failures,error_codes,code_types,pump_configs,verified,key_part_numbers,filter_count,has_spa_boy,heater_relay_type,high_limit_switch,high_limit_switch_location,heater_manifold_notes,sensor_serviceability',
-      'brand': `ilike.*${make}*`,
-      'model_name': `ilike.*${model}*`,
-      ...yearFilter,
-      'limit': 10
-    }),
-    supabaseGet('parts', {
-      'select': 'part_number,description,category,manufacturer,oem_cross_references,oem_part_number,superseded_by,notes',
-      'compatible_brands': `cs.[${make}]`,
-      'order': 'category',
-    })
-  ]);
+    const [rows, partsRows] = await Promise.all([
+      supabaseGet('spa_models', {
+        'select': 'id,brand,model_name,year_start,year_end,control_system,common_failures,error_codes,code_types,pump_configs,verified,key_part_numbers,filter_count,has_spa_boy,heater_relay_type,high_limit_switch,high_limit_switch_location,heater_manifold_notes,sensor_serviceability',
+        'brand': `ilike.*${make}*`,
+        'model_name': `ilike.*${model}*`,
+        ...yearFilter,
+        'limit': 10
+      }),
+      supabaseGet('parts', {
+        'select': 'part_number,description,category,manufacturer,oem_cross_references,oem_part_number,superseded_by,notes',
+        'compatible_brands': `cs.[${make}]`,
+        'order': 'category',
+      })
+    ]);
 
-  if (!rows || rows.length === 0) {
-    return res.json({ found: false });
-  }
-
-  // Helper: extract codes array from a profile's error_codes field
-  function extractCodes(ec) {
-    if (!ec) return [];
-    if (typeof ec === 'object' && !Array.isArray(ec)) return Object.keys(ec).filter(Boolean);
-    if (Array.isArray(ec)) return ec.map(e => (typeof e === 'object' && e !== null) ? (e.code || e.name || Object.values(e)[0]) : String(e)).filter(Boolean);
-    if (typeof ec === 'string') {
-      const validCode = c => /^[A-Za-z0-9][A-Za-z0-9\s\-_./]{0,11}$/.test(c) && c.length >= 2;
-      return ec.split(',').map(c => c.trim()).filter(validCode);
+    if (!rows || rows.length === 0) {
+      return res.json({ found: false });
     }
-    return [];
-  }
 
-  // Helper: build full profile response shape from a single row
-  function buildProfile(profile) {
-    const ec = profile.error_codes;
-    const codes = extractCodes(ec);
-    return {
+    // Helper: extract codes array from a profile's error_codes field
+    function extractCodes(ec) {
+      if (!ec) return [];
+      if (typeof ec === 'object' && !Array.isArray(ec)) return Object.keys(ec).filter(Boolean);
+      if (Array.isArray(ec)) return ec.map(e => (typeof e === 'object' && e !== null) ? (e.code || e.name || Object.values(e)[0]) : String(e)).filter(Boolean);
+      if (typeof ec === 'string') {
+        const validCode = c => /^[A-Za-z0-9][A-Za-z0-9\s\-_./]{0,11}$/.test(c) && c.length >= 2;
+        return ec.split(',').map(c => c.trim()).filter(validCode);
+      }
+      return [];
+    }
+
+    // Helper: build full profile response shape from a single row
+    function buildProfile(profile) {
+      const ec = profile.error_codes;
+      const codes = extractCodes(ec);
+      return {
+        found: true,
+        verified: profile.verified || false,
+        make: profile.brand,
+        model: profile.model_name,
+        filter_count: profile.filter_count || null,
+        control_system: profile.control_system || null,
+        common_failures: Array.isArray(profile.common_failures)
+          ? profile.common_failures.slice(0, 5).join('; ')
+          : (profile.common_failures || null),
+        error_codes: codes.length ? codes.join(', ') : null,
+        error_code_descriptions: (typeof ec === 'object' && ec !== null && !Array.isArray(ec)) ? ec : null,
+        code_types: (typeof profile.code_types === 'object' && profile.code_types !== null && !Array.isArray(profile.code_types))
+          ? profile.code_types : null,
+        pump_configs: Array.isArray(profile.pump_configs)
+          ? profile.pump_configs.map(p => `Pump ${p.pump_num}: ${p.hp}hp ${p.speeds}-speed`).join(', ')
+          : (profile.pump_configs || null),
+        key_part_numbers: profile.key_part_numbers || null,
+        compatible_parts: partsRows || [],
+        has_spa_boy: profile.has_spa_boy || false,
+        heater_relay_type: profile.heater_relay_type || 'unknown',
+        high_limit_switch: profile.high_limit_switch || false,
+        high_limit_switch_location: profile.high_limit_switch_location || null,
+        heater_manifold_notes: profile.heater_manifold_notes || null,
+        sensor_serviceability: profile.sensor_serviceability || 'unknown',
+      };
+    }
+
+    // Single row — existing behavior unchanged
+    if (rows.length === 1) {
+      return res.json(buildProfile(rows[0]));
+    }
+
+    // Multiple rows — return disambiguation payload
+    const controlSystems = rows.map(r => (r.control_system || '').toLowerCase());
+    const has880 = controlSystems.some(cs => cs.includes('880'));
+    const has850 = controlSystems.some(cs => cs.includes('850'));
+    const hasPanelTypeSplit = has880 && has850;
+
+    const disambigRows = rows.map(r => ({
+      id: r.id,
+      control_system: r.control_system || null,
+      year_start: r.year_start,
+      year_end: r.year_end,
+      codes: extractCodes(r.error_codes),
+      code_types: (typeof r.code_types === 'object' && r.code_types !== null && !Array.isArray(r.code_types)) ? r.code_types : null,
+      error_code_descriptions: (typeof r.error_codes === 'object' && r.error_codes !== null && !Array.isArray(r.error_codes)) ? r.error_codes : null,
+      profile: buildProfile(r),
+    }));
+
+    const allCodes = [...new Set(disambigRows.flatMap(r => r.codes))].sort();
+
+    return res.json({
       found: true,
-      verified: profile.verified || false,
-      make: profile.brand,
-      model: profile.model_name,
-      filter_count: profile.filter_count || null,
-      control_system: profile.control_system || null,
-      common_failures: Array.isArray(profile.common_failures)
-        ? profile.common_failures.slice(0, 5).join('; ')
-        : (profile.common_failures || null),
-      error_codes: codes.length ? codes.join(', ') : null,
-      error_code_descriptions: (typeof ec === 'object' && ec !== null && !Array.isArray(ec)) ? ec : null,
-      code_types: (typeof profile.code_types === 'object' && profile.code_types !== null && !Array.isArray(profile.code_types))
-        ? profile.code_types : null,
-      pump_configs: Array.isArray(profile.pump_configs)
-        ? profile.pump_configs.map(p => `Pump ${p.pump_num}: ${p.hp}hp ${p.speeds}-speed`).join(', ')
-        : (profile.pump_configs || null),
-      key_part_numbers: profile.key_part_numbers || null,
+      multipleRows: true,
+      hasPanelTypeSplit,
+      allCodes,
+      rows: disambigRows,
       compatible_parts: partsRows || [],
-      has_spa_boy: profile.has_spa_boy || false,
-      heater_relay_type: profile.heater_relay_type || 'unknown',
-      high_limit_switch: profile.high_limit_switch || false,
-      high_limit_switch_location: profile.high_limit_switch_location || null,
-      heater_manifold_notes: profile.heater_manifold_notes || null,
-      sensor_serviceability: profile.sensor_serviceability || 'unknown',
-    };
+    });
+  } catch(err) {
+    console.error('[/api/model/:year/:make/:model] error:', err.message);
+    if (!res.headersSent) res.status(500).json({ error: err.message });
   }
 
-  // Single row — existing behavior unchanged
-  if (rows.length === 1) {
-    return res.json(buildProfile(rows[0]));
-  }
-
-  // Multiple rows — return disambiguation payload
-  const controlSystems = rows.map(r => (r.control_system || '').toLowerCase());
-  const has880 = controlSystems.some(cs => cs.includes('880'));
-  const has850 = controlSystems.some(cs => cs.includes('850'));
-  const hasPanelTypeSplit = has880 && has850;
-
-  const disambigRows = rows.map(r => ({
-    id: r.id,
-    control_system: r.control_system || null,
-    year_start: r.year_start,
-    year_end: r.year_end,
-    codes: extractCodes(r.error_codes),
-    code_types: (typeof r.code_types === 'object' && r.code_types !== null && !Array.isArray(r.code_types)) ? r.code_types : null,
-    error_code_descriptions: (typeof r.error_codes === 'object' && r.error_codes !== null && !Array.isArray(r.error_codes)) ? r.error_codes : null,
-    profile: buildProfile(r),
-  }));
-
-  const allCodes = [...new Set(disambigRows.flatMap(r => r.codes))].sort();
-
-  return res.json({
-    found: true,
-    multipleRows: true,
-    hasPanelTypeSplit,
-    allCodes,
-    rows: disambigRows,
-    compatible_parts: partsRows || [],
-  });
 });
 
 // ── normalize-spa: JS brand fuzzy match + Haiku for model only ────
 // v4.9.14e: brand normalization moved to JS (zero AI cost for brands)
 // Haiku only called when brand is known but model needs correction
 app.post("/api/normalize-spa", async (req, res) => {
-  const raw = req.body.input || req.body.raw || '';
-  if (!raw) return res.status(400).json({ error: "input required" });
-
-  // Step 1: Try to extract year with regex (free)
-  const yearMatch = raw.match(/\b(19[5-9]\d|20[0-3]\d)\b/);
-  const year = yearMatch ? yearMatch[1] : 'Unknown';
-
-  // Step 2: Extract potential brand/model tokens
-  const withoutYear = raw.replace(year, '').trim();
-  const tokens = withoutYear.split(/[\s,\/]+/).filter(Boolean);
-
-  // Step 3: JS fuzzy brand match (free)
-  let detectedBrand = null;
-  let remainingTokens = [...tokens];
-  // Try multi-word brand first (e.g. "Hot Spring", "Dimension One")
-  for (let len = 3; len >= 1; len--) {
-    const candidate = tokens.slice(0, len).join(' ');
-    const brand = normalizeBrandJS(candidate);
-    if (brand) {
-      detectedBrand = brand;
-      remainingTokens = tokens.slice(len);
-      break;
-    }
-  }
-
-  // Step 4: If brand found and model is simple, try to return without Haiku
-  const modelCandidate = remainingTokens.join(' ').trim() || 'Unknown';
-
-  // Step 5: Only call Haiku if brand NOT detected or model needs correction
-  // Haiku now only handles model name normalization — much smaller prompt
   try {
-    const brandContext = detectedBrand ? `Brand confirmed: ${detectedBrand}. ` : '';
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 120,
-        messages: [{
-          role: "user",
-          content: `Spa name corrector. ${brandContext}Fix ALL typos using phonetic similarity — e.g. "calmans"→"Cayman", "caymn"→"Cayman", "optama"→"Optima", "grandee"→"Grandee". Return ONLY JSON: {"year":"${year}","make":"${detectedBrand || 'Unknown'}","model":"[corrected model]","sn":"Unknown","normalized":"[year make model]"}
-Use "Unknown" for missing. Model in title case. Raw: ${raw}`
-        }]
-      })
-    });
-    const data = await response.json();
-    logTokenUsage('normalize-spa', 'claude-haiku-4-5-20251001', data.usage);
-    const rawText = (data.content?.[0]?.text || '{}').replace(/```json|```/g, '').trim();
-    const jsonMatch = rawText.match(/\{[\s\S]*\}/);
-    const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : '{}');
-    // Override with JS-detected brand if Haiku contradicts (JS is more reliable for brands)
-    if (detectedBrand) parsed.make = detectedBrand;
-    // Sanitize: strip any leaked pipe-delimited key:value text from fields
-    const sanitizeField = v => typeof v === 'string' ? v.split(/\s*[|•]\s*/)[0].replace(/^\w+:\s*/, '').trim() : v;
-    parsed.make = sanitizeField(parsed.make);
-    parsed.model = sanitizeField(parsed.model);
-    parsed.year = sanitizeField(parsed.year);
-    res.json(parsed);
-  } catch (err) {
-    console.error('normalize-spa error:', err);
-    res.json({ year, make: detectedBrand || 'Unknown', model: modelCandidate, sn: 'Unknown', normalized: null });
+    const raw = req.body.input || req.body.raw || '';
+    if (!raw) return res.status(400).json({ error: "input required" });
+
+    // Step 1: Try to extract year with regex (free)
+    const yearMatch = raw.match(/\b(19[5-9]\d|20[0-3]\d)\b/);
+    const year = yearMatch ? yearMatch[1] : 'Unknown';
+
+    // Step 2: Extract potential brand/model tokens
+    const withoutYear = raw.replace(year, '').trim();
+    const tokens = withoutYear.split(/[\s,\/]+/).filter(Boolean);
+
+    // Step 3: JS fuzzy brand match (free)
+    let detectedBrand = null;
+    let remainingTokens = [...tokens];
+    // Try multi-word brand first (e.g. "Hot Spring", "Dimension One")
+    for (let len = 3; len >= 1; len--) {
+      const candidate = tokens.slice(0, len).join(' ');
+      const brand = normalizeBrandJS(candidate);
+      if (brand) {
+        detectedBrand = brand;
+        remainingTokens = tokens.slice(len);
+        break;
+      }
+    }
+
+    // Step 4: If brand found and model is simple, try to return without Haiku
+    const modelCandidate = remainingTokens.join(' ').trim() || 'Unknown';
+
+    // Step 5: Only call Haiku if brand NOT detected or model needs correction
+    // Haiku now only handles model name normalization — much smaller prompt
+    try {
+      const brandContext = detectedBrand ? `Brand confirmed: ${detectedBrand}. ` : '';
+      const response = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
+        body: JSON.stringify({
+          model: "claude-haiku-4-5-20251001",
+          max_tokens: 120,
+          messages: [{
+            role: "user",
+            content: `Spa name corrector. ${brandContext}Fix ALL typos using phonetic similarity — e.g. "calmans"→"Cayman", "caymn"→"Cayman", "optama"→"Optima", "grandee"→"Grandee". Return ONLY JSON: {"year":"${year}","make":"${detectedBrand || 'Unknown'}","model":"[corrected model]","sn":"Unknown","normalized":"[year make model]"}
+  Use "Unknown" for missing. Model in title case. Raw: ${raw}`
+          }]
+        })
+      });
+      const data = await response.json();
+      logTokenUsage('normalize-spa', 'claude-haiku-4-5-20251001', data.usage);
+      const rawText = (data.content?.[0]?.text || '{}').replace(/```json|```/g, '').trim();
+      const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+      const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : '{}');
+      // Override with JS-detected brand if Haiku contradicts (JS is more reliable for brands)
+      if (detectedBrand) parsed.make = detectedBrand;
+      // Sanitize: strip any leaked pipe-delimited key:value text from fields
+      const sanitizeField = v => typeof v === 'string' ? v.split(/\s*[|•]\s*/)[0].replace(/^\w+:\s*/, '').trim() : v;
+      parsed.make = sanitizeField(parsed.make);
+      parsed.model = sanitizeField(parsed.model);
+      parsed.year = sanitizeField(parsed.year);
+      res.json(parsed);
+    } catch (err) {
+      console.error('normalize-spa error:', err);
+      res.json({ year, make: detectedBrand || 'Unknown', model: modelCandidate, sn: 'Unknown', normalized: null });
+    }
+  } catch(err) {
+    console.error('[/api/normalize-spa] error:', err.message);
+    if (!res.headersSent) res.status(500).json({ error: err.message });
   }
+
 });
 
 app.post("/api/correct-spa", async (req, res) => {
@@ -2040,24 +2065,30 @@ function getBrandsForCountry(countryCode) {
 }
 
 app.get("/api/models-for-make", async (req, res) => {
-  let make = req.query.make || '';
-  const yearNum = parseInt(req.query.year || '');
-  if (!make) return res.json({ models: [] });
-  // Normalize — strip common suffixes to match Supabase brand column
-  make = make.replace(/\s+(spas?|hot\s+tubs?|industries|inc\.?|llc\.?|corp\.?)$/i, '').trim();
-  const yearFilter = !isNaN(yearNum) && yearNum > 1980 ? {
-    'year_start': `lte.${yearNum}`,
-    'year_end': `gte.${yearNum}`,
-  } : {};
-  const rows = await supabaseGet('spa_models', {
-    'select': 'model_name',
-    'brand': `ilike.*${make}*`,
-    ...yearFilter,
-    'order': 'model_name',
-    'limit': 100
-  });
-  const models = [...new Set((rows || []).map(r => r.model_name).filter(Boolean))].sort();
-  res.json({ models });
+  try {
+    let make = req.query.make || '';
+    const yearNum = parseInt(req.query.year || '');
+    if (!make) return res.json({ models: [] });
+    // Normalize — strip common suffixes to match Supabase brand column
+    make = make.replace(/\s+(spas?|hot\s+tubs?|industries|inc\.?|llc\.?|corp\.?)$/i, '').trim();
+    const yearFilter = !isNaN(yearNum) && yearNum > 1980 ? {
+      'year_start': `lte.${yearNum}`,
+      'year_end': `gte.${yearNum}`,
+    } : {};
+    const rows = await supabaseGet('spa_models', {
+      'select': 'model_name',
+      'brand': `ilike.*${make}*`,
+      ...yearFilter,
+      'order': 'model_name',
+      'limit': 100
+    });
+    const models = [...new Set((rows || []).map(r => r.model_name).filter(Boolean))].sort();
+    res.json({ models });
+  } catch(err) {
+    console.error('[/api/models-for-make] error:', err.message);
+    if (!res.headersSent) res.status(500).json({ error: err.message });
+  }
+
 });
 
 // Version endpoint — used by bug reporter to detect client/server mismatch
@@ -2252,903 +2283,909 @@ async function callAnthropicWithRetry(payload, maxRetries = 3) {
 
 // ── Diag button endpoint — processes step button clicks, no AI call ─
 app.post("/api/diag-button", async (req, res) => {
-  const { stepId, buttonLabel, outcome, part, action, briefMode } = req.body;
-  const clientId = getClientId(req);
+  try {
+    const { stepId, buttonLabel, outcome, part, action, briefMode } = req.body;
+    const clientId = getClientId(req);
 
-  // Handle initialization
-  if (stepId === 'INIT') {
-    const spaYear = req.body.spaYear || '';
-    const spaMake = req.body.spaMake || '';
-    const spaModel = req.body.spaModel || '';
-    const rawErrorCode = req.body.errorCode || null;
-    const errorCode = rawErrorCode ? rawErrorCode.replace(/[^A-Za-z0-9\/_\-\s_]/g, '').trim().toUpperCase() || null : null;
-    const topic = req.body.topic || 'flow';
-    const spaLabel = [spaYear, spaMake, spaModel].filter(v => v && v !== 'Unknown').join(' ') || 'Unknown';
-    const startStep = topic === 'heat' ? 'H2a' : topic === 'jets' ? 'J2a' : topic === 'noise' ? 'N_LOC' : topic === 'water' ? 'W1' : topic === 'overheat' ? 'OH1' : 'S2a';
-    setDiagState(clientId, { spa: spaLabel, errorCode, topic, steps: [], currentStep: startStep, lastUpdated: Date.now() });
-    return res.json({ ok: true, diagState: getDiagState(clientId) });
-  }
+    // Handle initialization
+    if (stepId === 'INIT') {
+      const spaYear = req.body.spaYear || '';
+      const spaMake = req.body.spaMake || '';
+      const spaModel = req.body.spaModel || '';
+      const rawErrorCode = req.body.errorCode || null;
+      const errorCode = rawErrorCode ? rawErrorCode.replace(/[^A-Za-z0-9\/_\-\s_]/g, '').trim().toUpperCase() || null : null;
+      const topic = req.body.topic || 'flow';
+      const spaLabel = [spaYear, spaMake, spaModel].filter(v => v && v !== 'Unknown').join(' ') || 'Unknown';
+      const startStep = topic === 'heat' ? 'H2a' : topic === 'jets' ? 'J2a' : topic === 'noise' ? 'N_LOC' : topic === 'water' ? 'W1' : topic === 'overheat' ? 'OH1' : 'S2a';
+      setDiagState(clientId, { spa: spaLabel, errorCode, topic, steps: [], currentStep: startStep, lastUpdated: Date.now() });
+      return res.json({ ok: true, diagState: getDiagState(clientId) });
+    }
 
-  // Handle step jump — mark skipped steps server-side
-  if (stepId === 'JUMP') {
-    const { targetStep, skippedSteps } = req.body;
+    // Handle step jump — mark skipped steps server-side
+    if (stepId === 'JUMP') {
+      const { targetStep, skippedSteps } = req.body;
+      let state = getDiagState(clientId);
+      if (state) {
+        if (!state.steps) state.steps = [];
+        (skippedSteps || []).forEach(sid => {
+          if (!state.steps.find(s => s.id === sid)) {
+            const step = DIAG_STEPS[sid];
+            state.steps.push({ id: sid, label: step ? step.label : sid, passed: false, skipped: true });
+          }
+        });
+        state.currentStep = targetStep;
+        setDiagState(clientId, state);
+      }
+      return res.json({ ok: true, diagState: getDiagState(clientId) });
+    }
+
     let state = getDiagState(clientId);
-    if (state) {
-      if (!state.steps) state.steps = [];
-      (skippedSteps || []).forEach(sid => {
-        if (!state.steps.find(s => s.id === sid)) {
-          const step = DIAG_STEPS[sid];
-          state.steps.push({ id: sid, label: step ? step.label : sid, passed: false, skipped: true });
-        }
-      });
-      state.currentStep = targetStep;
-      setDiagState(clientId, state);
-    }
-    return res.json({ ok: true, diagState: getDiagState(clientId) });
-  }
+    if (!state) return res.status(400).json({ error: 'No active diagnosis' });
 
-  let state = getDiagState(clientId);
-  if (!state) return res.status(400).json({ error: 'No active diagnosis' });
+    const step = DIAG_STEPS[stepId];
+    if (!step) return res.status(400).json({ error: 'Unknown step' });
 
-  const step = DIAG_STEPS[stepId];
-  if (!step) return res.status(400).json({ error: 'Unknown step' });
+    let stepResult = { id: stepId, label: step.label };
+    let nextStep = step.next;
+    let responseMsg = null;
+    let partCard = null;
+    let clientAction = null;
+    let advanceNow = true;
+    let skipPending = false;
+    let deadEndButtons = null;
+    let partCardButtons = null; // inline buttons to append after partCard renders
+    let briefOmitted = null; // text omitted due to briefMode — sent to admin/tester for highlight
 
-  let stepResult = { id: stepId, label: step.label };
-  let nextStep = step.next;
-  let responseMsg = null;
-  let partCard = null;
-  let clientAction = null;
-  let advanceNow = true;
-  let skipPending = false;
-  let deadEndButtons = null;
-  let partCardButtons = null; // inline buttons to append after partCard renders
-  let briefOmitted = null; // text omitted due to briefMode — sent to admin/tester for highlight
-
-  switch(outcome) {
-    case 'pass':
-      stepResult.passed = true;
-      // Step-specific pass messages
-      const passMessages = {
-        'S2a': null,
-        'S2b': "Good — water level is fine.",
-        'S1': "Filters ruled out — let's keep going.",
-        'S3': "Good suction confirmed — the pump is moving water.",
-        'H3': "Good — strong suction confirmed. The pump is moving water normally.",
-        'S4': "Great — the air lock purge worked. Let's keep an eye on it and continue checking.",
-        'S5': "Good — the heating indicator is showing, so the control board is commanding heat.",
-        'BREAKER': buttonLabel === 'Error cleared' ? "Great — the breaker reset cleared the error. Let's continue to confirm everything is working." : "Noted — the breaker reset didn't resolve it. Let's keep working through the checklist.",
-        'S6': "Good — all valves are open.",
-        'S6b': "Good — air purge valve checked.",
-        'S7': buttonLabel === 'Error cleared' ? "The second air purge cleared it — air was still in the system. Reinstall your filters as described earlier." : "Noted — second purge didn't resolve it. Let's move on.",
-        'S8b': "Good — the flow switch paddle is moving freely and correctly oriented.",
-        'S8c': buttonLabel === 'Error still showing' ? "Good — flow switch is ruled out. Let's continue." : null,
-        'S9': "Good — no visible burn marks, corrosion, or damage found.",
-        'S10': "Good — all fuses are intact.",
-        'S11': "Good — temperature readings are consistent.",
-        'S12': "Good — hi-limit sensor checked.",
-        'S13': null, // handled by sub-flow
-      };
-      if (passMessages[stepId] !== undefined && passMessages[stepId] !== null) {
-        responseMsg = passMessages[stepId];
-      }
-      break;
-    case 'fail':
-      stepResult.passed = false;
-      if (part) partCard = part;
-      break;
-    case 'possible':
-      stepResult.passed = true;
-      stepResult.possible = true;
-      if (part) partCard = part;
-      if (stepId === 'S3') {
-        const _s3Msg = "Weak or no suction at the inlet is a concern — I've flagged the suction test as a possible issue. This can be caused by trapped air in the plumbing, a struggling circulation pump, or a blockage somewhere in the system. Let's work through the most likely causes one by one.";
-        if (!briefMode) { responseMsg = _s3Msg; } else { briefOmitted = _s3Msg; }
-      }
-      if (stepId === 'H3') {
-        const _h3Msg = "Weak or no suction means water isn't moving through the system properly -- this is likely contributing to your heating issue. It could be trapped air, a struggling circ pump, or a blockage. Let's work through the most likely causes.";
-        if (!briefMode) { responseMsg = _h3Msg; } else { briefOmitted = _h3Msg; }
-      }
-      break;
-    case 'neutral':
-      stepResult.passed = true;
-      const neutralMessages = {
-        'S4': "Noted — the air lock purge didn't resolve the error. Let's keep working through the checklist.",
-        'S7': "Noted — second purge didn't clear it. Let's move on.",
-        'S8a': "Noted.",
-      };
-      if (neutralMessages[stepId]) responseMsg = neutralMessages[stepId];
-      break;
-    case 'skip':
-      // Don't advance yet — client shows "Try This Step" / "Skip Anyway" buttons
-      stepResult.passed = false;
-      stepResult.skipped = false; // mark skipped only after user confirms via skipConfirmed
-      advanceNow = false;
-      skipPending = true;
-      if (!briefMode) {
-        const skipReasons = {
-          'S4':  "Air locks are one of the most common causes of flow errors — skipping means we can't rule it out.",
-          'H4':  "Air locks are one of the most common causes of heating problems — skipping means we can't rule it out.",
-          'J4':  "Air locks are a common cause of jet pressure loss — skipping means we can't rule it out.",
-          'S5':  "The heater indicator check quickly confirms whether the control board is calling for heat — easy to do and worth a moment.",
-          'H5':  "Mode settings are a quick win — Economy or Sleep mode silently prevents heating and is easy to overlook.",
-          'J_VT': "The voltage test is the most reliable way to tell whether the issue is the pump or the control board.",
-          'S8b': "The flow switch check is one of the most common causes of FL errors — very worth doing.",
-          'S9':  "A quick visual inspection with a flashlight takes 30 seconds and can reveal burn marks that pinpoint the fault.",
-          'H9':  "A quick visual inspection with a flashlight takes 30 seconds and can reveal burn marks that pinpoint the fault.",
-          'J9':  "A quick visual inspection with a flashlight takes 30 seconds and can reveal burn marks that pinpoint the fault.",
-          'S10': "Checking fuses takes 30 seconds and rules out one of the cheapest possible fixes.",
-          'H10': "Checking fuses takes 30 seconds and rules out one of the cheapest possible fixes.",
-          'J10': "Checking fuses takes 30 seconds and rules out one of the cheapest possible fixes.",
+    switch(outcome) {
+      case 'pass':
+        stepResult.passed = true;
+        // Step-specific pass messages
+        const passMessages = {
+          'S2a': null,
+          'S2b': "Good — water level is fine.",
+          'S1': "Filters ruled out — let's keep going.",
+          'S3': "Good suction confirmed — the pump is moving water.",
+          'H3': "Good — strong suction confirmed. The pump is moving water normally.",
+          'S4': "Great — the air lock purge worked. Let's keep an eye on it and continue checking.",
+          'S5': "Good — the heating indicator is showing, so the control board is commanding heat.",
+          'BREAKER': buttonLabel === 'Error cleared' ? "Great — the breaker reset cleared the error. Let's continue to confirm everything is working." : "Noted — the breaker reset didn't resolve it. Let's keep working through the checklist.",
+          'S6': "Good — all valves are open.",
+          'S6b': "Good — air purge valve checked.",
+          'S7': buttonLabel === 'Error cleared' ? "The second air purge cleared it — air was still in the system. Reinstall your filters as described earlier." : "Noted — second purge didn't resolve it. Let's move on.",
+          'S8b': "Good — the flow switch paddle is moving freely and correctly oriented.",
+          'S8c': buttonLabel === 'Error still showing' ? "Good — flow switch is ruled out. Let's continue." : null,
+          'S9': "Good — no visible burn marks, corrosion, or damage found.",
+          'S10': "Good — all fuses are intact.",
+          'S11': "Good — temperature readings are consistent.",
+          'S12': "Good — hi-limit sensor checked.",
+          'S13': null, // handled by sub-flow
         };
-        const reason = skipReasons[stepId] || "This step helps narrow things down — it's worth a quick look before moving on.";
-        responseMsg = reason;
-      } else {
-        const skipReason = skipReasons[stepId] || "This step helps narrow things down — it's worth a quick look before moving on.";
-        briefOmitted = skipReason; // brief mode — capture for admin/tester highlight
-        responseMsg = null;
-        skipPending = false;
+        if (passMessages[stepId] !== undefined && passMessages[stepId] !== null) {
+          responseMsg = passMessages[stepId];
+        }
+        break;
+      case 'fail':
+        stepResult.passed = false;
+        if (part) partCard = part;
+        break;
+      case 'possible':
+        stepResult.passed = true;
+        stepResult.possible = true;
+        if (part) partCard = part;
+        if (stepId === 'S3') {
+          const _s3Msg = "Weak or no suction at the inlet is a concern — I've flagged the suction test as a possible issue. This can be caused by trapped air in the plumbing, a struggling circulation pump, or a blockage somewhere in the system. Let's work through the most likely causes one by one.";
+          if (!briefMode) { responseMsg = _s3Msg; } else { briefOmitted = _s3Msg; }
+        }
+        if (stepId === 'H3') {
+          const _h3Msg = "Weak or no suction means water isn't moving through the system properly -- this is likely contributing to your heating issue. It could be trapped air, a struggling circ pump, or a blockage. Let's work through the most likely causes.";
+          if (!briefMode) { responseMsg = _h3Msg; } else { briefOmitted = _h3Msg; }
+        }
+        break;
+      case 'neutral':
+        stepResult.passed = true;
+        const neutralMessages = {
+          'S4': "Noted — the air lock purge didn't resolve the error. Let's keep working through the checklist.",
+          'S7': "Noted — second purge didn't clear it. Let's move on.",
+          'S8a': "Noted.",
+        };
+        if (neutralMessages[stepId]) responseMsg = neutralMessages[stepId];
+        break;
+      case 'skip':
+        // Don't advance yet — client shows "Try This Step" / "Skip Anyway" buttons
+        stepResult.passed = false;
+        stepResult.skipped = false; // mark skipped only after user confirms via skipConfirmed
+        advanceNow = false;
+        skipPending = true;
+        if (!briefMode) {
+          const skipReasons = {
+            'S4':  "Air locks are one of the most common causes of flow errors — skipping means we can't rule it out.",
+            'H4':  "Air locks are one of the most common causes of heating problems — skipping means we can't rule it out.",
+            'J4':  "Air locks are a common cause of jet pressure loss — skipping means we can't rule it out.",
+            'S5':  "The heater indicator check quickly confirms whether the control board is calling for heat — easy to do and worth a moment.",
+            'H5':  "Mode settings are a quick win — Economy or Sleep mode silently prevents heating and is easy to overlook.",
+            'J_VT': "The voltage test is the most reliable way to tell whether the issue is the pump or the control board.",
+            'S8b': "The flow switch check is one of the most common causes of FL errors — very worth doing.",
+            'S9':  "A quick visual inspection with a flashlight takes 30 seconds and can reveal burn marks that pinpoint the fault.",
+            'H9':  "A quick visual inspection with a flashlight takes 30 seconds and can reveal burn marks that pinpoint the fault.",
+            'J9':  "A quick visual inspection with a flashlight takes 30 seconds and can reveal burn marks that pinpoint the fault.",
+            'S10': "Checking fuses takes 30 seconds and rules out one of the cheapest possible fixes.",
+            'H10': "Checking fuses takes 30 seconds and rules out one of the cheapest possible fixes.",
+            'J10': "Checking fuses takes 30 seconds and rules out one of the cheapest possible fixes.",
+          };
+          const reason = skipReasons[stepId] || "This step helps narrow things down — it's worth a quick look before moving on.";
+          responseMsg = reason;
+        } else {
+          const skipReason = skipReasons[stepId] || "This step helps narrow things down — it's worth a quick look before moving on.";
+          briefOmitted = skipReason; // brief mode — capture for admin/tester highlight
+          responseMsg = null;
+          skipPending = false;
+          stepResult.skipped = true;
+          advanceNow = true;
+        }
+        break;
+      case 'skip_confirmed':
+        stepResult.passed = false;
         stepResult.skipped = true;
         advanceNow = true;
+        responseMsg = null;
+        break;
+
+      case 'action':
+        advanceNow = false; // action steps handle advance themselves
+        break;
+    }
+
+    // Handle special actions
+    if (outcome === 'action') {
+      switch(action) {
+        case 'water_continue_cloudy':
+          responseMsg = "⚠️ Understood — we'll continue, but the cloudy or foamy water still needs to be addressed. Some upcoming tests require running without filters, which we only recommend with clean water. Proceed with caution.";
+          stepResult.passed = true;
+          stepResult.possible = true;
+          advanceNow = true;
+          break;
+
+        case 'water_continue_dirty':
+          responseMsg = "⚠️ Understood — we'll continue, but the dirty water still needs to be addressed. Some upcoming tests require running without filters, which we only recommend with clean water. Proceed with caution.";
+          stepResult.passed = true;
+          stepResult.possible = true;
+          advanceNow = true;
+          break;
+
+        case 'water_dirty_clean':
+          responseMsg = [
+            "**Dealing with Visibly Dirty Water**",
+            "Recommended Action Plan: The Fresh Start",
+            "",
+            "* **Drain and wipe down** -- Safely drain the spa and wipe down the shell to remove ring lines, grit, or biofilm residue.",
+            "* **Clean or replace filters** -- Visibly dirty water heavily clogs filters. Rinse cartridges thoroughly with a hose or replace if worn.",
+            "* **Fresh refill** -- Refill the spa with clean water (use a hose pre-filter if you have high mineral content).",
+            "* **Balance the baseline** -- Test fresh water and adjust pH (7.2-7.8) and total alkalinity (80-120 ppm).",
+            "* **Sanitize and shock** -- Apply primary sanitizer and a startup shock dose.",
+            "* **Run filtration** -- Circulate for at least 4-6 hours to mix chemicals and bring to temperature.",
+            "",
+            "#When water is visibly dirty with heavy grit, leaves, or severe organic buildup, attempting to fix it with chemicals alone is often a losing battle. Heavy debris can rapidly clog filters, strain the circulation pump, and completely consume your sanitizer, leaving the water unsafe. For heavily compromised water, a complete drain and refill is highly recommended to protect your equipment and ensure a clean, healthy soak.#",
+            "",
+            "[SHOP_LINK:supplies:🔧 Recommended Supplies]",
+            "",
+            "[HALF_BREAK]",
+            "⚠️ Safety First: Always read product labels before handling spa chemicals. Never mix chemicals together directly -- always add chemicals to water, never water to chemicals. Keep all products safely stored away from children and pets.",
+          ].join("\n");
+          partCard = 'water dirty';
+          advanceNow = false;
+          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">I have cleaned the water — Continue Diagnosis</button></div>';
+          break;
+
+        case 'water_cloudy':
+          responseMsg = [
+            "**Cloudy water is usually caused by pH imbalance, low sanitizer, high calcium, or organic waste buildup.**\n\nHere's what to do:",
+            "",
+            "• Test your water — check pH (target 7.2–7.8), alkalinity (80–120 ppm), and sanitizer levels first",
+            "• Adjust pH if out of range — use pH Up or pH Down as needed",
+            "• Shock the water — add a non-chlorine or chlorine shock dose based on your sanitizer system",
+            "• Add a clarifier — spa clarifier binds fine particles so the filter can catch them",
+            "• Run filtration — keep the pump running for at least 4–6 hours after treatment",
+            "• Retest — check levels again before using the spa",
+            "* Draining, rinsing, and refilling with fresh water is always an acceptable alternative, particularly for water older than four months or heavily compromised clarity.",
+            "",
+            "Some [MANUAL_LINK] recommend specific products — check yours for brand-specific guidance.",
+            "[HALF_BREAK]",
+            "⚠️ Safety: Always read product labels before handling chemicals. Never mix chemicals directly — add to water, not water to chemicals. Keep away from children and pets."
+          ].join("\n");
+          partCard = 'water treatment cloudy';
+          stepResult.passed = true;
+          stepResult.possible = true;
+          advanceNow = false;
+          responseMsg += '\n\n<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="action" data-action="water_show_items_cloudy" data-part="" data-critical="false" onclick="handleDiagBtn(this)" style="border-color:rgba(0,183,255,0.7);background:rgba(0,183,255,0.18);font-weight:600;">Show Recommended Items</button><button class="diag-btn" data-step="__STEP__" data-outcome="action" data-action="view_water_guides" data-part="" data-critical="false" onclick="handleDiagBtn(this)">View Water Care Guides</button><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button></div>';
+          break;
+
+        case 'water_foamy':
+          responseMsg = [
+            "Foamy water is usually caused by soaps, lotions, low-quality chemicals, or old water with high dissolved solids. Here's what to do:",
+            "",
+            "• Close all air control valves — if foam reduces, it's chemistry-related",
+            "• Add a defoamer — spa-specific defoamer knocks foam down quickly (temporary fix, not a cure)",
+            "• Shock the water — a good shock dose breaks down the organic compounds causing foam",
+            "• Check sanitizer levels — low sanitizer allows foam-causing buildup",
+            "• If foam persists — the water may have too many dissolved solids; a full drain and refill is the most reliable fix",
+            "* Draining, rinsing, and refilling with fresh water is always an acceptable alternative, particularly for water older than four months or heavily compromised clarity.",
+            "",
+            "Some [MANUAL_LINK] recommend specific products — check yours for brand-specific guidance.",
+            "[HALF_BREAK]",
+            "⚠️ Safety: Always read product labels before handling chemicals. Never mix chemicals directly — add to water, not water to chemicals. Keep away from children and pets."
+          ].join("\n");
+          partCard = 'water treatment foamy';
+          stepResult.passed = true;
+          stepResult.possible = true;
+          advanceNow = false;
+          responseMsg += '\n\n<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="action" data-action="water_show_items_foamy" data-part="" data-critical="false" onclick="handleDiagBtn(this)" style="border-color:rgba(0,183,255,0.7);background:rgba(0,183,255,0.18);font-weight:600;">Show Recommended Items</button><button class="diag-btn" data-step="__STEP__" data-outcome="action" data-action="view_water_guides" data-part="" data-critical="false" onclick="handleDiagBtn(this)">View Water Care Guides</button><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button></div>';
+          break;
+
+        case 'water_show_items_cloudy':
+          responseMsg = null;
+          clientAction = 'openShopTabs:water-care';
+          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button><button class="diag-btn" data-step="__STEP__" data-outcome="action" data-action="water_treatment_ordered" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Order Placed — I\'ll treat first</button></div>';
+          advanceNow = false;
+          break;
+
+        case 'water_show_items_foamy':
+          responseMsg = null;
+          clientAction = 'openShopTabs:water-care';
+          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button><button class="diag-btn" data-step="__STEP__" data-outcome="action" data-action="water_treatment_ordered" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Order Placed — I\'ll treat first</button></div>';
+          advanceNow = false;
+          break;
+
+        case 'water_treatment_ready':
+          responseMsg = "Great — treat the water, run the pump for 4–6 hours, then retest. Once your levels look good, come back and we'll continue the diagnosis.";
+          advanceNow = false;
+          deadEndButtons = [
+            { l: 'Continue Diagnosis', o: 'pass', a: '' },
+            { l: 'View Water Care Guides', o: 'action', a: 'view_water_guides' },
+          ];
+          break;
+
+        case 'water_treatment_ordered':
+          responseMsg = "Got it — treat the water before continuing. Some upcoming diagnostic steps require clean water to get accurate results. Come back once your levels are balanced.";
+          advanceNow = false;
+          deadEndButtons = [
+            { l: 'Continue Diagnosis', o: 'pass', a: '' },
+            { l: 'View Water Care Guides', o: 'action', a: 'view_water_guides' },
+          ];
+          break;
+
+        case 'water_dirty':
+          responseMsg = "**Dirty water needs to be addressed before we can run certain tests accurately.** We strongly recommend sorting out the water issue first before continuing the diagnostic.";
+          stepResult.passed = false;
+          advanceNow = false;
+          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn spa-gate-pulse" style="border-color:rgba(0,183,255,0.7);background:rgba(0,183,255,0.18);font-weight:600;" data-step="__STEP__" data-outcome="action" data-action="water_dirty_clean" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Clean the water first</button></div>';
+          break;
+
+        case 'show_water_treatment':
+          // Legacy — redirect to cloudy handler
+          responseMsg = null;
+          advanceNow = false;
+          deadEndButtons = [
+            { l: 'Cloudy water', o: 'action', a: 'water_cloudy' },
+            { l: 'Foamy water', o: 'action', a: 'water_foamy' },
+          ];
+          break;
+
+        case 'view_water_guides':
+          responseMsg = null;
+          advanceNow = false;
+          break;
+
+        case 'top_up':
+          responseMsg = "Please top the water up to at least an inch above the skimmer opening now and let me know when it's done — I'll wait.";
+          stepResult.passed = false;
+          advanceNow = false;
+          partCardButtons = '<div class=\"diag-step-btns\" style=\"margin-top:10px;\"><button class=\"diag-btn\" data-step=\"__STEP__\" data-outcome=\"pass\" data-action=\"\" data-part=\"\" data-critical=\"false\" onclick=\"handleDiagBtn(this)\">Done, let\'s continue</button></div>';
+          break;
+
+        case 'filter_clean':
+          responseMsg = "Good — let\'s do a quick sanity check. Leave the filters out and run the spa. Does the error clear?";
+          advanceNow = false;
+          partCardButtons = '<div class=\"diag-step-btns\" style=\"margin-top:10px;\"><button class=\"diag-btn\" data-step=\"__STEP__\" data-outcome=\"action\" data-action=\"filter_clean_yes\" data-part=\"\" data-critical=\"false\" onclick=\"handleDiagBtn(this)\">Yes — error cleared</button><button class=\"diag-btn\" data-step=\"__STEP__\" data-outcome=\"action\" data-action=\"filter_clean_no\" data-part=\"\" data-critical=\"false\" onclick=\"handleDiagBtn(this)\">No — still showing</button></div>';
+          break;
+
+        case 'filter_clean_yes':
+          responseMsg = "Great news, we've found the problem. Even though they look clean, the filters seem to be restricting water flow. Please replace your filters to get your spa working properly. For your convenience, I've provided some recommendations below.\n\n⚠️ Never use your spa without filters — it can damage the pump and plumbing. Running without filters is for testing purposes only and only with clean water.";
+          stepResult.passed = false;
+          advanceNow = false;
+          partCard = 'filter';
+          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button></div>';
+          break;
+
+        case 'filter_clean_no':
+          responseMsg = "Good — filters are ruled out as the cause. Let's keep going.";
+          stepResult.passed = true;
+          advanceNow = true;
+          break;
+
+        case 'filter_dirty':
+          responseMsg = '"A little dirty" can still cause a big bottleneck. Even if they don\'t look completely filthy, microscopic debris, body oils, or mineral scaling can severely restrict water flow and cause an error.\n\nLet\'s perform a quick test to see if the filters are the true culprit.\n\n1. Turn off the power to your spa at the GFCI breaker.\n2. Remove the filter cartridge(s) completely from the skimmer well.\n3. Check the area to ensure no floating debris can get sucked into the plumbing.\n4. Turn the power back on and run the spa briefly without the filters.\n\nDoes the error clear up?';
+          advanceNow = false;
+          partCardButtons = '<div class=\"diag-step-btns\" style=\"margin-top:10px;\"><button class=\"diag-btn\" data-step=\"__STEP__\" data-outcome=\"action\" data-action=\"filter_dirty_yes\" data-part=\"\" data-critical=\"false\" onclick=\"handleDiagBtn(this)\">Yes — error cleared</button><button class=\"diag-btn\" data-step=\"__STEP__\" data-outcome=\"action\" data-action=\"filter_dirty_no\" data-part=\"\" data-critical=\"false\" onclick=\"handleDiagBtn(this)\">No — still showing</button></div>';
+          break;
+
+        case 'filter_dirty_yes':
+          responseMsg = `Perfect — we've found our culprit! If the spa runs fine without them, those filters are just a bit too restricted to let the water through. Even a "little dirty" can cause enough micro-resistance to trip a flow error.\n\nFilters are the first line of defense for your ${spaLabel}, protecting your pump and maintaining flow. Since yours are feeling a bit tired, you can either give them a deep chemical soak to clear out hidden oils and mineral buildup, or grab a fresh set to get back to soaking immediately.\n\nWhat sounds best to you?`;
+          stepResult.passed = false;
+          advanceNow = false;
+          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="action" data-action="suggest_filter_cleaning" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Clean them</button><button class="diag-btn" data-step="__STEP__" data-outcome="action" data-action="suggest_filter_replace" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Replace them</button></div>';
+          break;
+
+        case 'filter_dirty_no':
+          responseMsg = "Your filters are a little dirty and may be contributing to the issue — I've flagged them as a possible factor. It's worth cleaning or replacing them. What would you like to do?";
+          stepResult.passed = true;
+          stepResult.possible = true;
+          advanceNow = true;
+          break;
+
+        case 'filter_filthy':
+          responseMsg = "Filthy filters are almost certainly your issue. They need to be replaced before your spa will work properly.\n\n⚠️ Never use your spa without filters — it can damage the pump and plumbing. Running without filters is for testing purposes only and only with clean water.";
+          stepResult.passed = false;
+          advanceNow = false;
+          partCard = 'filter';
+          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button></div>';
+          break;
+
+        case 'filter_keep_testing':
+          responseMsg = "Got it — let's keep working through the checklist.";
+          stepResult.passed = false;
+          advanceNow = true;
+          break;
+
+        case 'suggest_filter_cleaning':
+          responseMsg = "Here are some filter cleaning products that can help restore flow:";
+          partCard = 'filter cleaning';
+          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button></div>';
+          advanceNow = false;
+          break;
+
+        case 'suggest_filter_replace':
+          responseMsg = "Here are replacement filter options for your spa:";
+          partCard = 'filter';
+          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button></div>';
+          advanceNow = false;
+          break;
+
+        case 'stop_diagnosis':
+          responseMsg = "Progress saved. Come back anytime if the issue returns or if you'd like to continue testing.";
+          stepResult.passed = true;
+          advanceNow = false;
+          deadEndButtons = [
+            { l: 'Continue testing', o: 'pass', a: '' },
+          ];
+          break;
+
+        case 'cant_find_inlet':
+          responseMsg = "The filter inlet is the opening where your filter(s) sit — typically a circular opening a few inches in diameter inside the filter compartment. If you don't feel any suction, make sure the spa jets are running — some spas won't draw water through the filter inlet until the jets are active. Check your [MANUAL_LINK] if you need help locating it, or upload a photo of the filter bay and I'll help you identify it.";
+          advanceNow = false;
+          deadEndButtons = [
+            { l: 'Found it — testing now', o: 'action', a: 'S3_found_inlet' },
+            { l: '📸 Upload a Photo', o: 'action', a: 'upload_filter_bay_photo' },
+            { l: "Check Owner's Manual", o: 'action', a: 'open_manual_finder' }
+          ];
+          break;
+
+        case 'S3_found_inlet':
+          // User found the inlet — render S3 buttons so they can report suction
+          responseMsg = "Great — now check the suction. A healthy spa will have a strong, noticeable pull at the inlet.";
+          advanceNow = false;
+          deadEndButtons = [
+            { l: 'Strong suction', o: 'pass', a: '' },
+            { l: 'Weak or no suction', o: 'possible', a: '' }
+          ];
+          break;
+
+        case 'open_manual_finder':
+          responseMsg = null;
+          advanceNow = false;
+          deadEndButtons = [{ l: 'Back to diagnosis', o: 'pass', a: '' }];
+          break;
+
+        case 'airlock_cleared':
+          responseMsg = "Great news — it looks like an airlock was the culprit! Trapped air was blocking the water flow and triggering the error.\n\nBefore you put your clean filters back in and retest, let's make sure air doesn't get trapped again:\n\n1. Submerge each filter fully in the spa water.\n2. Gently squeeze or shake them underwater to work out any trapped air bubbles.\n3. Reinstall them immediately while keeping them submerged.\n\nThis keeps the lines clear and prevents the error from coming back!";
+          stepResult.passed = true;
+          advanceNow = false;
+          deadEndButtons = [
+            { l: 'Done — spa is running fine!', o: 'pass', a: '' },
+            { l: 'Error returned', o: 'pass', a: '' },
+          ];
+          break;
+
+        case 'filter_confirmed':
+          responseMsg = "⚠️ Never run your spa without filters during normal use — it can damage the pump and plumbing. Running without filters is for testing purposes only and only with clean water.\n\nBefore reinstalling: submerge each filter completely in the spa water and gently squeeze it until no more air bubbles come out. Reinstall immediately while keeping it submerged — this prevents air from reintroducing into the system.\n\nDid the error return after reinstalling the filter?";
+          stepResult.passed = false;
+          stepResult.filterIssue = true;
+          advanceNow = false;
+          partCard = 'filter';
+          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Yes — error returned</button><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">No — spa is running fine!</button></div>';
+          break;
+
+        case 'valve_closed':
+          responseMsg = "Open it fully counterclockwise, then check if the error clears.";
+          advanceNow = false;
+          deadEndButtons = [
+            { l: 'Error cleared!', o: 'pass', a: '' },
+            { l: 'Error still showing', o: 'pass', a: '' },
+          ];
+          break;
+
+        case 'heater_no_indicator':
+          responseMsg = "Before we go further — did you set the target temperature above the current water temperature shown on the panel? The heater won't fire unless the set temp is higher than the current reading.";
+          advanceNow = false;
+          deadEndButtons = [
+            { l: 'Yes — set it higher, still no heat', o: 'pass', a: '' },
+            { l: 'No — let me try that now', o: 'action', a: 'heater_temp_retry' }
+          ];
+          break;
+
+        case 'heat_mode_wrong':
+          responseMsg = "That's likely your culprit. In Economy or Sleep mode, the spa only heats during its scheduled filter cycles — it won't maintain your set temperature. Switch it to Standard or Ready mode, then raise the target temperature above the current water temp and wait a few minutes to see if the heater fires.";
+          stepResult.passed = false;
+          stepResult.possible = true;
+          advanceNow = true;
+          break;
+
+        case 'heat_mode_unsure':
+          responseMsg = "On most spas, press the Mode button (sometimes labeled Temp or Set) to cycle through modes. Look for Standard, Ready, or ST on the display — that's the mode you want. Economy (Econ), Sleep (SLP), and Rest modes will prevent continuous heating. If you can't find it, check your manual via the Manual button.";
+          advanceNow = false;
+          deadEndButtons = [
+            { l: "Found it — now in Standard/Ready", o: 'pass', a: '' },
+            { l: "Still not sure", o: 'skip', a: '' },
+          ];
+          break;
+
+        case 'heat_airlock_cleared':
+          responseMsg = "Great news — an air lock was preventing water from circulating properly, which stopped the heater from firing. Before you put your clean filters back in and retest, let's make sure air doesn't get trapped again:\n\n1. Submerge each filter fully in the spa water.\n2. Gently squeeze or shake them underwater to work out any trapped air bubbles.\n3. Reinstall them immediately while keeping them submerged.\n\nThis keeps the lines clear and prevents the issue from coming back!";
+          stepResult.passed = true;
+          advanceNow = false;
+          break;
+
+        case 'heat_hilimit_reset':
+          responseMsg = "Good — press it firmly until it clicks. The hi-limit tripped because the spa detected (or thought it detected) an overheating condition. After resetting, raise the target temperature above the current water temp and see if the heater fires. If the hi-limit trips again shortly after, the sensor itself may be faulty.";
+          stepResult.passed = true;
+          stepResult.possible = true;
+          advanceNow = true;
+          break;
+
+        case 'heat_multimeter_test':
+          responseMsg = "Set your multimeter to resistance (Ω). Turn off the breaker and disconnect the heater element leads from the control board terminals. Test across the two element terminals — a healthy 5.5kW element should read between 9–12Ω. Also test each terminal to ground (the stainless steel heater tube) — you should read infinite (OL). What do you get?";
+          advanceNow = false;
+          deadEndButtons = [
+            { l: 'Reads 9–12Ω and OL to ground — element OK', o: 'pass', a: '' },
+            { l: 'Out of range or shorts to ground — failed element', o: 'action', a: 'fail_heater_element' },
+          ];
+          break;
+
+        case 'heat_visual_element_check':
+          responseMsg = "Look at the heater element for any visible corrosion, burn marks, or physical damage on the element body or terminals. Also check the wires connecting the board to the element — look for any melted insulation, discoloration, or charring. What do you see?";
+          advanceNow = false;
+          deadEndButtons = [
+            { l: 'Everything looks clean', o: 'pass', a: '' },
+            { l: 'Found burn marks or damage', o: 'action', a: 'fail_heater_element' },
+          ];
+          break;
+
+        // ── Jets actions ──────────────────────────────────────────
+        case 'jets_scope_single':
+          responseMsg = "Got it -- a single jet with low pressure usually means a closed or clogged jet face, or a stuck diverter routing flow away from that nozzle. We'll check both. Let's start with the basics first.";
+          stepResult.passed = true;
+          advanceNow = true;
+          break;
+
+        case 'jets_scope_zone':
+          responseMsg = "Got it -- a full zone with low pressure is often a diverter valve stuck in the middle position, starving that whole seat. We'll check that shortly. Let's start with the basics first.";
+          stepResult.passed = true;
+          advanceNow = true;
+          break;
+
+        case 'jets_face_fixed':
+          deadEndButtons = [{ l: 'Yes — jets working now!', o: 'pass', a: '' }, { l: 'Still having issues', o: 'pass', a: '' }];
+          if (!briefMode) { responseMsg = "Closed jet faces are a surprisingly common cause — calcium buildup and grit lock them in place over time. Give them a good clean while you have them open. If everything is working now, you're all set! Would you like to keep testing to make sure nothing else is contributing?"; } else { briefOmitted = "Closed jet faces are a surprisingly common cause — calcium buildup and grit lock them in place over time. Give them a good clean while you have them open. If everything is working now, you're all set! Would you like to keep testing to make sure nothing else is contributing?"; }
+          stepResult.passed = true;
+          advanceNow = false;
+          break;
+
+        case 'jets_diverter_fixed':
+          deadEndButtons = [{ l: "Jets working now!", o: 'pass', a: '' }, { l: 'Still having issues', o: 'pass', a: '' }];
+          if (!briefMode) { responseMsg = "A stuck diverter valve cuts off water to an entire zone of jets — easy fix once you find it. If everything is working now, you're all set! Would you like to keep testing to make sure nothing else is contributing?"; } else { briefOmitted = "A stuck diverter valve cuts off water to an entire zone of jets — easy fix once you find it. If everything is working now, you're all set! Would you like to keep testing to make sure nothing else is contributing?"; }
+          stepResult.passed = true;
+          advanceNow = false;
+          break;
+
+        case 'jets_airlock_cleared':
+          deadEndButtons = [{ l: 'Jets working now!', o: 'pass', a: '' }, { l: 'Still having issues', o: 'pass', a: '' }];
+          responseMsg = "Great news — an air lock was preventing the pump from moving water. Before you put your clean filters back in and retest, let's make sure air doesn't get trapped again:\n\n1. Submerge each filter fully in the spa water.\n2. Gently squeeze or shake them underwater to work out any trapped air bubbles.\n3. Reinstall them immediately while keeping them submerged.\n\nThis keeps the lines clear and prevents the issue from coming back!";
+          stepResult.passed = true;
+          advanceNow = false;
+          break;
+
+        case 'jets_sound_silent':
+          if (!briefMode) { responseMsg = "Complete silence when pressing the Jets button usually points to one of three things: a blown fuse on the control board for that pump, a bad relay on the control board, or a completely dead motor winding. Let's check the fuses first — it's the easiest fix."; } else { briefOmitted = "Complete silence when pressing the Jets button usually points to one of three things: a blown fuse on the control board for that pump, a bad relay on the control board, or a completely dead motor winding. Let's check the fuses first — it's the easiest fix."; }
+          stepResult.passed = true;
+          stepResult.possible = true;
+          advanceNow = true;
+          nextStep = 'J10';
+          break;
+
+        case 'jets_sound_hum':
+          if (!briefMode) { responseMsg = "A loud hum without the jets spinning up means the motor is getting power but can't turn. The two most likely causes are a blown start capacitor (the motor tries to start but can't get going) or a physically seized/frozen shaft. Let's check the shaft first."; } else { briefOmitted = "A loud hum without the jets spinning up means the motor is getting power but can't turn. The two most likely causes are a blown start capacitor (the motor tries to start but can't get going) or a physically seized/frozen shaft. Let's check the shaft first."; }
+          stepResult.passed = true;
+          stepResult.possible = true;
+          advanceNow = true;
+          nextStep = 'J_SH';
+          break;
+
+        case 'jets_sound_squeal':
+          if (!briefMode) { responseMsg = "A screech or squeal when the jets run is the sound of worn or failing motor bearings. The jets may still work for now, but the pump is on its way out — it needs a rebuild or replacement soon. I've flagged this as a likely pump issue."; } else { briefOmitted = "A screech or squeal when the jets run is the sound of worn or failing motor bearings. The jets may still work for now, but the pump is on its way out — it needs a rebuild or replacement soon. I've flagged this as a likely pump issue."; }
+          stepResult.passed = true;
+          stepResult.possible = true;
+          advanceNow = true;
+          nextStep = 'J13';
+          break;
+
+        case 'jets_shaft_locked':
+          responseMsg = "A locked shaft means something is either jammed in the impeller housing or the motor bearings have seized. Do not try to force the shaft — further damage could result. This pump will need to be removed and inspected. The impeller housing can be disassembled to check for debris without replacing the full pump.";
+          stepResult.passed = false;
+          advanceNow = false;
+          deadEndButtons = [{ l: 'Show pump replacement options', o: 'action', a: 'fail_jet_pump' }];
+          break;
+
+        case 'jets_voltage_test':
+          responseMsg = "⚠️ DANGER — 240V PRESENT. This test requires the breaker ON with live high voltage exposed inside the equipment bay. Only proceed if you are completely comfortable working around live electrical panels. NEVER touch any terminals, wires, or components other than the multimeter probes.\n\nWith the breaker ON and the Jets button pressed to High: carefully place your multimeter probes on the pump's terminal plug on the circuit board. You should read 240V (or 120V depending on your setup).\n\n- Board outputs correct voltage but pump doesn't run → the pump or its cord is the problem → proceed to pump replacement\n- Board outputs 0V when button pressed → the board relay is bad → proceed to control board";
+          advanceNow = false;
+          deadEndButtons = [
+            { l: '240V confirmed — pump or cord issue', o: 'action', a: 'fail_jet_pump' },
+            { l: '0V — board relay issue', o: 'action', a: 'fail_control_board' },
+            { l: 'Not comfortable with live voltage — skip', o: 'skip', a: '' },
+          ];
+          break;
+
+        case 'jets_no_multimeter':
+          responseMsg = "Without a multimeter we can't confirm whether the board is sending power. Based on everything we've tested, the most likely cause is either the jet pump itself or the control board relay. We'll check the pump wiring visually first.";
+          advanceNow = true;
+          break;
+
+        case 'identify_pump':
+          responseMsg = "Upload a clear photo of your pump label (Premium feature) and I'll help identify the exact model and find replacement options.";
+          advanceNow = false;
+          deadEndButtons = [
+            { l: 'Continue diagnosis', o: 'pass', a: '' },
+          ];
+          break;
+
+        case 'temps_mismatch':
+          responseMsg = "A mismatch between the displayed temperature and actual water temperature is a sign of a faulty or uncalibrated temperature sensor. I've flagged the temp sensor as a possible issue — we'll dig into it in the next step.";
+          stepResult.passed = true;
+          stepResult.possible = true;
+          advanceNow = true;
+          // Pre-flag S11 as possible in diagState
+          if (state.steps) {
+            const s11 = state.steps.find(s => s.id === 'S11');
+            if (!s11) state.steps.push({ id: 'S11', label: 'Temp sensor', passed: true, possible: true, preflagged: true });
+            else { s11.possible = true; s11.preflagged = true; }
+          }
+          break;
+
+        case 'circ_flow_check':
+          responseMsg = "Good — the pump is energized. The circ pump pushes water through the heater and then to the flow switch/sensor downstream. The sensor must detect sufficient flow to function properly — if flow is insufficient, the circuit won't close and the spa fails.\n\nLook for the flow indicator downstream after the heater. You should be able to visually see the paddle of the flow sensor making contact with the post. Is water moving through?";
+          advanceNow = false;
+          deadEndButtons = [
+            { l: 'Yes — water is moving', o: 'pass', a: '' },
+            { l: 'No — little or no flow', o: 'pass', a: '' },
+          ];
+          break;
+
+        case 'cant_find_flow_switch':
+          responseMsg = "No problem — we'll cover the flow switch in detail in the next step.";
+          stepResult.passed = true;
+          stepResult.skipped = true;
+          advanceNow = true;
+          break;
+
+        case 'unusual_finding':
+          responseMsg = "Describe what you see and I'll help identify it. Or upload a photo for a closer look (Premium).";
+          advanceNow = false;
+          deadEndButtons = [
+            { l: 'Continue diagnosis', o: 'pass', a: '' },
+          ];
+          break;
+
+        case 'multimeter_test':
+          responseMsg = "Set your multimeter to resistance (Ω). Disconnect the heater element leads. Test across the two terminals — you should read between 8-16 Ω for a working element. Also test each terminal to ground — you should read infinite (OL). What do you get?";
+          advanceNow = false;
+          deadEndButtons = [
+            { l: 'Reads 8–16Ω and OL to ground — element OK', o: 'pass', a: '' },
+            { l: 'Out of range or shorts to ground — failed element', o: 'action', a: 'fail_heater_element' },
+          ];
+          break;
+
+        case 'visual_element_check':
+          responseMsg = "Look at the heater element for any visible corrosion, burn marks, or damage on the element body or terminals. What do you see?";
+          advanceNow = false;
+          deadEndButtons = [
+            { l: 'Everything looks clean', o: 'pass', a: '' },
+            { l: 'Found burn marks or corrosion', o: 'action', a: 'fail_heater_element' },
+          ];
+          break;
+
+        case 'suggest_multimeter':
+          responseMsg = "A multimeter is a handy tool to have for spa diagnosis and general home use. Here are some options:";
+          partCard = 'multimeter';
+          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue without multimeter</button></div>';
+          advanceNow = false;
+          break;
+
+        case 'identify_board':
+          responseMsg = "Upload a clear photo of your control board (Premium feature) and I'll help identify the exact model.";
+          advanceNow = false;
+          deadEndButtons = [
+            { l: 'Continue diagnosis', o: 'pass', a: '' },
+          ];
+          break;
+
+        // ── All noise action branches ──
+        case 'noise_bay':
+          responseMsg = "Good — let's focus on the equipment bay. Listen carefully as you open the cabinet.";
+          advanceNow = true;
+          stepResult.passed = true;
+          break;
+
+        case 'noise_audio':
+          responseMsg = "Got it — let's isolate the audio system. We'll skip the mechanical steps and go straight to audio diagnostics.";
+          advanceNow = true;
+          stepResult.passed = true;
+          break;
+
+        case 'noise_unsure':
+          responseMsg = "No problem — we'll figure it out. Let's start by testing whether the noise is coming from the spa itself.";
+          advanceNow = true;
+          stepResult.passed = true;
+          break;
+
+        case 'noise_constant':
+          if (state) state.noiseWhen = 'constant';
+          responseMsg = "A constant noise that never stops points to something always running — likely the circulation pump or a stuck component.";
+          advanceNow = true;
+          stepResult.passed = true;
+          break;
+
+        case 'noise_jets':
+          if (state) state.noiseWhen = 'jets';
+          responseMsg = "Noise only when jets run points to the jet pump, air intake, or a loose fitting in the plumbing loop.";
+          advanceNow = true;
+          stepResult.passed = true;
+          break;
+
+        case 'noise_heat':
+          if (state) state.noiseWhen = 'heat';
+          responseMsg = "Noise only when heating points to the heater element, circulation pump, or scale buildup on the heating tube. Listen specifically for sizzling or popping — that points to scale buildup on the heater element.";
+          advanceNow = true;
+          stepResult.passed = true;
+          break;
+
+        case 'noise_audio_only':
+          if (state) state.noiseWhen = 'audio';
+          responseMsg = "Noted — let's go straight to the audio diagnostics and skip the mechanical checks.";
+          advanceNow = true;
+          stepResult.passed = true;
+          break;
+
+        case 'noise_external_end':
+          responseMsg = "The noise continued after the breaker was off — it's coming from outside the spa. Check nearby equipment, HVAC vents, or plumbing in the wall.";
+          advanceNow = false;
+          deadEndButtons = [{ l: "Understood — I'll check externally", o: 'pass', a: '' }];
+          break;
+
+        case 'noise_grinding':
+          responseMsg = "Grinding or screeching points to a failing pump bearing, a worn shaft seal, or debris in the impeller.";
+          advanceNow = true;
+          stepResult.passed = true;
+          break;
+
+        case 'noise_humming':
+          responseMsg = "A loud hum without mechanical scraping usually means the pump motor is energized but the impeller isn't turning — seized bearing or locked shaft.";
+          advanceNow = true;
+          stepResult.passed = true;
+          break;
+
+        case 'noise_cabinet_resonance':
+          responseMsg = "If the noise changes with panel button presses, the cabinet panels may be resonating with pump vibration. Check that all cabinet screws and clips are tight.";
+          advanceNow = true;
+          stepResult.passed = true;
+          break;
+
+        case 'noise_cavitation':
+          responseMsg = "The filter was causing cavitation — restricted flow was creating the noise. Clean or replace the filter and the noise should resolve.";
+          advanceNow = false;
+          deadEndButtons = [{ l: 'Noise resolved — great!', o: 'pass', a: '' }, { l: 'Still noisy after filter removal', o: 'pass', a: '' }];
+          break;
+
+        case 'noise_impeller_cleared':
+          responseMsg = "Debris in the impeller is a very common cause of grinding noise. Run the spa briefly and check if the noise has cleared.";
+          advanceNow = false;
+          deadEndButtons = [{ l: 'Noise gone — fixed!', o: 'pass', a: '' }, { l: 'Still noisy', o: 'pass', a: '' }];
+          break;
+
+        case 'noise_error_code':
+          responseMsg = "An error code with beeping usually means the control board is alerting you to a fault. Note the code and use the Error Code diagnostic path for a targeted diagnosis.";
+          advanceNow = false;
+          deadEndButtons = [{ l: "Got it — I'll check the error code", o: 'pass', a: '' }];
+          break;
+
+        case 'noise_external_check':
+          responseMsg = "No error code and the noise is coming from the panel area — check that all topside panel connectors are fully seated and that the panel itself isn't vibrating against the spa shell.";
+          advanceNow = false;
+          deadEndButtons = [{ l: 'Connectors look good', o: 'pass', a: '' }, { l: "Found a loose connector", o: 'pass', a: '' }];
+          break;
+
+        case 'noise_fm_interference':
+          responseMsg = "FM interference is caused by the spa's electrical system affecting the radio receiver. This is common near pump motors. Try an external antenna or switch to Bluetooth-only input.";
+          advanceNow = true;
+          stepResult.passed = true;
+          break;
+
+        case 'noise_single_speaker':
+          responseMsg = "A single bad speaker is usually a failed driver or a corroded connector at that speaker. Swap the speaker or check the wiring harness at that location.";
+          advanceNow = false;
+          deadEndButtons = [{ l: 'Show me speaker options', o: 'pass', a: '' }];
+          break;
+
+        case 'noise_all_speakers':
+          responseMsg = "All speakers producing the same noise points to the amplifier or audio controller rather than individual speakers.";
+          advanceNow = false;
+          deadEndButtons = [{ l: 'Show me amplifier options', o: 'pass', a: '' }];
+          break;
+
+        case 'noise_audio_static':
+          responseMsg = "Audio static or hissing from the speakers is usually the amplifier, a grounding issue, or water ingress in the speaker housing.";
+          advanceNow = true;
+          stepResult.passed = true;
+          break;
+
+        case 'noise_beeping':
+          responseMsg = "Beeping from the panel typically means an active error code or a sensor alert. Let's check the panel display.";
+          advanceNow = true;
+          stepResult.passed = true;
+          break;
+
+        // ── New noise handlers ──
+        case 'noise_confirmed_spa':
+          // Breaker confirmed noise is spa-generated — skip N_WHEN, go straight to N_TYPE
+          responseMsg = "Confirmed — the noise is coming from the spa. Let's identify the sound type.";
+          advanceNow = false;
+          // Jump directly to N_TYPE step
+          if (state) {
+            state.currentStep = 'N_TYPE';
+            setDiagState(clientId, state);
+          }
+          nextStep = DIAG_STEPS['N_TYPE'] ? {
+            id: 'N_TYPE',
+            label: DIAG_STEPS['N_TYPE'].label,
+            question: DIAG_STEPS['N_TYPE'].question || DIAG_STEPS['N_TYPE'].questionFn?.(state) || '',
+            buttons: DIAG_STEPS['N_TYPE'].buttons,
+            fire: null,
+          } : null;
+          advanceNow = true;
+          break;
+
+        case 'noise_sizzle':
+          responseMsg = "Sizzling, popping or hissing from the heater area is typically caused by scale buildup on the heating element or critically low water flow. Scale traps water underneath a calcium crust, causing it to flash-boil. It can also indicate a failing element that needs replacement.\n\nTurn off the spa and let it cool before opening the equipment bay.";
+          advanceNow = true;
+          stepResult.passed = true;
+          break;
+
+        case 'noise_chattering':
+          responseMsg = "Rapid chattering or clicking from the control pack is usually a failing contactor or relay, or low incoming voltage. In older spas, a mechanical contactor's electromagnetic coil weakens over time and chatters when trying to close. On modern boards, a failing relay makes a lighter clicking sound.\n\nFirst check that the incoming voltage at the breaker is correct (240V typical). If voltage is fine, the relay or contactor needs replacement.";
+          advanceNow = true;
+          stepResult.passed = true;
+          break;
+
+        case 'noise_hiss_intake':
+          responseMsg = "A sharp hissing near the pump intake is either a loose plumbing union drawing air into the system, or normal operation of an ozone Venturi injector.\n\nCheck: if the hiss is at a small injector valve attached to a thin hose near the pump — that's the Venturi effect drawing ozone gas in, and it's normal. If the hiss is at a large threaded union fitting — hand-tighten it; a loose union can draw air without visibly leaking water yet.";
+          advanceNow = true;
+          stepResult.passed = true;
+          break;
+
+        case 'noise_rattling':
+          responseMsg = "Rattling or vibrating that occurs when pumps run on high is usually loose plumbing supports or hardened vibration-isolation pads under the pump mounts.\n\nCheck: tighten the pump mount bolts. Look for areas where PVC pipes touch the frame or cabinet walls — cushion them with foam insulation or rubber spacers. Check that all cabinet panels are properly seated and clipped.";
+          advanceNow = true;
+          stepResult.passed = true;
+          break;
+
+        case 'noise_heater_scale':
+          responseMsg = "Scale buildup on the heater element is causing the sizzling or popping. Calcium deposits coat the element and trap water underneath, which flash-boils when the heater fires.\n\nThe fix: chemically descale the spa plumbing and element using a spa descaler product. In severe cases the element may need replacement. Also investigate water flow restrictions (dirty filters, failing low-speed pump) that could be cooking the element.";
+          stepResult.passed = false;
+          advanceNow = false;
+          deadEndButtons = [
+            { l: 'Show descaler options', o: 'action', a: 'show_descaler' },
+            { l: 'Continue diagnosis', o: 'pass', a: '' },
+          ];
+          break;
+
+        case 'show_descaler':
+          responseMsg = "Here are spa descaler options:";
+          partCard = 'spa descaler';
+          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button></div>';
+          advanceNow = false;
+          break;
+
+        // ── FLAG: Default — unhandled action branch ──
+        default:
+          responseMsg = `⚑ Undefined sequence — flagged for review.
+  \`FLAG: unhandled-action → ${action} → ${stepId} → ${state.topic || 'unknown'}\`
+  _If you're testing, please send this code to support@spafix.app_`;
+          advanceNow = false;
+          break;
       }
-      break;
-    case 'skip_confirmed':
-      stepResult.passed = false;
-      stepResult.skipped = true;
-      advanceNow = true;
-      responseMsg = null;
-      break;
-
-    case 'action':
-      advanceNow = false; // action steps handle advance themselves
-      break;
-  }
-
-  // Handle special actions
-  if (outcome === 'action') {
-    switch(action) {
-      case 'water_continue_cloudy':
-        responseMsg = "⚠️ Understood — we'll continue, but the cloudy or foamy water still needs to be addressed. Some upcoming tests require running without filters, which we only recommend with clean water. Proceed with caution.";
-        stepResult.passed = true;
-        stepResult.possible = true;
-        advanceNow = true;
-        break;
-
-      case 'water_continue_dirty':
-        responseMsg = "⚠️ Understood — we'll continue, but the dirty water still needs to be addressed. Some upcoming tests require running without filters, which we only recommend with clean water. Proceed with caution.";
-        stepResult.passed = true;
-        stepResult.possible = true;
-        advanceNow = true;
-        break;
-
-      case 'water_dirty_clean':
-        responseMsg = [
-          "**Dealing with Visibly Dirty Water**",
-          "Recommended Action Plan: The Fresh Start",
-          "",
-          "* **Drain and wipe down** -- Safely drain the spa and wipe down the shell to remove ring lines, grit, or biofilm residue.",
-          "* **Clean or replace filters** -- Visibly dirty water heavily clogs filters. Rinse cartridges thoroughly with a hose or replace if worn.",
-          "* **Fresh refill** -- Refill the spa with clean water (use a hose pre-filter if you have high mineral content).",
-          "* **Balance the baseline** -- Test fresh water and adjust pH (7.2-7.8) and total alkalinity (80-120 ppm).",
-          "* **Sanitize and shock** -- Apply primary sanitizer and a startup shock dose.",
-          "* **Run filtration** -- Circulate for at least 4-6 hours to mix chemicals and bring to temperature.",
-          "",
-          "#When water is visibly dirty with heavy grit, leaves, or severe organic buildup, attempting to fix it with chemicals alone is often a losing battle. Heavy debris can rapidly clog filters, strain the circulation pump, and completely consume your sanitizer, leaving the water unsafe. For heavily compromised water, a complete drain and refill is highly recommended to protect your equipment and ensure a clean, healthy soak.#",
-          "",
-          "[SHOP_LINK:supplies:🔧 Recommended Supplies]",
-          "",
-          "[HALF_BREAK]",
-          "⚠️ Safety First: Always read product labels before handling spa chemicals. Never mix chemicals together directly -- always add chemicals to water, never water to chemicals. Keep all products safely stored away from children and pets.",
-        ].join("\n");
-        partCard = 'water dirty';
-        advanceNow = false;
-        partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">I have cleaned the water — Continue Diagnosis</button></div>';
-        break;
-
-      case 'water_cloudy':
-        responseMsg = [
-          "**Cloudy water is usually caused by pH imbalance, low sanitizer, high calcium, or organic waste buildup.**\n\nHere's what to do:",
-          "",
-          "• Test your water — check pH (target 7.2–7.8), alkalinity (80–120 ppm), and sanitizer levels first",
-          "• Adjust pH if out of range — use pH Up or pH Down as needed",
-          "• Shock the water — add a non-chlorine or chlorine shock dose based on your sanitizer system",
-          "• Add a clarifier — spa clarifier binds fine particles so the filter can catch them",
-          "• Run filtration — keep the pump running for at least 4–6 hours after treatment",
-          "• Retest — check levels again before using the spa",
-          "* Draining, rinsing, and refilling with fresh water is always an acceptable alternative, particularly for water older than four months or heavily compromised clarity.",
-          "",
-          "Some [MANUAL_LINK] recommend specific products — check yours for brand-specific guidance.",
-          "[HALF_BREAK]",
-          "⚠️ Safety: Always read product labels before handling chemicals. Never mix chemicals directly — add to water, not water to chemicals. Keep away from children and pets."
-        ].join("\n");
-        partCard = 'water treatment cloudy';
-        stepResult.passed = true;
-        stepResult.possible = true;
-        advanceNow = false;
-        responseMsg += '\n\n<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="action" data-action="water_show_items_cloudy" data-part="" data-critical="false" onclick="handleDiagBtn(this)" style="border-color:rgba(0,183,255,0.7);background:rgba(0,183,255,0.18);font-weight:600;">Show Recommended Items</button><button class="diag-btn" data-step="__STEP__" data-outcome="action" data-action="view_water_guides" data-part="" data-critical="false" onclick="handleDiagBtn(this)">View Water Care Guides</button><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button></div>';
-        break;
-
-      case 'water_foamy':
-        responseMsg = [
-          "Foamy water is usually caused by soaps, lotions, low-quality chemicals, or old water with high dissolved solids. Here's what to do:",
-          "",
-          "• Close all air control valves — if foam reduces, it's chemistry-related",
-          "• Add a defoamer — spa-specific defoamer knocks foam down quickly (temporary fix, not a cure)",
-          "• Shock the water — a good shock dose breaks down the organic compounds causing foam",
-          "• Check sanitizer levels — low sanitizer allows foam-causing buildup",
-          "• If foam persists — the water may have too many dissolved solids; a full drain and refill is the most reliable fix",
-          "* Draining, rinsing, and refilling with fresh water is always an acceptable alternative, particularly for water older than four months or heavily compromised clarity.",
-          "",
-          "Some [MANUAL_LINK] recommend specific products — check yours for brand-specific guidance.",
-          "[HALF_BREAK]",
-          "⚠️ Safety: Always read product labels before handling chemicals. Never mix chemicals directly — add to water, not water to chemicals. Keep away from children and pets."
-        ].join("\n");
-        partCard = 'water treatment foamy';
-        stepResult.passed = true;
-        stepResult.possible = true;
-        advanceNow = false;
-        responseMsg += '\n\n<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="action" data-action="water_show_items_foamy" data-part="" data-critical="false" onclick="handleDiagBtn(this)" style="border-color:rgba(0,183,255,0.7);background:rgba(0,183,255,0.18);font-weight:600;">Show Recommended Items</button><button class="diag-btn" data-step="__STEP__" data-outcome="action" data-action="view_water_guides" data-part="" data-critical="false" onclick="handleDiagBtn(this)">View Water Care Guides</button><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button></div>';
-        break;
-
-      case 'water_show_items_cloudy':
-        responseMsg = null;
-        clientAction = 'openShopTabs:water-care';
-        partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button><button class="diag-btn" data-step="__STEP__" data-outcome="action" data-action="water_treatment_ordered" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Order Placed — I\'ll treat first</button></div>';
-        advanceNow = false;
-        break;
-
-      case 'water_show_items_foamy':
-        responseMsg = null;
-        clientAction = 'openShopTabs:water-care';
-        partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button><button class="diag-btn" data-step="__STEP__" data-outcome="action" data-action="water_treatment_ordered" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Order Placed — I\'ll treat first</button></div>';
-        advanceNow = false;
-        break;
-
-      case 'water_treatment_ready':
-        responseMsg = "Great — treat the water, run the pump for 4–6 hours, then retest. Once your levels look good, come back and we'll continue the diagnosis.";
-        advanceNow = false;
-        deadEndButtons = [
-          { l: 'Continue Diagnosis', o: 'pass', a: '' },
-          { l: 'View Water Care Guides', o: 'action', a: 'view_water_guides' },
-        ];
-        break;
-
-      case 'water_treatment_ordered':
-        responseMsg = "Got it — treat the water before continuing. Some upcoming diagnostic steps require clean water to get accurate results. Come back once your levels are balanced.";
-        advanceNow = false;
-        deadEndButtons = [
-          { l: 'Continue Diagnosis', o: 'pass', a: '' },
-          { l: 'View Water Care Guides', o: 'action', a: 'view_water_guides' },
-        ];
-        break;
-
-      case 'water_dirty':
-        responseMsg = "**Dirty water needs to be addressed before we can run certain tests accurately.** We strongly recommend sorting out the water issue first before continuing the diagnostic.";
-        stepResult.passed = false;
-        advanceNow = false;
-        partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn spa-gate-pulse" style="border-color:rgba(0,183,255,0.7);background:rgba(0,183,255,0.18);font-weight:600;" data-step="__STEP__" data-outcome="action" data-action="water_dirty_clean" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Clean the water first</button></div>';
-        break;
-
-      case 'show_water_treatment':
-        // Legacy — redirect to cloudy handler
-        responseMsg = null;
-        advanceNow = false;
-        deadEndButtons = [
-          { l: 'Cloudy water', o: 'action', a: 'water_cloudy' },
-          { l: 'Foamy water', o: 'action', a: 'water_foamy' },
-        ];
-        break;
-
-      case 'view_water_guides':
-        responseMsg = null;
-        advanceNow = false;
-        break;
-
-      case 'top_up':
-        responseMsg = "Please top the water up to at least an inch above the skimmer opening now and let me know when it's done — I'll wait.";
-        stepResult.passed = false;
-        advanceNow = false;
-        partCardButtons = '<div class=\"diag-step-btns\" style=\"margin-top:10px;\"><button class=\"diag-btn\" data-step=\"__STEP__\" data-outcome=\"pass\" data-action=\"\" data-part=\"\" data-critical=\"false\" onclick=\"handleDiagBtn(this)\">Done, let\'s continue</button></div>';
-        break;
-
-      case 'filter_clean':
-        responseMsg = "Good — let\'s do a quick sanity check. Leave the filters out and run the spa. Does the error clear?";
-        advanceNow = false;
-        partCardButtons = '<div class=\"diag-step-btns\" style=\"margin-top:10px;\"><button class=\"diag-btn\" data-step=\"__STEP__\" data-outcome=\"action\" data-action=\"filter_clean_yes\" data-part=\"\" data-critical=\"false\" onclick=\"handleDiagBtn(this)\">Yes — error cleared</button><button class=\"diag-btn\" data-step=\"__STEP__\" data-outcome=\"action\" data-action=\"filter_clean_no\" data-part=\"\" data-critical=\"false\" onclick=\"handleDiagBtn(this)\">No — still showing</button></div>';
-        break;
-
-      case 'filter_clean_yes':
-        responseMsg = "Great news, we've found the problem. Even though they look clean, the filters seem to be restricting water flow. Please replace your filters to get your spa working properly. For your convenience, I've provided some recommendations below.\n\n⚠️ Never use your spa without filters — it can damage the pump and plumbing. Running without filters is for testing purposes only and only with clean water.";
-        stepResult.passed = false;
-        advanceNow = false;
-        partCard = 'filter';
-        partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button></div>';
-        break;
-
-      case 'filter_clean_no':
-        responseMsg = "Good — filters are ruled out as the cause. Let's keep going.";
-        stepResult.passed = true;
-        advanceNow = true;
-        break;
-
-      case 'filter_dirty':
-        responseMsg = '"A little dirty" can still cause a big bottleneck. Even if they don\'t look completely filthy, microscopic debris, body oils, or mineral scaling can severely restrict water flow and cause an error.\n\nLet\'s perform a quick test to see if the filters are the true culprit.\n\n1. Turn off the power to your spa at the GFCI breaker.\n2. Remove the filter cartridge(s) completely from the skimmer well.\n3. Check the area to ensure no floating debris can get sucked into the plumbing.\n4. Turn the power back on and run the spa briefly without the filters.\n\nDoes the error clear up?';
-        advanceNow = false;
-        partCardButtons = '<div class=\"diag-step-btns\" style=\"margin-top:10px;\"><button class=\"diag-btn\" data-step=\"__STEP__\" data-outcome=\"action\" data-action=\"filter_dirty_yes\" data-part=\"\" data-critical=\"false\" onclick=\"handleDiagBtn(this)\">Yes — error cleared</button><button class=\"diag-btn\" data-step=\"__STEP__\" data-outcome=\"action\" data-action=\"filter_dirty_no\" data-part=\"\" data-critical=\"false\" onclick=\"handleDiagBtn(this)\">No — still showing</button></div>';
-        break;
-
-      case 'filter_dirty_yes':
-        responseMsg = `Perfect — we've found our culprit! If the spa runs fine without them, those filters are just a bit too restricted to let the water through. Even a "little dirty" can cause enough micro-resistance to trip a flow error.\n\nFilters are the first line of defense for your ${spaLabel}, protecting your pump and maintaining flow. Since yours are feeling a bit tired, you can either give them a deep chemical soak to clear out hidden oils and mineral buildup, or grab a fresh set to get back to soaking immediately.\n\nWhat sounds best to you?`;
-        stepResult.passed = false;
-        advanceNow = false;
-        partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="action" data-action="suggest_filter_cleaning" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Clean them</button><button class="diag-btn" data-step="__STEP__" data-outcome="action" data-action="suggest_filter_replace" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Replace them</button></div>';
-        break;
-
-      case 'filter_dirty_no':
-        responseMsg = "Your filters are a little dirty and may be contributing to the issue — I've flagged them as a possible factor. It's worth cleaning or replacing them. What would you like to do?";
-        stepResult.passed = true;
-        stepResult.possible = true;
-        advanceNow = true;
-        break;
-
-      case 'filter_filthy':
-        responseMsg = "Filthy filters are almost certainly your issue. They need to be replaced before your spa will work properly.\n\n⚠️ Never use your spa without filters — it can damage the pump and plumbing. Running without filters is for testing purposes only and only with clean water.";
-        stepResult.passed = false;
-        advanceNow = false;
-        partCard = 'filter';
-        partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button></div>';
-        break;
-
-      case 'filter_keep_testing':
-        responseMsg = "Got it — let's keep working through the checklist.";
-        stepResult.passed = false;
-        advanceNow = true;
-        break;
-
-      case 'suggest_filter_cleaning':
-        responseMsg = "Here are some filter cleaning products that can help restore flow:";
-        partCard = 'filter cleaning';
-        partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button></div>';
-        advanceNow = false;
-        break;
-
-      case 'suggest_filter_replace':
-        responseMsg = "Here are replacement filter options for your spa:";
-        partCard = 'filter';
-        partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button></div>';
-        advanceNow = false;
-        break;
-
-      case 'stop_diagnosis':
-        responseMsg = "Progress saved. Come back anytime if the issue returns or if you'd like to continue testing.";
-        stepResult.passed = true;
-        advanceNow = false;
-        deadEndButtons = [
-          { l: 'Continue testing', o: 'pass', a: '' },
-        ];
-        break;
-
-      case 'cant_find_inlet':
-        responseMsg = "The filter inlet is the opening where your filter(s) sit — typically a circular opening a few inches in diameter inside the filter compartment. If you don't feel any suction, make sure the spa jets are running — some spas won't draw water through the filter inlet until the jets are active. Check your [MANUAL_LINK] if you need help locating it, or upload a photo of the filter bay and I'll help you identify it.";
-        advanceNow = false;
-        deadEndButtons = [
-          { l: 'Found it — testing now', o: 'action', a: 'S3_found_inlet' },
-          { l: '📸 Upload a Photo', o: 'action', a: 'upload_filter_bay_photo' },
-          { l: "Check Owner's Manual", o: 'action', a: 'open_manual_finder' }
-        ];
-        break;
-
-      case 'S3_found_inlet':
-        // User found the inlet — render S3 buttons so they can report suction
-        responseMsg = "Great — now check the suction. A healthy spa will have a strong, noticeable pull at the inlet.";
-        advanceNow = false;
-        deadEndButtons = [
-          { l: 'Strong suction', o: 'pass', a: '' },
-          { l: 'Weak or no suction', o: 'possible', a: '' }
-        ];
-        break;
-
-      case 'open_manual_finder':
-        responseMsg = null;
-        advanceNow = false;
-        deadEndButtons = [{ l: 'Back to diagnosis', o: 'pass', a: '' }];
-        break;
-
-      case 'airlock_cleared':
-        responseMsg = "Great news — it looks like an airlock was the culprit! Trapped air was blocking the water flow and triggering the error.\n\nBefore you put your clean filters back in and retest, let's make sure air doesn't get trapped again:\n\n1. Submerge each filter fully in the spa water.\n2. Gently squeeze or shake them underwater to work out any trapped air bubbles.\n3. Reinstall them immediately while keeping them submerged.\n\nThis keeps the lines clear and prevents the error from coming back!";
-        stepResult.passed = true;
-        advanceNow = false;
-        deadEndButtons = [
-          { l: 'Done — spa is running fine!', o: 'pass', a: '' },
-          { l: 'Error returned', o: 'pass', a: '' },
-        ];
-        break;
-
-      case 'filter_confirmed':
-        responseMsg = "⚠️ Never run your spa without filters during normal use — it can damage the pump and plumbing. Running without filters is for testing purposes only and only with clean water.\n\nBefore reinstalling: submerge each filter completely in the spa water and gently squeeze it until no more air bubbles come out. Reinstall immediately while keeping it submerged — this prevents air from reintroducing into the system.\n\nDid the error return after reinstalling the filter?";
-        stepResult.passed = false;
-        stepResult.filterIssue = true;
-        advanceNow = false;
-        partCard = 'filter';
-        partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Yes — error returned</button><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">No — spa is running fine!</button></div>';
-        break;
-
-      case 'valve_closed':
-        responseMsg = "Open it fully counterclockwise, then check if the error clears.";
-        advanceNow = false;
-        deadEndButtons = [
-          { l: 'Error cleared!', o: 'pass', a: '' },
-          { l: 'Error still showing', o: 'pass', a: '' },
-        ];
-        break;
-
-      case 'heater_no_indicator':
-        responseMsg = "Before we go further — did you set the target temperature above the current water temperature shown on the panel? The heater won't fire unless the set temp is higher than the current reading.";
-        advanceNow = false;
-        deadEndButtons = [
-          { l: 'Yes — set it higher, still no heat', o: 'pass', a: '' },
-          { l: 'No — let me try that now', o: 'action', a: 'heater_temp_retry' }
-        ];
-        break;
-
-      case 'heat_mode_wrong':
-        responseMsg = "That's likely your culprit. In Economy or Sleep mode, the spa only heats during its scheduled filter cycles — it won't maintain your set temperature. Switch it to Standard or Ready mode, then raise the target temperature above the current water temp and wait a few minutes to see if the heater fires.";
-        stepResult.passed = false;
-        stepResult.possible = true;
-        advanceNow = true;
-        break;
-
-      case 'heat_mode_unsure':
-        responseMsg = "On most spas, press the Mode button (sometimes labeled Temp or Set) to cycle through modes. Look for Standard, Ready, or ST on the display — that's the mode you want. Economy (Econ), Sleep (SLP), and Rest modes will prevent continuous heating. If you can't find it, check your manual via the Manual button.";
-        advanceNow = false;
-        deadEndButtons = [
-          { l: "Found it — now in Standard/Ready", o: 'pass', a: '' },
-          { l: "Still not sure", o: 'skip', a: '' },
-        ];
-        break;
-
-      case 'heat_airlock_cleared':
-        responseMsg = "Great news — an air lock was preventing water from circulating properly, which stopped the heater from firing. Before you put your clean filters back in and retest, let's make sure air doesn't get trapped again:\n\n1. Submerge each filter fully in the spa water.\n2. Gently squeeze or shake them underwater to work out any trapped air bubbles.\n3. Reinstall them immediately while keeping them submerged.\n\nThis keeps the lines clear and prevents the issue from coming back!";
-        stepResult.passed = true;
-        advanceNow = false;
-        break;
-
-      case 'heat_hilimit_reset':
-        responseMsg = "Good — press it firmly until it clicks. The hi-limit tripped because the spa detected (or thought it detected) an overheating condition. After resetting, raise the target temperature above the current water temp and see if the heater fires. If the hi-limit trips again shortly after, the sensor itself may be faulty.";
-        stepResult.passed = true;
-        stepResult.possible = true;
-        advanceNow = true;
-        break;
-
-      case 'heat_multimeter_test':
-        responseMsg = "Set your multimeter to resistance (Ω). Turn off the breaker and disconnect the heater element leads from the control board terminals. Test across the two element terminals — a healthy 5.5kW element should read between 9–12Ω. Also test each terminal to ground (the stainless steel heater tube) — you should read infinite (OL). What do you get?";
-        advanceNow = false;
-        deadEndButtons = [
-          { l: 'Reads 9–12Ω and OL to ground — element OK', o: 'pass', a: '' },
-          { l: 'Out of range or shorts to ground — failed element', o: 'action', a: 'fail_heater_element' },
-        ];
-        break;
-
-      case 'heat_visual_element_check':
-        responseMsg = "Look at the heater element for any visible corrosion, burn marks, or physical damage on the element body or terminals. Also check the wires connecting the board to the element — look for any melted insulation, discoloration, or charring. What do you see?";
-        advanceNow = false;
-        deadEndButtons = [
-          { l: 'Everything looks clean', o: 'pass', a: '' },
-          { l: 'Found burn marks or damage', o: 'action', a: 'fail_heater_element' },
-        ];
-        break;
-
-      // ── Jets actions ──────────────────────────────────────────
-      case 'jets_scope_single':
-        responseMsg = "Got it -- a single jet with low pressure usually means a closed or clogged jet face, or a stuck diverter routing flow away from that nozzle. We'll check both. Let's start with the basics first.";
-        stepResult.passed = true;
-        advanceNow = true;
-        break;
-
-      case 'jets_scope_zone':
-        responseMsg = "Got it -- a full zone with low pressure is often a diverter valve stuck in the middle position, starving that whole seat. We'll check that shortly. Let's start with the basics first.";
-        stepResult.passed = true;
-        advanceNow = true;
-        break;
-
-      case 'jets_face_fixed':
-        deadEndButtons = [{ l: 'Yes — jets working now!', o: 'pass', a: '' }, { l: 'Still having issues', o: 'pass', a: '' }];
-        if (!briefMode) { responseMsg = "Closed jet faces are a surprisingly common cause — calcium buildup and grit lock them in place over time. Give them a good clean while you have them open. If everything is working now, you're all set! Would you like to keep testing to make sure nothing else is contributing?"; } else { briefOmitted = "Closed jet faces are a surprisingly common cause — calcium buildup and grit lock them in place over time. Give them a good clean while you have them open. If everything is working now, you're all set! Would you like to keep testing to make sure nothing else is contributing?"; }
-        stepResult.passed = true;
-        advanceNow = false;
-        break;
-
-      case 'jets_diverter_fixed':
-        deadEndButtons = [{ l: "Jets working now!", o: 'pass', a: '' }, { l: 'Still having issues', o: 'pass', a: '' }];
-        if (!briefMode) { responseMsg = "A stuck diverter valve cuts off water to an entire zone of jets — easy fix once you find it. If everything is working now, you're all set! Would you like to keep testing to make sure nothing else is contributing?"; } else { briefOmitted = "A stuck diverter valve cuts off water to an entire zone of jets — easy fix once you find it. If everything is working now, you're all set! Would you like to keep testing to make sure nothing else is contributing?"; }
-        stepResult.passed = true;
-        advanceNow = false;
-        break;
-
-      case 'jets_airlock_cleared':
-        deadEndButtons = [{ l: 'Jets working now!', o: 'pass', a: '' }, { l: 'Still having issues', o: 'pass', a: '' }];
-        responseMsg = "Great news — an air lock was preventing the pump from moving water. Before you put your clean filters back in and retest, let's make sure air doesn't get trapped again:\n\n1. Submerge each filter fully in the spa water.\n2. Gently squeeze or shake them underwater to work out any trapped air bubbles.\n3. Reinstall them immediately while keeping them submerged.\n\nThis keeps the lines clear and prevents the issue from coming back!";
-        stepResult.passed = true;
-        advanceNow = false;
-        break;
-
-      case 'jets_sound_silent':
-        if (!briefMode) { responseMsg = "Complete silence when pressing the Jets button usually points to one of three things: a blown fuse on the control board for that pump, a bad relay on the control board, or a completely dead motor winding. Let's check the fuses first — it's the easiest fix."; } else { briefOmitted = "Complete silence when pressing the Jets button usually points to one of three things: a blown fuse on the control board for that pump, a bad relay on the control board, or a completely dead motor winding. Let's check the fuses first — it's the easiest fix."; }
-        stepResult.passed = true;
-        stepResult.possible = true;
-        advanceNow = true;
-        nextStep = 'J10';
-        break;
-
-      case 'jets_sound_hum':
-        if (!briefMode) { responseMsg = "A loud hum without the jets spinning up means the motor is getting power but can't turn. The two most likely causes are a blown start capacitor (the motor tries to start but can't get going) or a physically seized/frozen shaft. Let's check the shaft first."; } else { briefOmitted = "A loud hum without the jets spinning up means the motor is getting power but can't turn. The two most likely causes are a blown start capacitor (the motor tries to start but can't get going) or a physically seized/frozen shaft. Let's check the shaft first."; }
-        stepResult.passed = true;
-        stepResult.possible = true;
-        advanceNow = true;
-        nextStep = 'J_SH';
-        break;
-
-      case 'jets_sound_squeal':
-        if (!briefMode) { responseMsg = "A screech or squeal when the jets run is the sound of worn or failing motor bearings. The jets may still work for now, but the pump is on its way out — it needs a rebuild or replacement soon. I've flagged this as a likely pump issue."; } else { briefOmitted = "A screech or squeal when the jets run is the sound of worn or failing motor bearings. The jets may still work for now, but the pump is on its way out — it needs a rebuild or replacement soon. I've flagged this as a likely pump issue."; }
-        stepResult.passed = true;
-        stepResult.possible = true;
-        advanceNow = true;
-        nextStep = 'J13';
-        break;
-
-      case 'jets_shaft_locked':
-        responseMsg = "A locked shaft means something is either jammed in the impeller housing or the motor bearings have seized. Do not try to force the shaft — further damage could result. This pump will need to be removed and inspected. The impeller housing can be disassembled to check for debris without replacing the full pump.";
-        stepResult.passed = false;
-        advanceNow = false;
-        deadEndButtons = [{ l: 'Show pump replacement options', o: 'action', a: 'fail_jet_pump' }];
-        break;
-
-      case 'jets_voltage_test':
-        responseMsg = "⚠️ DANGER — 240V PRESENT. This test requires the breaker ON with live high voltage exposed inside the equipment bay. Only proceed if you are completely comfortable working around live electrical panels. NEVER touch any terminals, wires, or components other than the multimeter probes.\n\nWith the breaker ON and the Jets button pressed to High: carefully place your multimeter probes on the pump's terminal plug on the circuit board. You should read 240V (or 120V depending on your setup).\n\n- Board outputs correct voltage but pump doesn't run → the pump or its cord is the problem → proceed to pump replacement\n- Board outputs 0V when button pressed → the board relay is bad → proceed to control board";
-        advanceNow = false;
-        deadEndButtons = [
-          { l: '240V confirmed — pump or cord issue', o: 'action', a: 'fail_jet_pump' },
-          { l: '0V — board relay issue', o: 'action', a: 'fail_control_board' },
-          { l: 'Not comfortable with live voltage — skip', o: 'skip', a: '' },
-        ];
-        break;
-
-      case 'jets_no_multimeter':
-        responseMsg = "Without a multimeter we can't confirm whether the board is sending power. Based on everything we've tested, the most likely cause is either the jet pump itself or the control board relay. We'll check the pump wiring visually first.";
-        advanceNow = true;
-        break;
-
-      case 'identify_pump':
-        responseMsg = "Upload a clear photo of your pump label (Premium feature) and I'll help identify the exact model and find replacement options.";
-        advanceNow = false;
-        deadEndButtons = [
-          { l: 'Continue diagnosis', o: 'pass', a: '' },
-        ];
-        break;
-
-      case 'temps_mismatch':
-        responseMsg = "A mismatch between the displayed temperature and actual water temperature is a sign of a faulty or uncalibrated temperature sensor. I've flagged the temp sensor as a possible issue — we'll dig into it in the next step.";
-        stepResult.passed = true;
-        stepResult.possible = true;
-        advanceNow = true;
-        // Pre-flag S11 as possible in diagState
-        if (state.steps) {
-          const s11 = state.steps.find(s => s.id === 'S11');
-          if (!s11) state.steps.push({ id: 'S11', label: 'Temp sensor', passed: true, possible: true, preflagged: true });
-          else { s11.possible = true; s11.preflagged = true; }
-        }
-        break;
-
-      case 'circ_flow_check':
-        responseMsg = "Good — the pump is energized. The circ pump pushes water through the heater and then to the flow switch/sensor downstream. The sensor must detect sufficient flow to function properly — if flow is insufficient, the circuit won't close and the spa fails.\n\nLook for the flow indicator downstream after the heater. You should be able to visually see the paddle of the flow sensor making contact with the post. Is water moving through?";
-        advanceNow = false;
-        deadEndButtons = [
-          { l: 'Yes — water is moving', o: 'pass', a: '' },
-          { l: 'No — little or no flow', o: 'pass', a: '' },
-        ];
-        break;
-
-      case 'cant_find_flow_switch':
-        responseMsg = "No problem — we'll cover the flow switch in detail in the next step.";
-        stepResult.passed = true;
-        stepResult.skipped = true;
-        advanceNow = true;
-        break;
-
-      case 'unusual_finding':
-        responseMsg = "Describe what you see and I'll help identify it. Or upload a photo for a closer look (Premium).";
-        advanceNow = false;
-        deadEndButtons = [
-          { l: 'Continue diagnosis', o: 'pass', a: '' },
-        ];
-        break;
-
-      case 'multimeter_test':
-        responseMsg = "Set your multimeter to resistance (Ω). Disconnect the heater element leads. Test across the two terminals — you should read between 8-16 Ω for a working element. Also test each terminal to ground — you should read infinite (OL). What do you get?";
-        advanceNow = false;
-        deadEndButtons = [
-          { l: 'Reads 8–16Ω and OL to ground — element OK', o: 'pass', a: '' },
-          { l: 'Out of range or shorts to ground — failed element', o: 'action', a: 'fail_heater_element' },
-        ];
-        break;
-
-      case 'visual_element_check':
-        responseMsg = "Look at the heater element for any visible corrosion, burn marks, or damage on the element body or terminals. What do you see?";
-        advanceNow = false;
-        deadEndButtons = [
-          { l: 'Everything looks clean', o: 'pass', a: '' },
-          { l: 'Found burn marks or corrosion', o: 'action', a: 'fail_heater_element' },
-        ];
-        break;
-
-      case 'suggest_multimeter':
-        responseMsg = "A multimeter is a handy tool to have for spa diagnosis and general home use. Here are some options:";
-        partCard = 'multimeter';
-        partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue without multimeter</button></div>';
-        advanceNow = false;
-        break;
-
-      case 'identify_board':
-        responseMsg = "Upload a clear photo of your control board (Premium feature) and I'll help identify the exact model.";
-        advanceNow = false;
-        deadEndButtons = [
-          { l: 'Continue diagnosis', o: 'pass', a: '' },
-        ];
-        break;
-
-      // ── All noise action branches ──
-      case 'noise_bay':
-        responseMsg = "Good — let's focus on the equipment bay. Listen carefully as you open the cabinet.";
-        advanceNow = true;
-        stepResult.passed = true;
-        break;
-
-      case 'noise_audio':
-        responseMsg = "Got it — let's isolate the audio system. We'll skip the mechanical steps and go straight to audio diagnostics.";
-        advanceNow = true;
-        stepResult.passed = true;
-        break;
-
-      case 'noise_unsure':
-        responseMsg = "No problem — we'll figure it out. Let's start by testing whether the noise is coming from the spa itself.";
-        advanceNow = true;
-        stepResult.passed = true;
-        break;
-
-      case 'noise_constant':
-        if (state) state.noiseWhen = 'constant';
-        responseMsg = "A constant noise that never stops points to something always running — likely the circulation pump or a stuck component.";
-        advanceNow = true;
-        stepResult.passed = true;
-        break;
-
-      case 'noise_jets':
-        if (state) state.noiseWhen = 'jets';
-        responseMsg = "Noise only when jets run points to the jet pump, air intake, or a loose fitting in the plumbing loop.";
-        advanceNow = true;
-        stepResult.passed = true;
-        break;
-
-      case 'noise_heat':
-        if (state) state.noiseWhen = 'heat';
-        responseMsg = "Noise only when heating points to the heater element, circulation pump, or scale buildup on the heating tube. Listen specifically for sizzling or popping — that points to scale buildup on the heater element.";
-        advanceNow = true;
-        stepResult.passed = true;
-        break;
-
-      case 'noise_audio_only':
-        if (state) state.noiseWhen = 'audio';
-        responseMsg = "Noted — let's go straight to the audio diagnostics and skip the mechanical checks.";
-        advanceNow = true;
-        stepResult.passed = true;
-        break;
-
-      case 'noise_external_end':
-        responseMsg = "The noise continued after the breaker was off — it's coming from outside the spa. Check nearby equipment, HVAC vents, or plumbing in the wall.";
-        advanceNow = false;
-        deadEndButtons = [{ l: "Understood — I'll check externally", o: 'pass', a: '' }];
-        break;
-
-      case 'noise_grinding':
-        responseMsg = "Grinding or screeching points to a failing pump bearing, a worn shaft seal, or debris in the impeller.";
-        advanceNow = true;
-        stepResult.passed = true;
-        break;
-
-      case 'noise_humming':
-        responseMsg = "A loud hum without mechanical scraping usually means the pump motor is energized but the impeller isn't turning — seized bearing or locked shaft.";
-        advanceNow = true;
-        stepResult.passed = true;
-        break;
-
-      case 'noise_cabinet_resonance':
-        responseMsg = "If the noise changes with panel button presses, the cabinet panels may be resonating with pump vibration. Check that all cabinet screws and clips are tight.";
-        advanceNow = true;
-        stepResult.passed = true;
-        break;
-
-      case 'noise_cavitation':
-        responseMsg = "The filter was causing cavitation — restricted flow was creating the noise. Clean or replace the filter and the noise should resolve.";
-        advanceNow = false;
-        deadEndButtons = [{ l: 'Noise resolved — great!', o: 'pass', a: '' }, { l: 'Still noisy after filter removal', o: 'pass', a: '' }];
-        break;
-
-      case 'noise_impeller_cleared':
-        responseMsg = "Debris in the impeller is a very common cause of grinding noise. Run the spa briefly and check if the noise has cleared.";
-        advanceNow = false;
-        deadEndButtons = [{ l: 'Noise gone — fixed!', o: 'pass', a: '' }, { l: 'Still noisy', o: 'pass', a: '' }];
-        break;
-
-      case 'noise_error_code':
-        responseMsg = "An error code with beeping usually means the control board is alerting you to a fault. Note the code and use the Error Code diagnostic path for a targeted diagnosis.";
-        advanceNow = false;
-        deadEndButtons = [{ l: "Got it — I'll check the error code", o: 'pass', a: '' }];
-        break;
-
-      case 'noise_external_check':
-        responseMsg = "No error code and the noise is coming from the panel area — check that all topside panel connectors are fully seated and that the panel itself isn't vibrating against the spa shell.";
-        advanceNow = false;
-        deadEndButtons = [{ l: 'Connectors look good', o: 'pass', a: '' }, { l: "Found a loose connector", o: 'pass', a: '' }];
-        break;
-
-      case 'noise_fm_interference':
-        responseMsg = "FM interference is caused by the spa's electrical system affecting the radio receiver. This is common near pump motors. Try an external antenna or switch to Bluetooth-only input.";
-        advanceNow = true;
-        stepResult.passed = true;
-        break;
-
-      case 'noise_single_speaker':
-        responseMsg = "A single bad speaker is usually a failed driver or a corroded connector at that speaker. Swap the speaker or check the wiring harness at that location.";
-        advanceNow = false;
-        deadEndButtons = [{ l: 'Show me speaker options', o: 'pass', a: '' }];
-        break;
-
-      case 'noise_all_speakers':
-        responseMsg = "All speakers producing the same noise points to the amplifier or audio controller rather than individual speakers.";
-        advanceNow = false;
-        deadEndButtons = [{ l: 'Show me amplifier options', o: 'pass', a: '' }];
-        break;
-
-      case 'noise_audio_static':
-        responseMsg = "Audio static or hissing from the speakers is usually the amplifier, a grounding issue, or water ingress in the speaker housing.";
-        advanceNow = true;
-        stepResult.passed = true;
-        break;
-
-      case 'noise_beeping':
-        responseMsg = "Beeping from the panel typically means an active error code or a sensor alert. Let's check the panel display.";
-        advanceNow = true;
-        stepResult.passed = true;
-        break;
-
-      // ── New noise handlers ──
-      case 'noise_confirmed_spa':
-        // Breaker confirmed noise is spa-generated — skip N_WHEN, go straight to N_TYPE
-        responseMsg = "Confirmed — the noise is coming from the spa. Let's identify the sound type.";
-        advanceNow = false;
-        // Jump directly to N_TYPE step
-        if (state) {
-          state.currentStep = 'N_TYPE';
-          setDiagState(clientId, state);
-        }
-        nextStep = DIAG_STEPS['N_TYPE'] ? {
-          id: 'N_TYPE',
-          label: DIAG_STEPS['N_TYPE'].label,
-          question: DIAG_STEPS['N_TYPE'].question || DIAG_STEPS['N_TYPE'].questionFn?.(state) || '',
-          buttons: DIAG_STEPS['N_TYPE'].buttons,
-          fire: null,
-        } : null;
-        advanceNow = true;
-        break;
-
-      case 'noise_sizzle':
-        responseMsg = "Sizzling, popping or hissing from the heater area is typically caused by scale buildup on the heating element or critically low water flow. Scale traps water underneath a calcium crust, causing it to flash-boil. It can also indicate a failing element that needs replacement.\n\nTurn off the spa and let it cool before opening the equipment bay.";
-        advanceNow = true;
-        stepResult.passed = true;
-        break;
-
-      case 'noise_chattering':
-        responseMsg = "Rapid chattering or clicking from the control pack is usually a failing contactor or relay, or low incoming voltage. In older spas, a mechanical contactor's electromagnetic coil weakens over time and chatters when trying to close. On modern boards, a failing relay makes a lighter clicking sound.\n\nFirst check that the incoming voltage at the breaker is correct (240V typical). If voltage is fine, the relay or contactor needs replacement.";
-        advanceNow = true;
-        stepResult.passed = true;
-        break;
-
-      case 'noise_hiss_intake':
-        responseMsg = "A sharp hissing near the pump intake is either a loose plumbing union drawing air into the system, or normal operation of an ozone Venturi injector.\n\nCheck: if the hiss is at a small injector valve attached to a thin hose near the pump — that's the Venturi effect drawing ozone gas in, and it's normal. If the hiss is at a large threaded union fitting — hand-tighten it; a loose union can draw air without visibly leaking water yet.";
-        advanceNow = true;
-        stepResult.passed = true;
-        break;
-
-      case 'noise_rattling':
-        responseMsg = "Rattling or vibrating that occurs when pumps run on high is usually loose plumbing supports or hardened vibration-isolation pads under the pump mounts.\n\nCheck: tighten the pump mount bolts. Look for areas where PVC pipes touch the frame or cabinet walls — cushion them with foam insulation or rubber spacers. Check that all cabinet panels are properly seated and clipped.";
-        advanceNow = true;
-        stepResult.passed = true;
-        break;
-
-      case 'noise_heater_scale':
-        responseMsg = "Scale buildup on the heater element is causing the sizzling or popping. Calcium deposits coat the element and trap water underneath, which flash-boils when the heater fires.\n\nThe fix: chemically descale the spa plumbing and element using a spa descaler product. In severe cases the element may need replacement. Also investigate water flow restrictions (dirty filters, failing low-speed pump) that could be cooking the element.";
-        stepResult.passed = false;
-        advanceNow = false;
-        deadEndButtons = [
-          { l: 'Show descaler options', o: 'action', a: 'show_descaler' },
-          { l: 'Continue diagnosis', o: 'pass', a: '' },
-        ];
-        break;
-
-      case 'show_descaler':
-        responseMsg = "Here are spa descaler options:";
-        partCard = 'spa descaler';
-        partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button></div>';
-        advanceNow = false;
-        break;
-
-      // ── FLAG: Default — unhandled action branch ──
-      default:
-        responseMsg = `⚑ Undefined sequence — flagged for review.
-\`FLAG: unhandled-action → ${action} → ${stepId} → ${state.topic || 'unknown'}\`
-_If you're testing, please send this code to support@spafix.app_`;
-        advanceNow = false;
-        break;
     }
-  }
 
-  // Critical safety override
-  if (part === 'hi-limit sensor' && req.body.critical) {
-    responseMsg = "⚠️ Cut power to your spa immediately at the breaker. Do not use it until the hi-limit sensor is replaced.";
-  }
-
-  // Update state
-  if (!state.steps) state.steps = [];
-  const existing = state.steps.find(s => s.id === stepId);
-  if (!existing) {
-    state.steps.push(stepResult);
-  } else {
-    Object.assign(existing, stepResult);
-  }
-
-  if (advanceNow && nextStep) {
-    state.currentStep = nextStep;
-  } else if (advanceNow && !nextStep) {
-    state.currentStep = null;
-  }
-
-  setDiagState(clientId, state);
-
-  // Build next step presentation if advancing
-  let nextStepData = null;
-  if (advanceNow && state.currentStep) {
-    const ns = DIAG_STEPS[state.currentStep];
-    if (ns) {
-      nextStepData = {
-        id: ns.id,
-        label: ns.label,
-        question: (ns.questionFn ? ns.questionFn(state) : ns.question) || '',
-        fire: ns.fire ? applyFireTemplates(`[${ns.fire}]`) : null,
-        buttons: ns.buttons,
-        bayStep: ns.bayStep || false,
-      };
+    // Critical safety override
+    if (part === 'hi-limit sensor' && req.body.critical) {
+      responseMsg = "⚠️ Cut power to your spa immediately at the breaker. Do not use it until the hi-limit sensor is replaced.";
     }
+
+    // Update state
+    if (!state.steps) state.steps = [];
+    const existing = state.steps.find(s => s.id === stepId);
+    if (!existing) {
+      state.steps.push(stepResult);
+    } else {
+      Object.assign(existing, stepResult);
+    }
+
+    if (advanceNow && nextStep) {
+      state.currentStep = nextStep;
+    } else if (advanceNow && !nextStep) {
+      state.currentStep = null;
+    }
+
+    setDiagState(clientId, state);
+
+    // Build next step presentation if advancing
+    let nextStepData = null;
+    if (advanceNow && state.currentStep) {
+      const ns = DIAG_STEPS[state.currentStep];
+      if (ns) {
+        nextStepData = {
+          id: ns.id,
+          label: ns.label,
+          question: (ns.questionFn ? ns.questionFn(state) : ns.question) || '',
+          fire: ns.fire ? applyFireTemplates(`[${ns.fire}]`) : null,
+          buttons: ns.buttons,
+          bayStep: ns.bayStep || false,
+        };
+      }
+    }
+
+    // ── FLAG: dead-end detector ──
+    if (!advanceNow && !skipPending && !deadEndButtons && !partCardButtons && !responseMsg && outcome !== 'action') {
+      responseMsg = `⚑ Undefined sequence — flagged for review.
+  \`FLAG: dead-end → ${stepId} → ${state.topic || 'unknown'}\`
+  _If you're testing, please send this code to support@spafix.app_`;
+    }
+
+    res.json({
+      ok: true,
+      diagState: getDiagState(clientId),
+      responseMsg,
+      partCard,
+      partCardButtons,
+      nextStep: nextStepData,
+      advanceNow,
+      skipPending,
+      deadEndButtons,
+      briefOmitted,
+      clientAction,
+    });
+  } catch(err) {
+    console.error('[/api/diag-button] error:', err.message);
+    if (!res.headersSent) res.status(500).json({ error: err.message });
   }
 
-  // ── FLAG: dead-end detector ──
-  if (!advanceNow && !skipPending && !deadEndButtons && !partCardButtons && !responseMsg && outcome !== 'action') {
-    responseMsg = `⚑ Undefined sequence — flagged for review.
-\`FLAG: dead-end → ${stepId} → ${state.topic || 'unknown'}\`
-_If you're testing, please send this code to support@spafix.app_`;
-  }
-
-  res.json({
-    ok: true,
-    diagState: getDiagState(clientId),
-    responseMsg,
-    partCard,
-    partCardButtons,
-    nextStep: nextStepData,
-    advanceNow,
-    skipPending,
-    deadEndButtons,
-    briefOmitted,
-    clientAction,
-  });
 });
 
 // ─────────────────────────────────────────────────────────────────
@@ -3290,7 +3327,7 @@ app.post("/api/chat", async (req, res) => {
 
   // systemOverride -- use client-supplied prompt, diagStateEffective already nulled above
   if (req.body.systemOverride && typeof req.body.systemOverride === 'string') {
-    effectiveSystemPrompt = req.body.systemOverride + `\n\n=CRITICAL RESPONSE RULES=\nThis is an INITIAL CODE IDENTIFICATION response only. HARD STOPS -- the following are STRICTLY FORBIDDEN:\n- Numbered steps of any kind (1. 2. 3.)\n- Bullet points listing causes or fixes\n- Any mention of specific repair actions (replacing parts, testing voltages, adjusting settings, etc.)\n- "Here's what to check" or any equivalent lead-in to a list\n- Phrases like "first", "next", "then", "finally" that imply a sequence\n- Any mention of what to do next beyond offering to start the diagnostic sequence\nRespond in 1-2 sentences MAXIMUM: identify the code and explain what it means in plain language. Nothing more. The diagnostic sequence handles all repair steps.`;
+    effectiveSystemPrompt = req.body.systemOverride + `\n\n=CRITICAL RESPONSE RULES=\nThis is an INITIAL CODE IDENTIFICATION response only. HARD STOPS -- the following are STRICTLY FORBIDDEN:\n- Numbered steps of any kind (1. 2. 3.)\n- Bullet points listing causes or fixes\n- Any mention of specific repair actions (replacing parts, testing voltages, adjusting settings, etc.)\n- "Here's what to check" or any equivalent lead-in to a list\n- Phrases like "first", "next", "then", "finally" that imply a sequence\n- Asking permission to start the diagnostic sequence ("Would you like me to walk you through...", "Shall we start...", "Want me to help you diagnose...") -- when spa is known, route directly, never ask first\n- Substituting a different spa model name from your training data\nRespond in 1-2 sentences MAXIMUM: identify the code and explain what it means in plain language. Nothing more. The diagnostic sequence handles all repair steps.\n\nBRAND MENTION RULE: If the spa context includes a brand name, ALWAYS reference that brand in your response. Never treat a named brand as generic. Example: Balboa spa with HFL code -- response must open with "On Balboa systems, HFL means..." not "your spa has...". The brand name must appear in the first sentence.\n\nSTATUS CODE NEXT STEP: If this code is purely informational (priming mode, panel lock, status indicator, mode display) with no fault diagnostic path, still end with a soft next step: "If this doesn't clear on its own, let me know and we can dig deeper." Never leave the user with a dead-end response.`;
   }
 
   // Re-evaluate after potential systemOverride null -- must be after the block above
@@ -3332,14 +3369,17 @@ app.post("/api/chat", async (req, res) => {
       .replace(/<br\s*\/?>/gi, "\n")
       .trim();
     const reply = applyFireTemplates(cleanReply).trim();
+    // Guard: if signal stripping left an empty reply, return a safe fallback
+    // rather than sending '' which causes a silent blank response on the client
+    const safeReply = reply || "I didn't quite catch that -- could you try again?";
     logTokenUsage('chat', 'claude-sonnet-4-6', data.usage, { tier });
     const updatedDiagState = processDiagSignals(rawReply, clientId, lastMsgContent);
     if (testerName) {
       const lm = messages[messages.length - 1];
       if (lm?.role === 'user') appendToTranscript(testerName, clientId, 'user', typeof lm.content === 'string' ? lm.content : '');
-      appendToTranscript(testerName, clientId, 'assistant', reply);
+      appendToTranscript(testerName, clientId, 'assistant', safeReply);
     }
-    return { reply, diagState: updatedDiagState || diagStateEffective || null };
+    return { reply: safeReply, diagState: updatedDiagState || diagStateEffective || null };
   }
 
   if (premiumAccess) {
@@ -3407,35 +3447,41 @@ app.post("/api/analyze-photo", async (req, res) => {
 });
 
 app.post("/api/analyze-document", async (req, res) => {
-  const { documentBase64, mediaType, filename } = req.body;
-  if (!documentBase64 || !mediaType) return res.status(400).json({ error: "documentBase64 and mediaType required" });
-  if (!requireProSession(req, res)) return;
-  // Size cap: estimate tokens from base64 length
-  const estimatedTokens = Math.round((documentBase64.length * 0.75) / 4);
-  if (estimatedTokens > 40000) {
-    return res.status(400).json({ error: `This document is quite large (~${Math.round(estimatedTokens/1000)}k tokens). For best results, upload just the troubleshooting and error code sections as a TXT file instead.` });
-  }
   try {
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-6",
-        max_tokens: 1024,
-        system: DOCUMENT_SUMMARY_PROMPT,
-        messages: [{ role: "user", content: [
-          { type: "document", source: { type: "base64", media_type: mediaType, data: documentBase64 } },
-          { type: "text", text: `Please read this document (filename: ${filename || "uploaded file"}) and summarize what you found.` }
-        ]}]
-      }),
-    });
-    const data = await response.json();
-    if (!response.ok) return res.status(response.status).json({ error: data?.error?.message || "API error" });
-    const docSummary = (data.content?.map((b) => b.text || "").join("") || "").replace(/<br\s*\/?>/gi, "\n");
-    res.json({ summary: docSummary });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+    const { documentBase64, mediaType, filename } = req.body;
+    if (!documentBase64 || !mediaType) return res.status(400).json({ error: "documentBase64 and mediaType required" });
+    if (!requireProSession(req, res)) return;
+    // Size cap: estimate tokens from base64 length
+    const estimatedTokens = Math.round((documentBase64.length * 0.75) / 4);
+    if (estimatedTokens > 40000) {
+      return res.status(400).json({ error: `This document is quite large (~${Math.round(estimatedTokens/1000)}k tokens). For best results, upload just the troubleshooting and error code sections as a TXT file instead.` });
+    }
+    try {
+      const response = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-6",
+          max_tokens: 1024,
+          system: DOCUMENT_SUMMARY_PROMPT,
+          messages: [{ role: "user", content: [
+            { type: "document", source: { type: "base64", media_type: mediaType, data: documentBase64 } },
+            { type: "text", text: `Please read this document (filename: ${filename || "uploaded file"}) and summarize what you found.` }
+          ]}]
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) return res.status(response.status).json({ error: data?.error?.message || "API error" });
+      const docSummary = (data.content?.map((b) => b.text || "").join("") || "").replace(/<br\s*\/?>/gi, "\n");
+      res.json({ summary: docSummary });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  } catch(err) {
+    console.error('[/api/analyze-document] error:', err.message);
+    if (!res.headersSent) res.status(500).json({ error: err.message });
   }
+
 });
 
 app.get("/", (req, res) => res.json({ message: "SpaFix API v4 running ✓" }));
@@ -3446,78 +3492,84 @@ const partsCache = {};
 // ── Unknown make validation + logging ──────────────────────────
 // ── Unknown Error Code Validation ────────────────────────────
 app.post('/api/validate-error-code', async (req, res) => {
-  const { code, spa_make, spa_model, spa_year, deviceId } = req.body;
-  if (!code || code.length < 1) return res.json({ ok: false, reason: 'invalid_code' });
-
-  // ── Sn brand fork — same code, three different meanings by manufacturer ──
-  if (code.trim().toUpperCase() === 'SN' && spa_make) {
-    const make = spa_make.toLowerCase();
-    // Gecko/Aeware platforms (Arctic Spas, Bullfrog, Clearwater, Dimension One) — normal boot display, status only
-    if (/arctic|bullfrog|clearwater|dimension.?one|coyote|horizon/i.test(make)) {
-      return res.json({ ok: true, valid: true, confidence: 'high', description: 'Normal boot/startup display on Gecko-based systems — not a fault. No action required.', code_type: 'status' });
-    }
-    // Brett Aqualine / In.Pro / HydroQuip — peripheral communication error
-    if (/brett|aqualine|in\.?pro|hydroquip|hydroquip/i.test(make)) {
-      return res.json({ ok: true, valid: true, confidence: 'high', description: 'Peripheral communication error — control board has lost contact with a connected component.', code_type: 'fault' });
-    }
-    // Balboa / Sundance / Jacuzzi — heating sensor fault → overheat path
-    return res.json({ ok: true, valid: true, confidence: 'high', description: 'Temperature sensor fault — sensors are out of balance or one has failed.', code_type: 'fault' });
-  }
-
-  // Skip Haiku + unknown logging for well-known universal codes we already handle
-  const _knownCodes = ['OH','OHH','HFL','HL','DR','DRY','FLO','FLOW','FLC','FLT','FLC1','FLC2','FLC3','FLC4',
-    'HTR','HH','HOT','COOL','ICE','FREEZE','FRZ','COLD','HEAT','LO','HI','SN','SN1','SN2','SN3','SNA','SNB',
-    'E1','E2','E3','E4','E5','E6','E7','E8','EC1','EC2','EC3','PRHT','PRHOT','PRTCT','P-HI','HiLimt','PANEL','ICE',
-    'COOL','LO','HI','SL1','SL2','SL3','SL4'];
-  if (_knownCodes.includes(code.trim().toUpperCase().replace(/[^A-Z0-9]/g,''))) {
-    return res.json({ ok: true, valid: true, confidence: 'high', description: null, code_type: 'fault', known: true });
-  }
-
   try {
-    const haikuRes = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 120,
-        system: 'You are a hot tub and spa diagnostics expert. Reply only with valid JSON, no markdown.',
-        messages: [{ role: 'user', content: `Is "${code}" a real error code for a ${spa_make || ''} ${spa_model || ''} spa? If yes, what does it mean and what type is it? Reply with JSON only: {"valid": true/false, "confidence": "high"/"medium"/"low", "description": "brief description or null", "code_type": "fault"/"warning"/"status"/"unknown"}` }]
-      })
-    });
-    const haikuData = await haikuRes.json();
-    const rawText = haikuData.content?.[0]?.text || '{}';
-    let parsed = {};
-    try { parsed = JSON.parse(rawText.replace(/```json|```/g, '').trim()); } catch(e) {}
+    const { code, spa_make, spa_model, spa_year, deviceId } = req.body;
+    if (!code || code.length < 1) return res.json({ ok: false, reason: 'invalid_code' });
 
-    const isValid = parsed.valid === true;
-    const confidence = parsed.confidence || 'low';
-    const description = parsed.description || null;
-    const code_type = parsed.code_type || 'unknown';
-
-    // Log to Supabase if valid with medium/high confidence
-    if (isValid && confidence !== 'low') {
-      try {
-        await fetch(`${process.env.SUPABASE_URL}/rest/v1/unknown_error_codes`, {
-          method: 'POST',
-          headers: {
-            'apikey': process.env.SUPABASE_ANON_KEY,
-            'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY}`,
-            'Content-Type': 'application/json',
-            'Prefer': 'return=minimal'
-          },
-          body: JSON.stringify({ code, description, code_type, spa_make: spa_make || null, spa_model: spa_model || null, spa_year: spa_year || null, confidence, created_at: new Date().toISOString() })
-        });
-        console.log(`[unknown-error-code] Logged: "${code}" type=${code_type} confidence=${confidence}`);
-      } catch(e) { console.warn('[unknown-error-code] Supabase log failed:', e.message); }
-    } else {
-      console.log(`[unknown-error-code] Not logged: "${code}" valid=${isValid} confidence=${confidence}`);
+    // ── Sn brand fork — same code, three different meanings by manufacturer ──
+    if (code.trim().toUpperCase() === 'SN' && spa_make) {
+      const make = spa_make.toLowerCase();
+      // Gecko/Aeware platforms (Arctic Spas, Bullfrog, Clearwater, Dimension One) — normal boot display, status only
+      if (/arctic|bullfrog|clearwater|dimension.?one|coyote|horizon/i.test(make)) {
+        return res.json({ ok: true, valid: true, confidence: 'high', description: 'Normal boot/startup display on Gecko-based systems — not a fault. No action required.', code_type: 'status' });
+      }
+      // Brett Aqualine / In.Pro / HydroQuip — peripheral communication error
+      if (/brett|aqualine|in\.?pro|hydroquip|hydroquip/i.test(make)) {
+        return res.json({ ok: true, valid: true, confidence: 'high', description: 'Peripheral communication error — control board has lost contact with a connected component.', code_type: 'fault' });
+      }
+      // Balboa / Sundance / Jacuzzi — heating sensor fault → overheat path
+      return res.json({ ok: true, valid: true, confidence: 'high', description: 'Temperature sensor fault — sensors are out of balance or one has failed.', code_type: 'fault' });
     }
 
-    return res.json({ ok: true, valid: isValid, confidence, description, code_type });
-  } catch(e) {
-    console.error('[validate-error-code] Error:', e.message);
-    return res.json({ ok: false, reason: 'error' });
+    // Skip Haiku + unknown logging for well-known universal codes we already handle
+    const _knownCodes = ['OH','OHH','HFL','HL','DR','DRY','FLO','FLOW','FLC','FLT','FLC1','FLC2','FLC3','FLC4',
+      'HTR','HH','HOT','COOL','ICE','FREEZE','FRZ','COLD','HEAT','LO','HI','SN','SN1','SN2','SN3','SNA','SNB',
+      'E1','E2','E3','E4','E5','E6','E7','E8','EC1','EC2','EC3','PRHT','PRHOT','PRTCT','P-HI','HiLimt','PANEL','ICE',
+      'COOL','LO','HI','SL1','SL2','SL3','SL4'];
+    if (_knownCodes.includes(code.trim().toUpperCase().replace(/[^A-Z0-9]/g,''))) {
+      return res.json({ ok: true, valid: true, confidence: 'high', description: null, code_type: 'fault', known: true });
+    }
+
+    try {
+      const haikuRes = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
+        body: JSON.stringify({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 120,
+          system: 'You are a hot tub and spa diagnostics expert. Reply only with valid JSON, no markdown.',
+          messages: [{ role: 'user', content: `Is "${code}" a real error code for a ${spa_make || ''} ${spa_model || ''} spa? If yes, what does it mean and what type is it? Reply with JSON only: {"valid": true/false, "confidence": "high"/"medium"/"low", "description": "brief description or null", "code_type": "fault"/"warning"/"status"/"unknown"}` }]
+        })
+      });
+      const haikuData = await haikuRes.json();
+      const rawText = haikuData.content?.[0]?.text || '{}';
+      let parsed = {};
+      try { parsed = JSON.parse(rawText.replace(/```json|```/g, '').trim()); } catch(e) {}
+
+      const isValid = parsed.valid === true;
+      const confidence = parsed.confidence || 'low';
+      const description = parsed.description || null;
+      const code_type = parsed.code_type || 'unknown';
+
+      // Log to Supabase if valid with medium/high confidence
+      if (isValid && confidence !== 'low') {
+        try {
+          await fetch(`${process.env.SUPABASE_URL}/rest/v1/unknown_error_codes`, {
+            method: 'POST',
+            headers: {
+              'apikey': process.env.SUPABASE_ANON_KEY,
+              'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY}`,
+              'Content-Type': 'application/json',
+              'Prefer': 'return=minimal'
+            },
+            body: JSON.stringify({ code, description, code_type, spa_make: spa_make || null, spa_model: spa_model || null, spa_year: spa_year || null, confidence, created_at: new Date().toISOString() })
+          });
+          console.log(`[unknown-error-code] Logged: "${code}" type=${code_type} confidence=${confidence}`);
+        } catch(e) { console.warn('[unknown-error-code] Supabase log failed:', e.message); }
+      } else {
+        console.log(`[unknown-error-code] Not logged: "${code}" valid=${isValid} confidence=${confidence}`);
+      }
+
+      return res.json({ ok: true, valid: isValid, confidence, description, code_type });
+    } catch(e) {
+      console.error('[validate-error-code] Error:', e.message);
+      return res.json({ ok: false, reason: 'error' });
+    }
+  } catch(err) {
+    console.error('[/api/validate-error-code] error:', err.message);
+    if (!res.headersSent) res.status(500).json({ error: err.message });
   }
+
 });
 
 // ── Admin: Unknown Error Codes ──────────────────────────────────
@@ -3896,122 +3948,128 @@ app.post('/api/parts-set-generic', async (req, res) => {
 });
 
 app.post('/api/parts-list', async (req, res) => {
-  const { year, make, model, cacheKey, keyPartNumbers, compatibleParts } = req.body;
-  if (!make || !model) return res.status(400).json({ error: 'make and model required' });
-  // Parts list is free for all tiers -- no session required
-  const key = cacheKey || [year,make,model].map(v=>(v||'').toLowerCase().trim()).join('-').replace(/[^a-z0-9-]/g,'');
-  // Check in-memory cache first (fastest)
-  if (partsCache[key]) return res.json({ parts: partsCache[key], cached: true });
-
-  // Check Supabase persistent cache
   try {
-    const sbCacheRes = await fetch(`${process.env.SUPABASE_URL}/rest/v1/parts_cache?cache_key=eq.${encodeURIComponent(key)}&select=parts`, {
-      headers: { 'apikey': process.env.SUPABASE_ANON_KEY, 'Authorization': `Bearer ${process.env.SUPABASE_ANON_KEY}` }
-    });
-    if (sbCacheRes.ok) {
-      const sbRows = await sbCacheRes.json();
-      if (sbRows && sbRows.length > 0 && sbRows[0].parts) {
-        const cachedParts = sbRows[0].parts;
-        partsCache[key] = cachedParts; // warm in-memory cache
-        return res.json({ parts: cachedParts, cached: true });
-      }
-    }
-  } catch(e) { console.warn('[parts-list] Supabase cache read failed:', e.message); }
+    const { year, make, model, cacheKey, keyPartNumbers, compatibleParts } = req.body;
+    if (!make || !model) return res.status(400).json({ error: 'make and model required' });
+    // Parts list is free for all tiers -- no session required
+    const key = cacheKey || [year,make,model].map(v=>(v||'').toLowerCase().trim()).join('-').replace(/[^a-z0-9-]/g,'');
+    // Check in-memory cache first (fastest)
+    if (partsCache[key]) return res.json({ parts: partsCache[key], cached: true });
 
-  try {
-    // Build OEM part numbers context from key_part_numbers
-    let oemContext = '';
-    if (keyPartNumbers && typeof keyPartNumbers === 'object' && Object.keys(keyPartNumbers).length > 0) {
-      const partLines = Object.entries(keyPartNumbers).map(([k, val]) => {
-        const label = k.replace(/_/g, ' ');
-        return `  ${label}: ${val}`;
-      }).join('\n');
-      oemContext = `\n\nOEM PART NUMBERS FOR THIS SPA (use these exact SKUs in your output where applicable):\n${partLines}\n\nFor parts with OEM numbers: include the SKU in the part name field, e.g. "Heater element (4kW PDR) — HQP-85-8754". If the OEM data includes an xref value, add it in parentheses as "(OEM: XXXXXX)" only when it aids sourcing at other suppliers. For parts without OEM numbers, use generic descriptions as normal.`;
-    }
-
-    // Build compatible parts context from parts table
-    let partsTableContext = '';
-    if (compatibleParts && Array.isArray(compatibleParts) && compatibleParts.length > 0) {
-      const partsLines = compatibleParts.map(p => {
-        let line = `  [${p.category}] ${p.part_number}`;
-        if (p.description) line += ` — ${p.description}`;
-        if (p.manufacturer) line += ` (${p.manufacturer})`;
-        if (p.oem_part_number) line += ` OEM: ${p.oem_part_number}`;
-        if (p.oem_cross_references) line += ` xref: ${p.oem_cross_references}`;
-        if (p.superseded_by) line += ` SUPERSEDED BY: ${p.superseded_by}`;
-        if (p.notes) line += ` NOTE: ${p.notes}`;
-        return line;
-      }).join('\n');
-      partsTableContext = `\n\nVERIFIED COMPATIBLE PARTS FROM DATABASE (prioritize these over generic descriptions):\n${partsLines}\n\nFor superseded parts: show original part number AND add note "Superseded by [new] — order the newer part".\nFor parts with safety notes: include the safety note in the notes field of your JSON output.`;
-    }
-
-    const prompt = `Generate a concise parts list for a ${year||''} ${make} ${model} hot tub. Include only the 15 most commonly replaced parts. Return a JSON array only, no markdown fences, no explanation.${oemContext}${partsTableContext}`;
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'Content-Type':'application/json', 'x-api-key':process.env.ANTHROPIC_API_KEY, 'anthropic-version':'2023-06-01' },
-      body: JSON.stringify({ model:'claude-haiku-4-5-20251001', max_tokens:2400, system:PARTS_SYSTEM_PROMPT, messages:[{role:'user',content:prompt}] })
-    });
-    const data = await response.json();
-    logTokenUsage('parts-list', 'claude-haiku-4-5-20251001', data.usage, { cached: false });
-    if (!response.ok) return res.status(500).json({ error: data?.error?.message||'API error' });
-    const rawText = data.content?.map(b=>b.text||'').join('')||'';
-    console.error('[parts-list] raw response:', rawText.substring(0, 300));
-    // Strip markdown fences and clean before parsing
-    const cleaned = rawText.replace(/```json\s*/gi,'').replace(/```\s*/gi,'').trim();
-    const start = cleaned.indexOf('[');
-    const end = cleaned.lastIndexOf(']');
-    if (start === -1 || end === -1) throw new Error('No JSON array found in response');
-    const parts = JSON.parse(cleaned.slice(start, end + 1));
-
-    // Flag parts with safety warnings from compatible_parts for UI badge rendering
-    if (compatibleParts && compatibleParts.length > 0) {
-      parts.forEach(part => {
-        const match = compatibleParts.find(cp =>
-          cp.notes && (
-            (cp.part_number && part.part_number && cp.part_number === part.part_number) ||
-            (cp.description && part.name && part.name.toLowerCase().includes(cp.description.toLowerCase().split(' ')[0]))
-          )
-        );
-        if (match && match.notes) {
-          part.safety_warning = match.notes;
-        }
-        if (match && match.superseded_by) {
-          part.superseded_by = match.superseded_by;
-        }
+    // Check Supabase persistent cache
+    try {
+      const sbCacheRes = await fetch(`${process.env.SUPABASE_URL}/rest/v1/parts_cache?cache_key=eq.${encodeURIComponent(key)}&select=parts`, {
+        headers: { 'apikey': process.env.SUPABASE_ANON_KEY, 'Authorization': `Bearer ${process.env.SUPABASE_ANON_KEY}` }
       });
-    }
-
-    // FLAG: parts data quality check
-    const nullCount = parts.filter(p => !p.part_number || p.part_number === 'null' || p.part_number === null).length;
-    if (parts.length > 0 && nullCount / parts.length > 0.5) {
-      console.warn(`[FLAG] parts-data-thin → ${key} → ${nullCount}/${parts.length} parts missing part numbers`);
-    }
-    partsCache[key] = parts; // warm in-memory cache
-    // Persist to Supabase cache async — don't block response
-    (async () => {
-      try {
-        const sbWriteRes = await fetch(`${process.env.SUPABASE_URL}/rest/v1/parts_cache`, {
-          method: 'POST',
-          headers: {
-            'apikey': process.env.SUPABASE_ANON_KEY,
-            'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY}`,
-            'Content-Type': 'application/json',
-            'Prefer': 'resolution=merge-duplicates'
-          },
-          body: JSON.stringify({ cache_key: key, parts })
-        });
-        if (!sbWriteRes.ok) {
-          const errBody = await sbWriteRes.text();
-          console.error(`[parts-list] Supabase cache write failed — status ${sbWriteRes.status}:`, errBody);
-        } else {
-          console.log(`[parts-list] Supabase cache write OK — key: ${key}`);
+      if (sbCacheRes.ok) {
+        const sbRows = await sbCacheRes.json();
+        if (sbRows && sbRows.length > 0 && sbRows[0].parts) {
+          const cachedParts = sbRows[0].parts;
+          partsCache[key] = cachedParts; // warm in-memory cache
+          return res.json({ parts: cachedParts, cached: true });
         }
-      } catch(e) {
-        console.error('[parts-list] Supabase cache write exception:', e.message);
       }
-    })();
-    res.json({ parts, cached: false });
-  } catch(e) { console.error('Parts list error:', e.message); res.status(500).json({ error: e.message }); }
+    } catch(e) { console.warn('[parts-list] Supabase cache read failed:', e.message); }
+
+    try {
+      // Build OEM part numbers context from key_part_numbers
+      let oemContext = '';
+      if (keyPartNumbers && typeof keyPartNumbers === 'object' && Object.keys(keyPartNumbers).length > 0) {
+        const partLines = Object.entries(keyPartNumbers).map(([k, val]) => {
+          const label = k.replace(/_/g, ' ');
+          return `  ${label}: ${val}`;
+        }).join('\n');
+        oemContext = `\n\nOEM PART NUMBERS FOR THIS SPA (use these exact SKUs in your output where applicable):\n${partLines}\n\nFor parts with OEM numbers: include the SKU in the part name field, e.g. "Heater element (4kW PDR) — HQP-85-8754". If the OEM data includes an xref value, add it in parentheses as "(OEM: XXXXXX)" only when it aids sourcing at other suppliers. For parts without OEM numbers, use generic descriptions as normal.`;
+      }
+
+      // Build compatible parts context from parts table
+      let partsTableContext = '';
+      if (compatibleParts && Array.isArray(compatibleParts) && compatibleParts.length > 0) {
+        const partsLines = compatibleParts.map(p => {
+          let line = `  [${p.category}] ${p.part_number}`;
+          if (p.description) line += ` — ${p.description}`;
+          if (p.manufacturer) line += ` (${p.manufacturer})`;
+          if (p.oem_part_number) line += ` OEM: ${p.oem_part_number}`;
+          if (p.oem_cross_references) line += ` xref: ${p.oem_cross_references}`;
+          if (p.superseded_by) line += ` SUPERSEDED BY: ${p.superseded_by}`;
+          if (p.notes) line += ` NOTE: ${p.notes}`;
+          return line;
+        }).join('\n');
+        partsTableContext = `\n\nVERIFIED COMPATIBLE PARTS FROM DATABASE (prioritize these over generic descriptions):\n${partsLines}\n\nFor superseded parts: show original part number AND add note "Superseded by [new] — order the newer part".\nFor parts with safety notes: include the safety note in the notes field of your JSON output.`;
+      }
+
+      const prompt = `Generate a concise parts list for a ${year||''} ${make} ${model} hot tub. Include only the 15 most commonly replaced parts. Return a JSON array only, no markdown fences, no explanation.${oemContext}${partsTableContext}`;
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type':'application/json', 'x-api-key':process.env.ANTHROPIC_API_KEY, 'anthropic-version':'2023-06-01' },
+        body: JSON.stringify({ model:'claude-haiku-4-5-20251001', max_tokens:2400, system:PARTS_SYSTEM_PROMPT, messages:[{role:'user',content:prompt}] })
+      });
+      const data = await response.json();
+      logTokenUsage('parts-list', 'claude-haiku-4-5-20251001', data.usage, { cached: false });
+      if (!response.ok) return res.status(500).json({ error: data?.error?.message||'API error' });
+      const rawText = data.content?.map(b=>b.text||'').join('')||'';
+      console.error('[parts-list] raw response:', rawText.substring(0, 300));
+      // Strip markdown fences and clean before parsing
+      const cleaned = rawText.replace(/```json\s*/gi,'').replace(/```\s*/gi,'').trim();
+      const start = cleaned.indexOf('[');
+      const end = cleaned.lastIndexOf(']');
+      if (start === -1 || end === -1) throw new Error('No JSON array found in response');
+      const parts = JSON.parse(cleaned.slice(start, end + 1));
+
+      // Flag parts with safety warnings from compatible_parts for UI badge rendering
+      if (compatibleParts && compatibleParts.length > 0) {
+        parts.forEach(part => {
+          const match = compatibleParts.find(cp =>
+            cp.notes && (
+              (cp.part_number && part.part_number && cp.part_number === part.part_number) ||
+              (cp.description && part.name && part.name.toLowerCase().includes(cp.description.toLowerCase().split(' ')[0]))
+            )
+          );
+          if (match && match.notes) {
+            part.safety_warning = match.notes;
+          }
+          if (match && match.superseded_by) {
+            part.superseded_by = match.superseded_by;
+          }
+        });
+      }
+
+      // FLAG: parts data quality check
+      const nullCount = parts.filter(p => !p.part_number || p.part_number === 'null' || p.part_number === null).length;
+      if (parts.length > 0 && nullCount / parts.length > 0.5) {
+        console.warn(`[FLAG] parts-data-thin → ${key} → ${nullCount}/${parts.length} parts missing part numbers`);
+      }
+      partsCache[key] = parts; // warm in-memory cache
+      // Persist to Supabase cache async — don't block response
+      (async () => {
+        try {
+          const sbWriteRes = await fetch(`${process.env.SUPABASE_URL}/rest/v1/parts_cache`, {
+            method: 'POST',
+            headers: {
+              'apikey': process.env.SUPABASE_ANON_KEY,
+              'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY}`,
+              'Content-Type': 'application/json',
+              'Prefer': 'resolution=merge-duplicates'
+            },
+            body: JSON.stringify({ cache_key: key, parts })
+          });
+          if (!sbWriteRes.ok) {
+            const errBody = await sbWriteRes.text();
+            console.error(`[parts-list] Supabase cache write failed — status ${sbWriteRes.status}:`, errBody);
+          } else {
+            console.log(`[parts-list] Supabase cache write OK — key: ${key}`);
+          }
+        } catch(e) {
+          console.error('[parts-list] Supabase cache write exception:', e.message);
+        }
+      })();
+      res.json({ parts, cached: false });
+    } catch(e) { console.error('Parts list error:', e.message); res.status(500).json({ error: e.message }); }
+  } catch(err) {
+    console.error('[/api/parts-list] error:', err.message);
+    if (!res.headersSent) res.status(500).json({ error: err.message });
+  }
+
 });
 
 // ── QA Agent evaluation proxy ─────────────────────────────────────
