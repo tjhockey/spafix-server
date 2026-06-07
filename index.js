@@ -1,4 +1,4 @@
-process.env.APP_VERSION = "v4.9.19n";
+process.env.APP_VERSION = "v4.9.20v";
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -1280,6 +1280,22 @@ function logTokenUsage(route, model, usage, meta = {}) {
   console.log('[TOKENS]', JSON.stringify(entry));
 }
 
+// Session token accumulator -- keyed by clientId, resets with daily usage reset
+const sessionTokenStore = {};
+function accumulateTokens(clientId, route, usage) {
+  if (!usage || !clientId) return;
+  if (!sessionTokenStore[clientId]) sessionTokenStore[clientId] = { inputTokens: 0, outputTokens: 0, callCount: 0, routes: {} };
+  const s = sessionTokenStore[clientId];
+  s.inputTokens += usage.input_tokens || 0;
+  s.outputTokens += usage.output_tokens || 0;
+  s.callCount++;
+  s.routes[route] = (s.routes[route] || 0) + 1;
+}
+// Sonnet 4.6 pricing: $3/M input, $15/M output
+function estimateCost(inputTokens, outputTokens) {
+  return ((inputTokens / 1000000) * 3) + ((outputTokens / 1000000) * 15);
+}
+
 // ── Known error codes by brand ────────────────────────────────────
 const KNOWN_ERROR_CODES = {
   'Sundance':      ['FL1','FL2','FLO','OH','OHH','HFL','ILOC','ICE','DR','DRY','COOL','WARM','HOT','FLT','SN1','SN3','HH','E1','E2','E3'],
@@ -1291,8 +1307,20 @@ const KNOWN_ERROR_CODES = {
   'Bullfrog':      ['FL1','FL2','OH','HFL','ICE','SN1','SN3','ILOC'],
 };
 
+// ── Brand-specific code hints -- codes strongly associated with a platform/brand ─
+const CODE_BRAND_HINT = {
+  'HFL': 'Balboa',
+  'ILOC': 'Balboa',
+  'DR': 'Balboa',
+  'FLT': 'Sundance',
+  'HOT': 'Sundance',
+  'DY': 'Hot Spring',
+  'PD': 'Jacuzzi',
+  'CL': 'Jacuzzi',
+  'HL': 'Jacuzzi',
+};
+
 function validateErrorCode(code, spaMake) {
-  if (!code || !spaMake) return { valid: true };
   const brand = Object.keys(KNOWN_ERROR_CODES).find(b => spaMake.toLowerCase().includes(b.toLowerCase()));
   if (!brand) return { valid: true };
   const known = KNOWN_ERROR_CODES[brand];
@@ -1343,6 +1371,9 @@ Skip gate entirely when: [CP:] [SL:] [SD] or spa in history.
 
 =VAGUE INPUT=
 If the user's message is too vague to identify a specific symptom (e.g. "my hot tub isn't working", "it's broken", "something's wrong", "help"), ask ONE warm clarifying question BEFORE requesting spa details. Example: "Happy to help! What's it doing -- or not doing? For example: an error code on the display, not heating up, jets not working, or something else?" NEVER ask for spa details as the first response to a vague input. Gather the symptom first, then gate on spa details if needed.
+VAGUE INPUT EXCLUSIONS -- HARD STOP: The following are NOT vague and must NEVER trigger the clarifying question path. Route directly to the matching Tier template:
+- Any input naming a specific component: pump, heater, jets, display, panel, breaker, sensor, circulation, filter
+- Any input containing a specific symptom verb or phrase: won't start, won't turn on, stopped working, not heating, not turning on, leaking, no pressure, low pressure, humming, blank, unresponsive, shut off, shut down, shows a code, error code, flashing, not working
 
 =INFERRED CODE WORDING=
 When you infer a fault category from symptoms the user described (they did NOT report seeing a code on their display), use inference language -- not confirmation language. The user may never have seen a code at all.
@@ -1352,30 +1383,38 @@ The routing is the same either way. This is purely about accurate wording so the
 
 ACKNOWLEDGMENT RULES (no diagnostic steps, no quick checks -- diagnosis is SpaFix's job):
 TIER 1 -- SAFETY CRITICAL (OH, ICE, DR): Acknowledge with one sentence + 1 immediate safety action only + request phrase if spa unknown.
-- OH/overheat: "OH is an overheat code -- your spa shut down to protect itself from overheating. Turn it off at the panel and remove the cover while we sort this out."
+- OH/overheat: "OH is an overheat code -- your spa shut down to protect itself from overheating. Turn it off at the breaker box electrical panel or sub-panel and remove the cover while we sort this out."
 - ICE/freeze: "ICE means freeze protection triggered -- water temp dropped low enough to risk pipe damage. Make sure the spa has power so the freeze protection cycle can run."
 - DR/dry heater: "DR is a dry heater fault -- the heater fired without enough water to cool it. Don't run the heater again until we've checked the water level." NOTE: On Balboa-platform systems this code displays as lowercase "dr" and always means Dry heater fault -- never "Drive" or any other meaning.
 - SY/sensor failure: "SY is a sensor system failure -- your spa has shut down to protect itself. The control board can't read the water temperature sensor. Don't attempt to restart it until we've checked the sensor connections."
 
-TIER 2 -- URGENT (FLO, Sn codes, pump, jets, heater, leak): Acknowledge in one sentence only + request phrase if spa unknown. No quick checks.
-- FLO: "FLO means the system isn't detecting enough water flow."
-- Sn1/sensor: "That's a water temperature sensor fault -- the spa has shut down to protect itself. It won't run again until the fault is resolved."
-- Sn3/sensor: "That's a hi-limit sensor fault -- the spa has shut down to protect itself. The hi-limit sensor monitors for overheating conditions. It won't run again until the fault is resolved."
-- Sn/sensor (generic): "That's a temperature sensor fault -- the spa has shut down to protect itself. It won't run again until the fault is resolved."
-- Pump won't start: "A pump that won't start is usually power, capacitor, or wiring."
-- No jet pressure: "Low jet pressure is usually a pump, airlock, filter, or jet face issue -- let's run through it."
+COLD WEATHER CONTEXT RULE: When the user's message contains freeze/cold context words (freezing, frozen, cold outside, winter, cold weather, ice, below zero, sub-zero, freeze, frost) AND the spa has stopped working or is showing an error -- ALWAYS acknowledge freeze protection as the likely cause BEFORE asking any clarifying questions. Example: "That sounds like freeze protection may have triggered -- when temperatures drop low enough, the spa shuts down to protect the pipes. Let's check what's going on." Do NOT ask a generic "what's it doing?" question when cold weather context is explicitly stated.
+
+TIER 2 -- URGENT (FLO, Sn codes, pump, jets, heater, leak): Acknowledge using the matching template below -- do not summarize or shorten the template. The template defines the acknowledgment. No quick checks.
+- FLO: "FLO means the system isn't detecting enough water flow through the heater -- this is usually caused by a clogged filter, a failing circulation pump, or an airlock after a refill. The heater shuts down to protect itself until flow is restored."
+- HFL: "HFL stands for Heater Flow Low -- the system isn't detecting enough water moving through the heater and shut it down to protect the element. This is a low-flow fault, not a high-flow or pressure fault." NOTE: HFL is most common on Balboa-platform systems but also appears on Hot Spring, Caldera, Dimension One, and Bullfrog. Always means insufficient flow -- never excess flow or over-pressure.
+- Sn1/sensor: "That's a water temperature sensor fault -- the spa has shut down to protect itself. It won't run again until the fault is resolved.\n\nTo get you the right fix, which spa do you have -- the make, model, and year?\n\n[SEQ:overheat]"
+- Sn3/sensor: "That's a hi-limit sensor fault -- the spa has shut down to protect itself. The hi-limit sensor monitors for overheating conditions. It won't run again until the fault is resolved.\n\nTo get you the right fix, which spa do you have -- the make, model, and year?\n\n[SEQ:overheat]"
+- Sn/sensor (generic): "That's a temperature sensor fault -- the spa has shut down to protect itself. It won't run again until the fault is resolved.\n\nTo get you the right fix, which spa do you have -- the make, model, and year?\n\n[SEQ:overheat]"
+- Pump won't start: "A pump that won't start is usually a power delivery issue, a failed capacitor (the part that gives the motor its starting kick), or a wiring fault. Let's figure out which one."
+- No jet pressure: "Low jet pressure usually comes down to one of four things: a clogged filter, an airlock in the pump, a worn pump impeller, or closed jet faces. Let's figure out which one." NOTE: This template applies to ALL low-pressure jet scenarios including the contrast pattern -- jets running/on but output is weak, low, or absent. "The jets are on but there's no pressure" is the same scenario as "no jet pressure" -- do not treat active jets as a different fault class.
 - Heater not heating: "A heater that's stopped working usually comes down to one of three things: not enough water flowing through it (flow fault), a burned-out heating element (the part that actually makes heat), or a safety switch that tripped to prevent overheating (high-limit). Let's figure out which one."
-- Leak: "A leak from under the tub usually points to a fitting, seal, or pump union -- stop using the spa and turn it off at the breaker until we find the source."
-- Control panel unresponsive: "An unresponsive control panel is usually power, ribbon cable, or board."
+- Leak: "A leak from under the tub usually points to a fitting, seal, or pump union -- stop using the spa and turn it off at the breaker box electrical panel or sub-panel until we find the source."
+- Control panel unresponsive: "An unresponsive control panel usually means the topside panel has lost communication with the control board -- typically a power delivery issue, a failed ribbon cable connecting the panel to the board, or the board itself. Let's figure out which one."
 - Display blank: "A completely blank display usually means no power is reaching the topside -- check if the breaker has tripped or the GFCI outlet has popped before we go further."
 
 TIER 3 -- ALL OTHER CODES/ISSUES: Acknowledge in one sentence only + request phrase if spa unknown.
 - Green water: "Green water is almost always algae -- it means the sanitizer level has dropped and algae has taken hold. We'll need to shock the water and get the pH back in range to clear it."
-- COOL/COL: "COOL means the water temperature dropped below the set point -- this can happen when freeze protection kicks in, after the heater element fails, or if the spa cooled down during a power interruption. Let's figure out which one."
+- Cloudy water: "Cloudy or murky water is something we can definitely sort out. It usually points to a chemistry imbalance, filtration issue, or both -- let's narrow it down."
+- Chemical/chlorine smell: "A strong chemical smell usually means chloramines have built up -- that's combined chlorines off-gassing, often caused by low pH, high bather load, or insufficient shock treatment. Let's get the water balanced."
+- COOL/COL: "COOL means the water temperature dropped below the set point -- this can happen when freeze protection kicks in, after the heater element fails, or if the spa cooled down during a power interruption. If it doesn't clear on its own within a normal heating period, tap below and we'll run through it."
+- Smart Winter: "Smart Winter is an energy-saving mode that activates automatically when water temperature drops significantly -- the spa is running a reduced heating cycle to protect itself in cold conditions. If it doesn't clear on its own once the spa warms back up, tap below to continue."
 - OFF: "OFF means the spa has been manually shut down from the panel. If you didn't turn it off intentionally, that's worth looking into -- it could be a power issue, a tripped protection circuit, or an accidental button press."
 - "--" or dashes (unknown/no reading): "Those dashes mean the control system lost its reading -- it's not showing an error code, just that something isn't registering. Let's run through the diagnostic flow to find out what it's not seeing."
+- POWER_BLINK/POWER_OUT: "That code means the control system detected a power quality event -- a voltage fluctuation or brief power interruption that caused the system to reset. Check your breaker box electrical panel or sub-panel for any tripped breakers, and if this keeps happening consider having a licensed electrician check the incoming power supply."
+- READY_POWER_BLINK: "READY_POWER_BLINK means the spa detected a power interruption and has recovered -- it's back in standby and ready to run. If everything is functioning normally, no action is needed. If the code keeps reappearing, tap below to continue."
 
-STATUS CODE ROUTING: After explaining a status code (COOL, OFF, dashes, or similar non-fault codes), always offer a clear path forward. Do not leave the user without a next step. If spa is already known, route directly into the diagnostic flow -- do NOT ask for permission first with phrases like "Would you like me to walk you through..." or "Shall we start the diagnostic?". Just say "Let's run through it." or equivalent and proceed.
+STATUS CODE ROUTING -- HARD STOP: After explaining any status/informational code (COOL, OFF, dashes, Pr, SLP, Ecn, CLd, Smart Winter, POWER_BLINK, or similar non-fault codes), a forward direction is MANDATORY. Dead-ending with no next step is a critical failure. If spa is already known, route directly into the diagnostic flow -- do NOT ask permission. Just say "Let's run through it." or equivalent and proceed. If spa is unknown, the UI will inject a picker button automatically. Never end a status code response without a path forward.
 
 Request phrase: Do NOT output any "tap Spa Details Required" or similar CTA text. The UI renders entry point buttons automatically when spa details are missing. Your job is only to acknowledge the issue warmly. Never output template fields. Never say "above".
 
@@ -1492,7 +1531,7 @@ DIMENSION ONE: "warning light" is a global fault indicator only -- the specific 
 ALL OTHERS: standard text codes (FL1/FL2/FLO/FLOW).
 Accept any code user reports. Unrecognized: "Not familiar with [code] for [brand] -- did you mean [closest]?"
 Auto-correct typos. Emit >>COR. Confirm: "Got it -- **[corrected]**."
-BRAND MENTION RULE: If the user explicitly names a brand (e.g. "my Balboa system", "it's a Hot Spring"), ALWAYS reference that brand name in your acknowledgement. Never treat a named brand as generic. Example: user says "my Balboa HFL code" → response must open with "On Balboa systems, HFL means..." not "your spa has...". The brand name must appear in the first sentence.
+BRAND MENTION RULE -- HARD STOP: If the user explicitly names a brand (e.g. "my Balboa system", "it's a Hot Spring"), that brand name MUST appear in your first sentence. This is non-negotiable. Never treat a named brand as generic. Example: user says "my Balboa HFL code" → response MUST open with "On Balboa systems, HFL means..." not "your spa has...". The brand name MUST be in the first sentence -- failure to include it is a critical error.\n\nABBREVIATION RULE -- HARD STOP: Never expand an error code abbreviation by inference. If the code is in the DB, use that definition verbatim. If the code is NOT in the DB, say "I don't have that code on file -- can you describe what's happening?" Never invent an expansion. SA = Sensor A malfunction (not "sustained absence"). DR = Dry heater fault. Use the DB definition, always.
 SYMBOL CODE RULE: If an error code is a symbol description in ALL_CAPS (e.g. EXCLAMATION_ICON, FLASHING_LIGHT, WARNING_TRIANGLE), humanize it in your response -- never repeat the raw token back to the user. "EXCLAMATION_ICON" → "exclamation mark (⚠️)" or "warning symbol". Describe what the user sees on their panel, not the internal code name.`;
 
 const SP_MISC = `=MISC=
@@ -1525,7 +1564,7 @@ Rules:
 - When you have truly exhausted all remote diagnostic options or find yourself repeating the same advice, append [DIAG_END] on its own line at the very end of your response -- not before, not on first response`;
 
 function buildSystemPrompt(context = {}) {
-  const { hasDiagState, isGuideEntry, hasSpaConfirmed, hasPartRequest, isEquipmentBayStep, hasInstallRequest, isFirstMessage, stepContext, isOtherFreeText, otherHint } = context;
+  const { hasDiagState, isGuideEntry, hasSpaConfirmed, hasPartRequest, isEquipmentBayStep, hasInstallRequest, isFirstMessage, stepContext, isOtherFreeText, otherHint, hasExplicitBrandMention } = context;
   const modules = [SP_CORE];
   if (isFirstMessage || !hasSpaConfirmed) modules.push(SP_PERSONALITY);
   if (hasDiagState || hasSpaConfirmed) modules.push(SP_DIAG_FLOW);
@@ -1534,7 +1573,7 @@ function buildSystemPrompt(context = {}) {
   modules.push(SP_SAFETY);
   if (hasInstallRequest) modules.push(SP_INSTALL);
   if (isGuideEntry) modules.push(SP_GUIDE_CONTEXT);
-  if (hasSpaConfirmed || hasDiagState) modules.push(SP_BRAND_CONTEXT);
+  if (hasSpaConfirmed || hasDiagState || hasExplicitBrandMention) modules.push(SP_BRAND_CONTEXT);
   if (!hasDiagState && !isOtherFreeText) modules.push(SP_MISC);
   if (isOtherFreeText) {
     modules.push(SP_OTHER_FREETEXT);
@@ -1567,7 +1606,12 @@ function detectRequestContext(messages, diagStateIn, body) {
   }
   const isOtherFreeText = body.otherFreeText === true;
   const otherHint = body.otherHint || null;
-  return { hasDiagState, isGuideEntry, hasSpaConfirmed, hasPartRequest, isEquipmentBayStep, hasInstallRequest, isFirstMessage, stepContext, isOtherFreeText, otherHint };
+  // Detect explicit brand mention or brand-specific code hint in user message
+  const _contentLower = content.toLowerCase();
+  const hasExplicitBrandMention = KNOWN_BRANDS.some(b => _contentLower.includes(b.toLowerCase()))
+    || Object.keys(BRAND_ALIASES).some(a => _contentLower.includes(a))
+    || Object.keys(CODE_BRAND_HINT).some(code => _contentLower.includes(code.toLowerCase()));
+  return { hasDiagState, isGuideEntry, hasSpaConfirmed, hasPartRequest, isEquipmentBayStep, hasInstallRequest, isFirstMessage, stepContext, isOtherFreeText, otherHint, hasExplicitBrandMention };
 }
 
 
@@ -2098,6 +2142,18 @@ app.get("/api/version", (req, res) => {
   res.json({ server: process.env.APP_VERSION || 'unknown' });
 });
 
+app.get("/api/session-stats", (req, res) => {
+  const clientId = req.headers['x-client-id'] || req.ip;
+  const s = sessionTokenStore[clientId] || { inputTokens: 0, outputTokens: 0, callCount: 0, routes: {} };
+  res.json({
+    inputTokens: s.inputTokens,
+    outputTokens: s.outputTokens,
+    callCount: s.callCount,
+    routes: s.routes,
+    estimatedCostUSD: parseFloat(estimateCost(s.inputTokens, s.outputTokens).toFixed(6))
+  });
+});
+
 app.get("/api/brands", (req, res) => {
   // Detect country from Cloudflare header first, then X-Forwarded-For fallback
   const cfCountry = req.headers['cf-ipcountry'] || '';
@@ -2248,16 +2304,16 @@ async function isValidMessage(text) {
   return { valid: true };
 }
 // ── Anthropic API helper — module scope so all routes can use it ──
-async function callAnthropicWithRetry(payload, maxRetries = 3) {
+async function callAnthropicWithRetry(payload, maxRetries = 3, timeoutMs = 25000) {
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     if (attempt > 0) {
       const delay = attempt * 2000;
       console.log(`[Anthropic] 429 received, retrying in ${delay}ms (attempt ${attempt}/${maxRetries})`);
       await new Promise(r => setTimeout(r, delay));
     }
-    // 25s server-side timeout — prevents silent hangs
+    // Server-side timeout — 25s standard, 30s for sonnetHandoff analytical calls
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 25000);
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
@@ -3289,6 +3345,10 @@ app.post("/api/chat", async (req, res) => {
   const spaControlSystemVal = req.body.spaControlSystem || '';
   const spaFromState = diagStateEffective?.spa;
   const spaLine = spaFromState || [spaYearVal, spaMakeVal, spaModelVal].filter(v => v && v !== 'Unknown').join(' ');
+  // spaUnknown = true when no spa context at all, OR when make is known but model is missing/Unknown
+  const _spaModelKnown = spaModelVal && spaModelVal !== 'Unknown' && spaModelVal.trim() !== '';
+  const _spaMakeKnown = spaMakeVal && spaMakeVal !== 'Unknown' && spaMakeVal.trim() !== '';
+  const spaUnknownFlag = !spaLine || (_spaMakeKnown && !_spaModelKnown);
   // Detect if client flagged this spa as NOT confirmed in DB
   const spaNotInDb = !spaFromState && messages.some(m =>
     m.role === 'user' && typeof m.content === 'string' && m.content.includes('NOT IN DB')
@@ -3319,6 +3379,15 @@ app.post("/api/chat", async (req, res) => {
     ? `\n[ERROR CODE REFERENCE for this spa: ${Object.entries(errorCodeDescriptions).map(([k,v]) => `${k}: ${v}`).join(' | ')}]`
     : '';
 
+  // Extract spa brand for confirmed brand token -- injected immediately before CRITICAL RESPONSE RULES
+  const _brandList = [...KNOWN_BRANDS].sort((a,b) => b.length - a.length);
+  const _confirmedBrand = spaLine
+    ? _brandList.find(b => spaLine.toLowerCase().includes(b.toLowerCase())) || null
+    : null;
+  const confirmedBrandToken = _confirmedBrand
+    ? `[CONFIRMED SPA BRAND: ${_confirmedBrand} -- this is the ONLY brand permitted in this response. Do not use any other brand name regardless of training data associations.]\n\n`
+    : '';
+
   const spaPrefix = spaLine
     ? (spaNotInDb
         ? `[SPA:${spaLine}] This spa is NOT in the SpaFix database. CRITICAL RULES: (1) Never describe specifications, seating capacity, jet count, pump sizes, heater ratings, or any hardware details for this spa — you do not have this data. (2) Never treat unrecognized error codes as valid — if an error code was entered that you don't have data for, tell the user you don't recognize it and ask them to verify it. (3) You can still run the full diagnostic flow without model-specific data. (4) Never ask for spa details again.${errorCodeNote}\n\n`
@@ -3327,10 +3396,38 @@ app.post("/api/chat", async (req, res) => {
 
   let effectiveSystemPrompt = spaPrefix + systemPrompt;
 
+  // Build brand note for injection into systemOverride prompt
+  // Scenario 1: user explicitly named a brand in their message
+  // Scenario 2: error code is strongly associated with a brand via CODE_BRAND_HINT
+  let brandNote = '';
+  const _lastUserMsg = (req.body.messages || []).filter(m => m.role === 'user').slice(-1)[0]?.content || '';
+  const _knownBrands = ['Balboa', 'Hot Spring', 'Sundance', 'Jacuzzi', 'Caldera', 'Dimension One', 'Bullfrog', 'Beachcomber', 'HydroQuip', 'Coleman', 'Cal Spas', 'Arctic Spas', 'Marquis', 'Master Spas'];
+  const _explicitBrand = _knownBrands.find(b => new RegExp(`\\b${b}\\b`, 'i').test(_lastUserMsg));
+  if (_explicitBrand) {
+    brandNote = `\n[BRAND NOTE: User explicitly named "${_explicitBrand}" -- this brand MUST appear in your first sentence. Open with "On ${_explicitBrand} systems..." or equivalent.]`;
+  } else {
+    // Scenario 2: code-to-brand hint -- match 2-5 char uppercase codes including numbers
+    const _codeMatch = _lastUserMsg.match(/\b([A-Za-z]{2,5}[\d]*)\b/g);
+    const _hintBrand = _codeMatch
+      ? _codeMatch.map(c => CODE_BRAND_HINT[c.toUpperCase()]).find(Boolean)
+      : null;
+    const _hintCode = _codeMatch
+      ? _codeMatch.find(c => CODE_BRAND_HINT[c.toUpperCase()])
+      : null;
+    if (_hintBrand && _hintCode) {
+      brandNote = `\n[BRAND NOTE: "${_hintCode.toUpperCase()}" is strongly associated with ${_hintBrand} platform -- your first sentence MUST reference "${_hintBrand}". Open with "On ${_hintBrand} systems..." or equivalent.]`;
+    }
+  }
+
   // systemOverride -- use client-supplied prompt, diagStateEffective already nulled above
   // spaPrefix is prepended so brand/spa context is always available to Claude
+  // sonnetHandoff calls skip the error code rules block -- they need analytical responses not 1-2 sentence IDs
   if (req.body.systemOverride && typeof req.body.systemOverride === 'string') {
-    effectiveSystemPrompt = spaPrefix + req.body.systemOverride + `\n\n=CRITICAL RESPONSE RULES=\nThis is an INITIAL CODE IDENTIFICATION response only. HARD STOPS -- the following are STRICTLY FORBIDDEN:\n- Numbered steps of any kind (1. 2. 3.)\n- Bullet points listing causes or fixes\n- Any mention of specific repair actions (replacing parts, testing voltages, adjusting settings, etc.)\n- "Here's what to check" or any equivalent lead-in to a list\n- Phrases like "first", "next", "then", "finally" that imply a sequence\n- Asking permission to start the diagnostic sequence ("Would you like me to walk you through...", "Shall we start...", "Want me to help you diagnose...") -- STRICTLY FORBIDDEN\n- Passive deferral phrases ("let me know if you'd like to dig deeper", "let me know and we can investigate", "feel free to ask", "if you want more details") -- STRICTLY FORBIDDEN\n- Transitional phrases that imply waiting for user input ("From here...", "The next step would be...", "We can then...") -- STRICTLY FORBIDDEN\n- Substituting a different spa model name from your training data\nRespond in 1-2 sentences MAXIMUM: identify the code and explain what it means in plain language. End there. The diagnostic sequence launches automatically -- do not reference it, do not invite further questions.\n\nBRAND MENTION RULE: The spa brand is provided in the [SPA:] prefix above. ALWAYS reference that brand by name in your first sentence. Never treat a named brand as generic. Example: Balboa spa with HFL code -- response MUST open with "On Balboa systems, HFL means..." not "your spa has...". The brand name MUST appear in the first sentence.\n\nSTATUS CODE NEXT STEP: If this code is purely informational (priming mode, panel lock, status indicator, mode display) with no fault diagnostic path, end with exactly this phrase: "If this doesn't clear on its own, let me know and we can dig deeper." Never leave the user with a dead-end response.`;
+    if (req.body.sonnetHandoff) {
+      effectiveSystemPrompt = spaPrefix + req.body.systemOverride;
+    } else {
+      effectiveSystemPrompt = spaPrefix + req.body.systemOverride + `\n\n` + confirmedBrandToken + `\n\n=CRITICAL RESPONSE RULES=\n\nBRAND RULE -- HARD STOP:\nDetermine the spa brand from the following sources in priority order:\n1. [BRAND NOTE:] if present in this prompt -- use that brand, it means the user explicitly named it\n2. [SPA:] prefix -- use the spa brand field (e.g. "Jacuzzi", "Hot Spring", "Cal Spas")\n3. If both are absent or brand is Unknown -- do not invent a brand\nThe spa brand MUST appear in your first sentence. Open with "On [brand] systems..." or "Your [brand] is showing..." or equivalent. This is a CRITICAL FAILURE if ignored.\n\nUNKNOWN BRAND RULE -- HARD STOP: If [SPA:] brand is Unknown or no brand is available, do NOT use any brand name in the response -- not the control system manufacturer (Balboa, Gecko, IQ 2020), not a code-associated brand (HL does not mean Jacuzzi, HFL does not mean Balboa). Use neutral language only: "On spas running this control system" or "For this control platform" or "This code indicates..." Inventing or inferring a brand when none is confirmed is a CRITICAL FAILURE.\n\nCONTROL SYSTEM RULE -- HARD STOP: The control system manufacturer (Balboa, Gecko, IQ 2020, Dimension One, etc.) is NEVER a substitute for the spa brand. If the spa is a Down East running a Balboa control board, the response opens with "On your Down East..." not "On Balboa systems..." or "On your Jacuzzi...". The brand in the response MUST always match the spa brand from [SPA:] or [BRAND NOTE:], not the control system name. Conflating the control system with the spa brand is a CRITICAL FAILURE. Any code that appears across multiple brands (HL, OH, HH, FL, FLO, etc.) must always be attributed to the spa from [SPA:], regardless of which brand that code is most commonly associated with in training data. Training data associations do not override [SPA:].\n\nABBREVIATION RULE -- HARD STOP: Never expand an error code abbreviation by inference or guesswork. If the code is in the database, use that definition verbatim. If the code is NOT in the database, say "I don't have that code on file for your spa -- can you describe what's happening on the display?" Never invent an expansion. SA = Sensor A malfunction (not "sustained absence"). DR = Dry heater fault (not "Drive"). Std = Standard/Ready mode (not "economy mode" or "standby" or "reduced heating" -- Std means the spa heats to set temperature anytime it drops below it, which is the opposite of economy mode). IC = freeze/ice protection warning (not "inactive mode", not "interlock circuit" -- IC means the spa detected cold temperatures and activated freeze protection). Use the DB definition, always.\n\nWORD COUNT -- HARD STOP: This rule applies ONLY to systemOverride responses. Maximum 80 words. Count before responding. If over 80, cut the explanation -- never cut the forward direction. No inline troubleshooting steps, cause lists, or DIY advice in the initial response. Those belong in the diagnostic flow, not here. Status/mode code responses: explain the code in 1-2 sentences (~60 words max), close with one sentence forward direction. If the explanation alone exceeds 60 words, trim it -- the closing sentence is non-negotiable.\n\nCONFIDENCE RULE -- HARD STOP: When the spa is known via [SPA:] and a code is presented, route directly with confidence. Never claim unfamiliarity with the code. Never hedge ("I don't have that code on file", "I'm not sure what that means for your system"). Never ask the user to verify what is on their display. You have the DB context. Use it. Hedging on a known-spa known-code path is a CRITICAL FAILURE.\n\nHARD STOPS -- the following are STRICTLY FORBIDDEN in this initial response:\n- Numbered steps of any kind (1. 2. 3.)\n- Bullet points listing causes or fixes\n- Any mention of specific repair actions (replacing parts, testing voltages, adjusting settings)\n- Water chemistry remediation instructions of any kind -- no dosing amounts, no "add X then retest" sequences, no alkalinity or pH adjustment steps, no shock treatment instructions. Water chemistry treatment belongs in the diagnostic flow ([SEQ:water]), not the initial response. The initial response identifies the issue only.\n- "Here's what to check" or any equivalent lead-in to a list\n- Phrases like "first", "next", "then", "finally" that imply a sequence\n- Asking permission to start the diagnostic sequence ("Would you like me to walk you through...", "Shall we start...", "Want me to help you diagnose...") -- STRICTLY FORBIDDEN\n- Passive deferral phrases ("let me know if you'd like to dig deeper", "feel free to ask", "if you want more details") -- STRICTLY FORBIDDEN\n- Transitional phrases that imply waiting for user input ("From here...", "The next step would be...", "We can then...") -- STRICTLY FORBIDDEN\n- Substituting a different spa model name from your training data\n\nMULTIPLE CODES RULE: If the user states multiple specific error codes (e.g. "showing Sn1 or Sn3", "either FL1 or FL2"), do NOT ask which one is showing. Acknowledge both, explain what they share in common, and proceed to spa details entry. The diagnostic flow handles the specific code after spa context is collected. Asking which code is showing when the user already listed them is a CRITICAL FAILURE.\n\nROUTING TAG -- MANDATORY: Respond in 1-2 sentences MAX. Append exactly one [SEQ:x] tag at the very end of your response. The diagnostic sequence launches automatically -- do not reference it, do not invite further questions. NEVER omit the tag.\n\nFAULT CODE RULE -- PREAMBLE: [SEQ:none] is STRICTLY FORBIDDEN for fault or warning codes EXCEPT the board/comm/memory exception listed below. All fault codes must route to a sequence.\n\nRouting table -- use the FIRST matching rule:\n- General alert / warning indicators: EXCLAMATION_ICON, WARNING_TRIANGLE, FLASHING_LIGHT, and any undifferentiated alert symbol \\xe2\\x86\\x92 [SEQ:overheat] (safer default for ambiguous alerts)\\n- Overheat / sensor: OH, HH, OHH, OHS, Sn, Sn1, Sn2, Sn3, BOO, err 5, SA, SB, ---, -- \xe2\x86\x92 [SEQ:overheat]\n- Freeze protection / cold alert: ICE, IC, COL, SP-F3, SP-F* (Marquis freeze faults), and any freeze protection fault \xe2\x86\x92 [SEQ:heat]\n- Flow / dry heater: FLO, FL1, FL2, FLO2, FLT, DR, dY (Balboa-platform flow/dry fault -- NOT a delay timer or benign status code; dY = flow restriction or dry heater condition requiring diagnosis) \xe2\x86\x92 [SEQ:flow]\n- BLB (burned-out bulb / lighting fault -- Hot Spring and Sundance only, NO Balboa association) \xe2\x86\x92 [SEQ:none] + REQUIRED closing: "This is a lighting fault -- the bulb needs to be replaced. Tap below to find the right replacement bulb for your spa."\n- Blower / jets / electrical safety: GF, GFCI, jet pump failure, pressure faults \xe2\x86\x92 [SEQ:jets]\n- Water chemistry: water quality, chemistry imbalance \xe2\x86\x92 [SEQ:water]\n- Board / comm / memory: BUF, SY, SP-BR, and any control board failure, memory buffer error, or inter-board communication loss \xe2\x86\x92 [SEQ:none] + REQUIRED closing: "This one needs a closer look -- tap below and I'll pull in a deeper analysis." ONLY permitted [SEQ:none] exception for fault codes.\n- Status / mode codes: SLP, Slp/SL, Pr, Prr, COOL, OFF, Ecn, CLd, Smart Winter, Stby, panel lock, priming mode \xe2\x86\x92 [SEQ:none]\n- Power events: POWER_BLINK, POWER_OUT, voltage fluctuation, brownout \xe2\x86\x92 [SEQ:none]\n- Unrecognized fault \xe2\x86\x92 [SEQ:overheat] (safer default)\n\nFORWARD DIRECTION -- HARD STOP: Every response on a known-spa path MUST close with an active forward direction. NEVER dead-end. Rules by response type:\\n- Fault codes ([SEQ:flow], [SEQ:overheat], [SEQ:jets], [SEQ:heat], [SEQ:water]): the sequence launches automatically -- no additional closing needed beyond the explanation.\\n- Status/mode codes ([SEQ:none]): explain the code in 1-2 sentences, then close with exactly one sentence: "If this doesn't clear on its own within a few minutes, [specific action]." HARD STOP: status/mode code responses follow the same HARD STOPS as fault codes -- no inline repair steps, no power-cycle instructions, no conditional advice, no step-by-step recovery. The one-sentence closing IS the forward direction. Nothing more.\\n- Power events ([SEQ:none]): close with "If this keeps reappearing, tap below and we can investigate the power supply." Same HARD STOPS apply -- no inline electrician advice or repair steps.\\n- Board/comm faults ([SEQ:none] exception): close with "This one needs a closer look -- tap below and I'll pull in a deeper analysis."\\nPassive language ("let me know", "feel free to ask", "if you'd like to dig deeper") is STRICTLY FORBIDDEN as a closing.` + (brandNote ? `\n\n${brandNote}` : '');
+    }
   }
 
   // Re-evaluate after potential systemOverride null -- must be after the block above
@@ -3344,8 +3441,9 @@ app.post("/api/chat", async (req, res) => {
   }
 
   async function callAndProcess(tier) {
-    const diagTokenCap = hasDiagStateActive ? 500 : 700;
-    const response = await callAnthropicWithRetry({ model: "claude-sonnet-4-6", max_tokens: diagTokenCap, system: effectiveSystemPrompt, messages: trimmedMessages });
+    const diagTokenCap = req.body.sonnetHandoff ? 1000 : (hasDiagStateActive ? 500 : 700);
+    const handoffTimeout = req.body.sonnetHandoff ? 30000 : 25000;
+    const response = await callAnthropicWithRetry({ model: "claude-sonnet-4-6", max_tokens: diagTokenCap, system: effectiveSystemPrompt, messages: trimmedMessages }, 3, handoffTimeout);
     const data = await response.json();
     if (!response.ok) throw new Error(data?.error?.message || "API error");
     const rawReply = data.content?.map(b => b.text || "").join("") || "";
@@ -3372,10 +3470,38 @@ app.post("/api/chat", async (req, res) => {
       .replace(/<br\s*\/?>/gi, "\n")
       .trim();
     const reply = applyFireTemplates(cleanReply).trim();
+    // Brand attribution output correction -- fires when confirmed brand doesn't match
+    // response opening. Handles training data associations overriding [SPA:] context.
+    // Only corrects possessive/intro patterns at response start -- never mid-sentence.
+    // Derive confirmed brand from spaLine (in scope via closure from request handler)
+    const _cbBrandList = [...KNOWN_BRANDS].sort((a,b) => b.length - a.length);
+    const _confirmedBrandLocal = spaLine
+      ? _cbBrandList.find(b => spaLine.toLowerCase().includes(b.toLowerCase())) || null
+      : null;
+    const _wrongBrands = ['Arctic Spas','Beachcomber','Bullfrog','Cal Spas','Caldera',
+      'Coleman','Dimension One','Down East','HydroQuip','Hot Spring','In.Pro','Jacuzzi',
+      'Leisure Bay','Marquis','Master Spas','Sundance','Tiger River','Balboa','Gecko','IQ 2020'
+    ].sort((a,b) => b.length - a.length);
+    const _brandGroup = '(' + _wrongBrands.map(b => b.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')';
+    const _brandPattern = new RegExp('^(Your|On your|On|The)\s+' + _brandGroup + '(?=[\s,\.\-])', 'i');
+    const _brandPatternBare = new RegExp('^' + _brandGroup + '\s+(systems?|spas?|unit|tub)(?=[\s,\.\-])', 'i');
+    const _startsWithConfirmed = (text, brand) => new RegExp('^' + brand.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?=[\s,\.\-]|$)', 'i').test(text.trim());
+    let correctedReply = reply;
+    if (_confirmedBrandLocal && reply && !_startsWithConfirmed(reply, _confirmedBrandLocal)) {
+      const _trimmed = reply.trim();
+      const _m = _brandPattern.exec(_trimmed);
+      if (_m) {
+        correctedReply = _m[1] + ' ' + _confirmedBrandLocal + _trimmed.slice(_m[0].length);
+      } else {
+        const _m2 = _brandPatternBare.exec(_trimmed);
+        if (_m2) correctedReply = _confirmedBrandLocal + _trimmed.slice(_m2[1].length);
+      }
+    }
     // Guard: if signal stripping left an empty reply, return a safe fallback
     // rather than sending '' which causes a silent blank response on the client
-    const safeReply = reply || "I didn't quite catch that -- could you try again?";
+    const safeReply = correctedReply || "I didn't quite catch that -- could you try again?";
     logTokenUsage('chat', 'claude-sonnet-4-6', data.usage, { tier });
+    accumulateTokens(clientId, req.body.sonnetHandoff ? 'sonnet-handoff' : 'chat', data.usage);
     const updatedDiagState = processDiagSignals(rawReply, clientId, lastMsgContent);
     if (testerName) {
       const lm = messages[messages.length - 1];
@@ -3386,7 +3512,7 @@ app.post("/api/chat", async (req, res) => {
   }
 
   if (premiumAccess) {
-    try { const { reply, diagState } = await callAndProcess('admin'); res.json({ reply, diagState, usage: null }); }
+    try { const { reply, diagState } = await callAndProcess('admin'); res.json({ reply, diagState, spaUnknown: spaUnknownFlag, usage: null }); }
     catch (err) { res.status(500).json({ error: err.message }); }
     return;
   }
@@ -3407,12 +3533,12 @@ app.post("/api/chat", async (req, res) => {
       }
       u.dailyMsgs++;
     }
-    try { const { reply, diagState } = await callAndProcess('free'); res.json({ reply, diagState, usage: { dailyMsgs: u.dailyMsgs, dailyLimit: FREE_DAILY_MSG_LIMIT, weeklySessions: u.weeklySessions, weeklyLimit: FREE_WEEKLY_SESSION_LIMIT } }); }
+    try { const { reply, diagState } = await callAndProcess('free'); res.json({ reply, diagState, spaUnknown: spaUnknownFlag, usage: { dailyMsgs: u.dailyMsgs, dailyLimit: FREE_DAILY_MSG_LIMIT, weeklySessions: u.weeklySessions, weeklyLimit: FREE_WEEKLY_SESSION_LIMIT } }); }
     catch (err) { res.status(500).json({ error: err.message }); }
     return;
   }
 
-  try { const { reply, diagState } = await callAndProcess('pro'); res.json({ reply, diagState, usage: null }); }
+  try { const { reply, diagState } = await callAndProcess('pro'); res.json({ reply, diagState, spaUnknown: spaUnknownFlag, usage: null }); }
   catch (err) { res.status(500).json({ error: err.message }); }
   } catch (outerErr) {
     console.error('[/api/chat] UNHANDLED ERROR:', outerErr.message, outerErr.stack);
