@@ -1,4 +1,4 @@
-process.env.APP_VERSION = "v4.9.20ap";
+process.env.APP_VERSION = "v4.9.20ar";
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -2392,6 +2392,11 @@ app.post("/api/diag-button", async (req, res) => {
     }
 
     let state = getDiagState(clientId);
+    // Fallback: if server lost in-memory state (restart/IP change), restore from client
+    if (!state && req.body.diagState && req.body.diagState.currentStep) {
+      state = req.body.diagState;
+      setDiagState(clientId, state);
+    }
     if (!state) return res.status(400).json({ error: 'No active diagnosis' });
 
     const step = DIAG_STEPS[stepId];
@@ -2468,8 +2473,7 @@ app.post("/api/diag-button", async (req, res) => {
         stepResult.skipped = false; // mark skipped only after user confirms via skipConfirmed
         advanceNow = false;
         skipPending = true;
-        if (!briefMode) {
-          const skipReasons = {
+        const skipReasons = {
             'S4':  "Air locks are one of the most common causes of flow errors — skipping means we can't rule it out.",
             'H4':  "Air locks are one of the most common causes of heating problems — skipping means we can't rule it out.",
             'J4':  "Air locks are a common cause of jet pressure loss — skipping means we can't rule it out.",
@@ -2484,6 +2488,7 @@ app.post("/api/diag-button", async (req, res) => {
             'H10': "Checking fuses takes 30 seconds and rules out one of the cheapest possible fixes.",
             'J10': "Checking fuses takes 30 seconds and rules out one of the cheapest possible fixes.",
           };
+        if (!briefMode) {
           const reason = skipReasons[stepId] || "This step helps narrow things down — it's worth a quick look before moving on.";
           responseMsg = reason;
         } else {
