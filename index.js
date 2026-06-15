@@ -1,4 +1,4 @@
-process.env.APP_VERSION = "v4.9.20ar";
+process.env.APP_VERSION = "v4.9.20as";
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -1375,7 +1375,8 @@ Skip gate entirely when: [CP:] [SL:] [SD] or spa in history.
 If the user's message is too vague to identify a specific symptom (e.g. "my hot tub isn't working", "it's broken", "something's wrong", "help"), ask ONE warm clarifying question BEFORE requesting spa details. Example: "Happy to help! What's it doing -- or not doing? For example: an error code on the display, not heating up, jets not working, or something else?" NEVER ask for spa details as the first response to a vague input. Gather the symptom first, then gate on spa details if needed.
 VAGUE INPUT EXCLUSIONS -- HARD STOP: The following are NOT vague and must NEVER trigger the clarifying question path. Route directly to the matching Tier template:
 - Any input naming a specific component: pump, heater, jets, display, panel, breaker, sensor, circulation, filter
-- Any input containing a specific symptom verb or phrase: won't start, won't turn on, stopped working, not heating, not turning on, leaking, no pressure, low pressure, humming, blank, unresponsive, shut off, shut down, shows a code, error code, flashing, not working
+- Any input containing a specific symptom verb or phrase: won't start, won't turn on, won't come on, not turning on, stopped working, not heating, leaking, no pressure, low pressure, humming, blank, unresponsive, shut off, shut down, shows a code, error code, flashing, not working, not running, not starting, stopped heating, stopped working
+- Any input naming a component with a failure state: "pump won't", "heater won't", "jets won't", "pump not", "heater not", "jets not" -- component + failure is NEVER vague
 - Any input containing a specific error code (OH, FLO, FL1, FL2, Sn, Sn1, Sn2, Sn3, Snb, SnA, DR, ICE, IC, HFL, and any other alphanumeric code pattern) -- error codes are never vague
 
 =INFERRED CODE WORDING=
@@ -1400,7 +1401,7 @@ TIER 2 -- URGENT (FLO, Sn codes, pump, jets, heater, leak): Acknowledge using th
 - Sn1/sensor: "That's a water temperature sensor fault -- the spa has shut down to protect itself. It won't run again until the fault is resolved.\n\nTo get you the right fix, which spa do you have -- the make, model, and year?\n\n[SEQ:overheat]"
 - Sn3/sensor: "That's a hi-limit sensor fault -- the spa has shut down to protect itself. The hi-limit sensor monitors for overheating conditions. It won't run again until the fault is resolved.\n\nTo get you the right fix, which spa do you have -- the make, model, and year?\n\n[SEQ:overheat]"
 - Sn/sensor (generic): "That's a temperature sensor fault -- the spa has shut down to protect itself. It won't run again until the fault is resolved.\n\nTo get you the right fix, which spa do you have -- the make, model, and year?\n\n[SEQ:overheat]"
-- Pump won't start: "A pump that won't start is usually a power delivery issue, a failed capacitor (the part that gives the motor its starting kick), or a wiring fault. Let's figure out which one."
+- Pump won't start / won't turn on: "A pump that won't start is usually a power delivery issue, a failed capacitor (the part that gives the motor its starting kick), or a wiring fault. Let's figure out which one.\n\nTo get you the right fix, which spa do you have -- the make, model, and year?\n\n[SEQ:jets]"
 - No jet pressure: "Low jet pressure usually comes down to one of four things: a clogged filter, an airlock in the pump, a worn pump impeller, or closed jet faces. Let's figure out which one." NOTE: This template applies to ALL low-pressure jet scenarios including the contrast pattern -- jets running/on but output is weak, low, or absent. "The jets are on but there's no pressure" is the same scenario as "no jet pressure" -- do not treat active jets as a different fault class.
 - Heater not heating: "A heater that's stopped working usually comes down to one of three things: not enough water flowing through it (flow fault), a burned-out heating element (the part that actually makes heat), or a safety switch that tripped to prevent overheating (high-limit). Let's figure out which one."
 - Leak: "A leak from under the tub usually points to a fitting, seal, or pump union -- stop using the spa and turn it off at the breaker box electrical panel or sub-panel until we find the source."
