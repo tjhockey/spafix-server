@@ -1,4 +1,4 @@
-process.env.APP_VERSION = "v4.9.20as";
+process.env.APP_VERSION = "v4.9.20au";
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -608,6 +608,7 @@ const DIAG_STEPS = {
   },
   S8a: { id:'S8a', next:'S8b', label:'Circ pump',
     fire:'F:CP',
+    fireAckRequired:'CP',
     bayStep:true,
     question:'Find the circulation pump — the smaller pump separate from the jet pumps. Some circ pumps run continuously while others only activate with certain features — if yours isn\'t running right now, try activating the jets or heating cycle to bring it online. Some spas have more than one — if yours does, check each one. Feel the housing.',
     buttons:[
@@ -629,6 +630,7 @@ const DIAG_STEPS = {
   },
   S8c: { id:'S8c', next:'S9', label:'Flow switch jumper',
     fire:'F:FJ',
+    fireAckRequired:'FJ',
     bayStep:true,
     question:'We\'re going to temporarily bypass the flow switch to test if it\'s the cause. With power OFF, photograph your wire connections, disconnect the flow switch wires, and bridge the two terminals with a small wire or jumper. Restore power and check if the error clears.',
     buttons:[
@@ -767,6 +769,7 @@ const DIAG_STEPS = {
   },
   H8a: { id:'H8a', next:'H11', label:'Circ pump',
     fire:'F:CP',
+    fireAckRequired:'CP',
     bayStep:true,
     question:"Find the circulation pump — the smaller pump separate from the jet pumps. The circ pump is responsible for moving water through the heater. If it isn't running, the heater will never fire. Some circ pumps run continuously; others activate with the heating cycle. Feel the housing — it should be warm and you should hear a faint hum.",
     buttons:[
@@ -2516,7 +2519,423 @@ app.post("/api/diag-button", async (req, res) => {
     // Handle special actions
     if (outcome === 'action') {
       switch(action) {
+        // ── W_ SEQUENCE HANDLERS (added to match W_ step action keys) ──────────
+
+        // W1: Symptom routing
+        case 'water_appearance':
+          responseMsg = null;
+          advanceNow = true;
+          // Routes to W_A1 (cloudy/foamy/green branch) via next step
+          break;
+
+        case 'water_smell':
+          responseMsg = null;
+          advanceNow = true;
+          break;
+
+        case 'water_feel':
+          responseMsg = null;
+          advanceNow = true;
+          break;
+
+        case 'water_behavior':
+          responseMsg = null;
+          advanceNow = true;
+          break;
+
+        // W2: Water age
+        case 'water_old':
+          responseMsg = "Water that's 3–4 months old is getting close to the end of its useful life. High dissolved solids build up over time and make it harder to balance chemistry. We can still treat it, but if problems persist after treatment, a full drain and refill is the most reliable fix. Let's continue the diagnosis.";
+          stepResult.passed = true;
+          advanceNow = true;
+          break;
+
+        case 'water_very_old':
+          responseMsg = "Water older than 4 months has accumulated too many dissolved solids to balance reliably. We strongly recommend a full drain and refill for best results. That said, let's continue the diagnosis so you know exactly what you're dealing with.";
+          stepResult.passed = true;
+          advanceNow = true;
+          break;
+
+        // W3: Test guide
+        case 'water_test_guide':
+          responseMsg = ["**How to Test Your Spa Water**",
+            "",
+            "1. **Dip the strip** -- submerge a test strip for 2 seconds, then remove it horizontally",
+            "2. **Wait 15 seconds** -- hold the strip level while the pads change color",
+            "3. **Compare to the chart** -- match each pad to the color chart on the bottle",
+            "4. **Record your readings** -- note pH, total alkalinity, and sanitizer levels",
+            "",
+            "**Target ranges:**",
+            "• pH: 7.2 – 7.8",
+            "• Total Alkalinity: 80 – 120 ppm",
+            "• Free Chlorine: 3 – 5 ppm (or Bromine: 3 – 5 ppm)",
+            "• Calcium Hardness: 150 – 250 ppm",
+            "",
+            "Once you have your readings, come back and select the option that applies."
+          ].join("\n");
+          advanceNow = false;
+          partCard = 'test strips';
+          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">I have my results — continue</button></div>';
+          break;
+
+        // W4: pH handlers
+        case 'water_ph_low':
+          responseMsg = ["**pH is Too Low (Below 7.2)**",
+            "",
+            "Low pH makes the water acidic -- it causes eye and skin irritation, corrodes metal fittings, and degrades your spa shell and equipment over time.",
+            "",
+            "**To raise pH:**",
+            "• Add pH Up (sodium carbonate) in small doses -- typically 1–2 oz per 500 gallons",
+            "• Run the jets for 15–20 minutes to circulate",
+            "• Retest before adding more",
+            "",
+            "⚠️ Always add chemicals to water, never water to chemicals. Wear gloves when handling."
+          ].join("\n");
+          partCard = 'pH Up';
+          stepResult.passed = false;
+          advanceNow = false;
+          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">pH corrected — continue</button></div>';
+          break;
+
+        case 'water_ph_high':
+          responseMsg = ["**pH is Too High (Above 7.8)**",
+            "",
+            "High pH causes cloudy water, scale buildup on your shell and equipment, and reduces sanitizer effectiveness -- meaning your spa may not be safe to use even with normal sanitizer levels.",
+            "",
+            "**To lower pH:**",
+            "• Add pH Down (sodium bisulfate) in small doses -- typically 1–2 oz per 500 gallons",
+            "• Run the jets for 15–20 minutes to circulate",
+            "• Retest before adding more",
+            "",
+            "⚠️ Always add chemicals to water, never water to chemicals. Wear gloves when handling."
+          ].join("\n");
+          partCard = 'pH Down';
+          stepResult.passed = false;
+          advanceNow = false;
+          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">pH corrected — continue</button></div>';
+          break;
+
+        // Cloudy sub-paths
+        case 'water_cloudy_new':
+          responseMsg = "Cloudy water that appeared in the last 48 hours is usually a chemistry spike -- a sudden pH shift, sanitizer drop, or a heavy bather load. Let's treat it before it gets worse.";
+          stepResult.passed = false;
+          advanceNow = false;
+          partCard = 'water treatment cloudy';
+          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue</button></div>';
+          break;
+
+        case 'water_cloudy_building':
+          responseMsg = "Cloudiness building over several days usually means an accumulation problem -- rising calcium, total dissolved solids, or an ongoing imbalance. Shocking and clarifying can help, but if the water is more than 3 months old, a drain and refill may be more effective.";
+          stepResult.passed = false;
+          advanceNow = false;
+          partCard = 'water treatment cloudy';
+          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue</button></div>';
+          break;
+
+        case 'water_dead_algae':
+          responseMsg = "Dead algae after a shock treatment turns the water cloudy grey or white -- that's the algae cells breaking apart. Run the pump continuously and backwash or replace the filter. A clarifier will help bind the fine particles so the filter can catch them. This usually clears within 24–48 hours with good filtration.";
+          stepResult.passed = false;
+          advanceNow = false;
+          partCard = 'water treatment cloudy';
+          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue</button></div>';
+          break;
+
+        // Foam sub-paths
+        case 'water_foam_products':
+          responseMsg = "Body oils, lotions, sunscreen, and hair products are the most common cause of spa foam. They react with the water chemistry and create a surfactant layer that traps air. A defoamer knocks it down quickly, but a shock treatment breaks down the organic compounds causing it. If the foam keeps coming back, the water needs a full drain and refill.";
+          stepResult.passed = false;
+          advanceNow = false;
+          partCard = 'water treatment foamy';
+          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue</button></div>';
+          break;
+
+        case 'water_foam_new_fill':
+          responseMsg = "Foam in the first two weeks after a fill is common -- new water often has residual minerals, pipe residue, or low dissolved solids that cause temporary foaming. Test and balance your chemistry, run a light shock dose, and give it a couple of days. If it persists, add a defoamer and check for any cleaning product residue in the plumbing.";
+          stepResult.passed = false;
+          advanceNow = false;
+          partCard = 'water treatment foamy';
+          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue</button></div>';
+          break;
+
+        case 'water_foam_chemical':
+          responseMsg = "If closing the air dials reduced foam, the issue is chemistry-related -- most likely low calcium hardness, high pH, or sanitizer buildup. Test your water, adjust levels, and add a defoamer to knock down the existing foam while the chemistry stabilizes.";
+          stepResult.passed = false;
+          advanceNow = false;
+          partCard = 'water treatment foamy';
+          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue</button></div>';
+          break;
+
+        case 'water_foam_extreme':
+          responseMsg = "Heavy foam that doesn't respond to closing the air dials usually means the water is saturated with organic waste or has very low calcium hardness. A defoamer can suppress it temporarily, but the most reliable fix is a full drain and refill followed by a proper startup balance.";
+          stepResult.passed = false;
+          advanceNow = false;
+          partCard = 'water treatment foamy';
+          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue</button></div>';
+          break;
+
+        case 'water_foam_redirect':
+          // W_F1 foam redirect from behavior section
+          responseMsg = null;
+          advanceNow = false;
+          deadEndButtons = [
+            { l: 'Continue', o: 'action', a: 'water_foam_products' },
+          ];
+          break;
+
+        // Green water sub-paths
+        case 'water_green_algae':
+          responseMsg = ["**Green Water -- Algae**",
+            "",
+            "Leaving the spa uncovered allows sunlight, airborne spores, and debris to fuel algae growth. Here's how to treat it:",
+            "",
+            "1. **Shock heavily** -- use a chlorine shock at 3--5x the normal dose to kill the algae",
+            "2. **Brush the shell** -- loosen any algae from the walls and floor",
+            "3. **Run filtration** -- keep the pump running continuously for 24 hours",
+            "4. **Replace or clean filters** -- algae will clog filters quickly",
+            "5. **Retest** -- balance pH and sanitizer after the algae clears",
+            "",
+            "Always keep the spa covered when not in use to prevent recurrence."
+          ].join("\n");
+          stepResult.passed = false;
+          advanceNow = false;
+          partCard = 'water treatment cloudy';
+          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue</button></div>';
+          break;
+
+        case 'water_green_metals':
+          responseMsg = ["**Green Water -- Metal Oxidation**",
+            "",
+            "Green water in a covered spa is usually caused by dissolved metals (copper or iron) oxidizing when they contact chlorine or shock. This is common after filling with well water or in areas with high mineral content.",
+            "",
+            "**Treatment:**",
+            "• Add a metal sequestrant -- this binds the metals and pulls them out of solution",
+            "• Do NOT shock immediately after adding sequestrant -- wait 24 hours",
+            "• Run filtration continuously for 24--48 hours",
+            "• Clean or replace filters after treatment",
+            "",
+            "A hose pre-filter during refills can prevent metal issues from recurring."
+          ].join("\n");
+          stepResult.passed = false;
+          advanceNow = false;
+          partCard = 'metal sequestrant';
+          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue</button></div>';
+          break;
+
+        case 'water_algae_treat':
+          responseMsg = "Low sanitizer is the primary cause of algae. Shock the water now at 3--5x the normal dose, run the pump continuously, and retest after 24 hours. Replace or clean your filters after treatment -- they'll clog with dead algae quickly.";
+          stepResult.passed = false;
+          advanceNow = false;
+          partCard = 'water treatment cloudy';
+          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue</button></div>';
+          break;
+
+        case 'water_algae_slimy':
+          responseMsg = "A slimy feel with green color confirms active algae growth. Shock at 3--5x the normal dose, brush the walls to loosen the algae, run filtration continuously, and replace your filters. The water should clear within 24--48 hours. If it doesn't improve, a full drain and refill may be the fastest path forward.";
+          stepResult.passed = false;
+          advanceNow = false;
+          partCard = 'water treatment cloudy';
+          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue</button></div>';
+          break;
+
+        case 'water_metals_treat':
+          responseMsg = "Normal texture with green color and normal sanitizer usually indicates metal oxidation rather than algae. Add a metal sequestrant, avoid shocking for 24 hours, and run filtration continuously. A hose pre-filter during future refills can prevent this from recurring.";
+          stepResult.passed = false;
+          advanceNow = false;
+          partCard = 'metal sequestrant';
+          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue</button></div>';
+          break;
+
+        // Smell sub-paths
+        case 'water_smell_chloramines':
+          responseMsg = ["**Strong Chemical Smell -- Chloramines**",
+            "",
+            "A strong chlorine or chemical smell is usually NOT from too much chlorine -- it's from chloramines, which form when chlorine binds with organic waste (sweat, oils, urine). Chloramines are less effective at sanitizing and more irritating than free chlorine.",
+            "",
+            "**Fix:**",
+            "• Shock the water with a non-chlorine or chlorine shock to break down chloramines",
+            "• Run jets and leave the cover off for 30 minutes to off-gas",
+            "• Retest sanitizer levels after treatment",
+            "",
+            "Regular shocking after heavy use prevents chloramine buildup."
+          ].join("\n");
+          stepResult.passed = false;
+          advanceNow = false;
+          partCard = 'water treatment cloudy';
+          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue</button></div>';
+          break;
+
+        case 'water_smell_bacteria':
+          responseMsg = ["**Rotten Egg / Sulfur Smell -- Bacteria**",
+            "",
+            "A sulfur smell indicates bacterial growth, often sulfate-reducing bacteria that thrive in warm water with low sanitizer. This is a health concern -- the spa should not be used until treated.",
+            "",
+            "**Treatment:**",
+            "• Shock heavily at 3--5x the normal dose",
+            "• Clean or replace filters immediately",
+            "• Run jets and leave cover off for 30--60 minutes",
+            "• Drain the plumbing lines (purge) if the smell persists after treatment",
+            "• Retest and balance chemistry before using the spa",
+            "",
+            "If the smell returns quickly after treatment, a full drain, purge, and refill is recommended."
+          ].join("\n");
+          stepResult.passed = false;
+          advanceNow = false;
+          partCard = 'water treatment cloudy';
+          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue</button></div>';
+          break;
+
+        case 'water_smell_biofilm':
+          responseMsg = ["**Musty / Earthy Smell -- Biofilm**",
+            "",
+            "A musty smell usually means biofilm -- a bacterial community that grows inside the plumbing and equipment. It's common in spas that sit unused for extended periods or that aren't shocked regularly.",
+            "",
+            "**Treatment:**",
+            "• Use a plumbing purge product -- pour into the jets while running to flush biofilm from the lines",
+            "• Drain and wipe down the shell",
+            "• Clean or replace filters",
+            "• Refill and balance chemistry",
+            "• Run a maintenance shock weekly to prevent recurrence",
+            "",
+            "Purge products are the most effective way to address biofilm -- shocking alone won't reach inside the plumbing."
+          ].join("\n");
+          stepResult.passed = false;
+          advanceNow = false;
+          partCard = 'plumbing purge';
+          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue</button></div>';
+          break;
+
+        // Feel sub-paths
+        case 'water_feel_itch':
+          responseMsg = ["**Itchy Skin or Eyes -- pH or Sanitizer Imbalance**",
+            "",
+            "Skin and eye irritation in spa water is almost always a chemistry issue:",
+            "",
+            "• **Low pH** (below 7.2) -- acidic water causes irritation even with correct sanitizer",
+            "• **High chlorine** (above 5 ppm) -- excessive sanitizer irritates skin and eyes",
+            "• **Chloramines** -- combined chlorine is more irritating than free chlorine",
+            "• **Low pH + high combined chlorine** -- the most common combination",
+            "",
+            "Test your water and adjust pH first (target 7.2--7.8), then check sanitizer levels. A non-chlorine shock can help break down chloramines without raising chlorine levels further."
+          ].join("\n");
+          stepResult.passed = false;
+          advanceNow = false;
+          partCard = 'pH Down';
+          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue</button></div>';
+          break;
+
+        case 'water_feel_slimy':
+          responseMsg = "Slimy or slippery water means very low sanitizer -- bacteria and biofilm are actively growing. Do not use the spa until treated. Shock heavily, run jets for 30 minutes with the cover off, clean or replace filters, and retest. If the slime returns after treatment, a full purge, drain, and refill is needed.";
+          stepResult.passed = false;
+          advanceNow = false;
+          partCard = 'water treatment cloudy';
+          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue</button></div>';
+          break;
+
+        case 'water_scale':
+          responseMsg = ["**Crusty Scale Buildup -- High Calcium or Alkalinity**",
+            "",
+            "White or grey crusty deposits on the shell, jets, or waterline are calcium scale -- caused by high calcium hardness, high pH, or high total alkalinity.",
+            "",
+            "**Treatment:**",
+            "• Lower pH to 7.0--7.2 temporarily -- this dissolves mild scale",
+            "• Use a scale remover / descaler product for stubborn buildup",
+            "• Physically clean the waterline with a spa surface cleaner",
+            "• After cleaning, rebalance pH to 7.2--7.8",
+            "",
+            "If your fill water is naturally hard, a sequestrant added at each fill can prevent scale from forming."
+          ].join("\n");
+          stepResult.passed = false;
+          advanceNow = false;
+          partCard = 'descaler';
+          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue</button></div>';
+          break;
+
+        // Behavior sub-paths
+        case 'water_behavior_heat':
+          responseMsg = "A heating problem is best diagnosed through the full heat diagnostic sequence. Let's switch over to that now.";
+          stepResult.passed = false;
+          advanceNow = false;
+          deadEndButtons = [
+            { l: 'Start Heat Diagnostic', o: 'action', a: 'switch_to_heat' },
+            { l: 'Stay in Water sequence', o: 'pass', a: '' },
+          ];
+          break;
+
+        case 'switch_to_heat':
+          responseMsg = null;
+          advanceNow = false;
+          clientAction = 'selectTopic:heat';
+          break;
+
+        case 'water_behavior_loss':
+          responseMsg = ["**Losing Water Level -- Possible Leak**",
+            "",
+            "Some water loss from evaporation and splash-out is normal -- typically 1--2 inches per week in normal conditions. More than that usually indicates a leak.",
+            "",
+            "**Quick checks:**",
+            "• **Jets and fittings** -- inspect each jet face for cracks; check that all fittings are seated properly",
+            "• **Equipment bay** -- look for drips around pump unions, heater connections, and manifold fittings",
+            "• **Shell cracks** -- inspect the shell surface at the waterline for hairline cracks",
+            "• **Cover seal** -- a damaged cover gasket can allow significant evaporation loss",
+            "",
+            "If you find a wet area in the equipment bay, note the exact location before topping up -- the wet spot will help narrow down the source.",
+            "",
+            "A slow leak at a union fitting can often be fixed by hand-tightening or replacing the O-ring. Significant shell cracks or heater leaks typically require professional repair."
+          ].join("\n");
+          stepResult.passed = false;
+          advanceNow = false;
+          deadEndButtons = [
+            { l: 'Found the leak location', o: 'pass', a: '' },
+            { l: 'No visible leak found', o: 'pass', a: '' },
+          ];
+          break;
+
+        // W_CONFIRM outcome handlers
+        case 'water_improving':
+          responseMsg = "Great -- that's the direction we want to see. Keep the pump running and retest in another 30--60 minutes. Once all readings are in range and the water looks and feels normal, your spa is ready to use.";
+          stepResult.passed = true;
+          advanceNow = false;
+          deadEndButtons = [
+            { l: 'Water is good -- all done!', o: 'pass', a: '' },
+            { l: 'Still not right -- keep going', o: 'action', a: 'water_no_change' },
+          ];
+          break;
+
+        case 'water_no_change':
+          responseMsg = "If the water hasn't responded to treatment, the most likely causes are: the dose was too low for the volume of water, the chemistry was too far out of range to correct in one round, or the water is too old to balance reliably. Try a second treatment round, and if there's still no change after that, a full drain and refill is the most reliable path forward.";
+          stepResult.passed = false;
+          advanceNow = false;
+          deadEndButtons = [
+            { l: 'Treat again', o: 'pass', a: '' },
+            { l: 'Drain and refill instead', o: 'action', a: 'water_escalate' },
+          ];
+          break;
+
+        case 'water_escalate':
+          responseMsg = ["**Drain and Refill -- Fresh Start**",
+            "",
+            "When chemistry won't respond to treatment, a full drain and refill is the most reliable fix. Here's the process:",
+            "",
+            "1. **Purge the lines** -- add a plumbing purge product and run jets for 15 minutes before draining",
+            "2. **Drain completely** -- use a submersible pump or the spa's drain fitting",
+            "3. **Wipe down the shell** -- remove scale, biofilm ring, and debris with a spa surface cleaner",
+            "4. **Clean or replace filters** -- don't fill with clogged filters",
+            "5. **Refill** -- use a hose pre-filter if your water is hard or high in metals",
+            "6. **Balance from scratch** -- adjust total alkalinity first, then pH, then sanitizer",
+            "7. **Shock on startup** -- add a startup shock dose before first use",
+            "",
+            "⚠️ Never drain a fiberglass or acrylic spa in direct sunlight or during very hot weather -- thermal shock can crack the shell."
+          ].join("\n");
+          stepResult.passed = false;
+          advanceNow = false;
+          partCard = 'plumbing purge';
+          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Done -- ready to refill</button></div>';
+          break;
+
+        // ── END W_ SEQUENCE HANDLERS ─────────────────────────────────────────
+
         case 'water_continue_cloudy':
+
           responseMsg = "⚠️ Understood — we'll continue, but the cloudy or foamy water still needs to be addressed. Some upcoming tests require running without filters, which we only recommend with clean water. Proceed with caution.";
           stepResult.passed = true;
           stepResult.possible = true;
@@ -3258,6 +3677,7 @@ app.post("/api/diag-button", async (req, res) => {
       deadEndButtons,
       briefOmitted,
       clientAction,
+      fireAckRequired: step.fireAckRequired || null,
     });
   } catch(err) {
     console.error('[/api/diag-button] error:', err.message);
