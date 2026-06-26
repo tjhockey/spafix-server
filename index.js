@@ -1,4 +1,5 @@
-process.env.APP_VERSION = "v4.9.21d";
+process.env.APP_VERSION = "v4.9.21e";
+const CLIENT_VERSION = "4.9.21ap"; // manually kept in sync with index.html's APP_VERSION each build
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -2188,7 +2189,7 @@ app.get("/api/models-for-make", async (req, res) => {
 
 // Version endpoint -- used by bug reporter to detect client/server mismatch
 app.get("/api/version", (req, res) => {
-  res.json({ server: process.env.APP_VERSION || 'unknown' });
+  res.json({ client: CLIENT_VERSION, server: process.env.APP_VERSION || 'unknown' });
 });
 
 app.get("/api/session-stats", (req, res) => {
