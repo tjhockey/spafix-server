@@ -1,5 +1,5 @@
-process.env.APP_VERSION = "v4.9.21e";
-const CLIENT_VERSION = "4.9.21ap"; // manually kept in sync with index.html's APP_VERSION each build
+process.env.APP_VERSION = "v4.9.21g"
+const CLIENT_VERSION = "4.9.21av"; // fallback only -- /api/version now echoes the X-SpaFix-Client-Version header when present
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -2189,7 +2189,13 @@ app.get("/api/models-for-make", async (req, res) => {
 
 // Version endpoint -- used by bug reporter to detect client/server mismatch
 app.get("/api/version", (req, res) => {
-  res.json({ client: CLIENT_VERSION, server: process.env.APP_VERSION || 'unknown' });
+  // Echo back whatever client version the requester actually sent (X-SpaFix-Client-Version,
+  // added in 4.9.21ar) instead of a manually-maintained constant -- CLT caught the constant
+  // going stale across 5 client-only builds (ap-e through au-e) where nobody had a reason
+  // to touch index.js. This way it's never stale again, since the client always knows its
+  // own version (Tony's spec 2026-06-26).
+  const reportedClientVersion = req.headers['x-spafix-client-version'] || CLIENT_VERSION;
+  res.json({ client: reportedClientVersion, server: process.env.APP_VERSION || 'unknown' });
 });
 
 app.get("/api/session-stats", (req, res) => {
@@ -2452,6 +2458,14 @@ app.post("/api/diag-button", async (req, res) => {
     let briefOmitted = null; // text omitted due to briefMode -- sent to admin/tester for highlight
 
     switch(outcome) {
+      case 'continue':
+        // Neutral navigation-only outcome -- advances to the next step without touching
+        // stepResult.passed. Used by "Continue Diagnosis"-style buttons that follow an
+        // already-recorded verdict (e.g. filthy filters, dirty water) where the button's
+        // only job is to move forward, not to re-judge the step. Previously these buttons
+        // used outcome='pass', which overwrote the real (failed) verdict with passed:true.
+        advanceNow = true;
+        break;
       case 'pass':
         stepResult.passed = true;
         // Step-specific pass messages
@@ -2963,7 +2977,7 @@ app.post("/api/diag-button", async (req, res) => {
           stepResult.passed = false;
           advanceNow = false;
           partCard = 'plumbing purge';
-          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Done -- ready to refill</button></div>';
+          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="continue" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Done -- ready to refill</button></div>';
           break;
 
         // ── END W_ SEQUENCE HANDLERS ─────────────────────────────────────────
@@ -3004,7 +3018,7 @@ app.post("/api/diag-button", async (req, res) => {
           ].join("\n");
           partCard = 'water dirty';
           advanceNow = false;
-          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">I have cleaned the water -- Continue Diagnosis</button></div>';
+          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="continue" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">I have cleaned the water -- Continue Diagnosis</button></div>';
           break;
 
         case 'water_cloudy':
@@ -3110,7 +3124,7 @@ app.post("/api/diag-button", async (req, res) => {
           responseMsg = "Please top the water up to at least an inch above the skimmer opening now and let me know when it's done -- I'll wait.";
           stepResult.passed = false;
           advanceNow = false;
-          partCardButtons = '<div class=\"diag-step-btns\" style=\"margin-top:10px;\"><button class=\"diag-btn\" data-step=\"__STEP__\" data-outcome=\"pass\" data-action=\"\" data-part=\"\" data-critical=\"false\" onclick=\"handleDiagBtn(this)\">Done, let\'s continue</button></div>';
+          partCardButtons = '<div class=\"diag-step-btns\" style=\"margin-top:10px;\"><button class=\"diag-btn\" data-step=\"__STEP__\" data-outcome=\"continue\" data-action=\"\" data-part=\"\" data-critical=\"false\" onclick=\"handleDiagBtn(this)\">Done, let\'s continue</button></div>';
           break;
 
         case 'filter_clean':
@@ -3124,7 +3138,7 @@ app.post("/api/diag-button", async (req, res) => {
           stepResult.passed = false;
           advanceNow = false;
           partCard = 'filter';
-          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button></div>';
+          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="continue" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button></div>';
           break;
 
         case 'filter_clean_no':
@@ -3158,7 +3172,7 @@ app.post("/api/diag-button", async (req, res) => {
           stepResult.passed = false;
           advanceNow = false;
           partCard = 'filter';
-          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button></div>';
+          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="continue" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button></div>';
           break;
 
         case 'filter_keep_testing':
@@ -3170,14 +3184,14 @@ app.post("/api/diag-button", async (req, res) => {
         case 'suggest_filter_cleaning':
           responseMsg = "Here are some filter cleaning products that can help restore flow:";
           partCard = 'filter cleaning';
-          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button></div>';
+          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="continue" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button></div>';
           advanceNow = false;
           break;
 
         case 'suggest_filter_replace':
           responseMsg = "Here are replacement filter options for your spa:";
           partCard = 'filter';
-          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button></div>';
+          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="continue" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button></div>';
           advanceNow = false;
           break;
 
@@ -3640,7 +3654,7 @@ app.post("/api/diag-button", async (req, res) => {
         case 'show_descaler':
           responseMsg = "Here are spa descaler options:";
           partCard = 'spa descaler';
-          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="pass" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button></div>';
+          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="continue" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button></div>';
           advanceNow = false;
           break;
 
