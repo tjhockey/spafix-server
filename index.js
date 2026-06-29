@@ -1,4 +1,4 @@
-process.env.APP_VERSION = "v4.9.21g"
+process.env.APP_VERSION = "v4.9.21l"
 const CLIENT_VERSION = "4.9.21av"; // fallback only -- /api/version now echoes the X-SpaFix-Client-Version header when present
 require('dotenv').config();
 const express = require("express");
@@ -118,6 +118,24 @@ const defaultJsonParser = express.json({ limit: GLOBAL_JSON_LIMIT });
 const app = express();
 app.use((req, res, next) => {
   res.setHeader("Content-Type", "application/json; charset=utf-8");
+  next();
+});
+
+// ── LAST-KNOWN CLIENT VERSION TRACKING ─────────────────────────
+// /api/version echoes whatever X-SpaFix-Client-Version header the requester sends.
+// But /api/version itself is commonly hit via direct browser navigation (CLT's
+// established workaround for CORS/JWT issues with fetch()), which can never carry
+// custom headers -- so a request to /api/version alone always falls back to a
+// constant. CLIENT_VERSION below is correctly documented as fallback-only, but a
+// hardcoded fallback constant goes stale the moment any client-only build ships
+// without anyone remembering to bump it (confirmed recurring: 4.9.21ap-e through
+// au-e, and again at ba-h). Fix: capture the real version from ANY request that
+// does carry the header (i.e. any normal in-app API call earlier in the same
+// server session), and use that as the fallback instead of the static constant.
+let lastKnownClientVersion = null;
+app.use((req, res, next) => {
+  const _v = req.headers['x-spafix-client-version'];
+  if (_v) lastKnownClientVersion = _v;
   next();
 });
 
@@ -933,7 +951,8 @@ const DIAG_STEPS = {
     bayStep:true,
     question:'Based on everything we\'ve checked, the jet pump itself is the likely cause. Before ordering, confirm the pump model number from the label on the pump housing. Also check the wiring harness for any damage -- a new pump with damaged wiring will fail immediately.',
     buttons:[
-      {label:'Show me jet pump options', outcome:'fail', part:'jet pump'},
+      {label:'Pump runs fine, sounds/feels normal', outcome:'pass'},
+      {label:'Show me jet pump options', outcome:'action', action:'jetpump_confirmed_fail'},
       {label:'I need help identifying my pump', outcome:'action', action:'identify_pump'}
     ]
   },
@@ -1200,6 +1219,25 @@ const DIAG_STEPS = {
     ]
   },
 };
+// ── Pre-conclusion review (Tony's spec 2026-06-28) ──────────────────
+// Before any of the three "control board" conclusion steps fire, review whether
+// anything in that sequence was skipped, failed, or left as merely "possible" --
+// and give the user one bounded chance to add anything not yet covered. Previously
+// S14/H14/J14 fired unconditionally the moment the prior step advanced, with no
+// regard for what had actually been ruled out.
+const SEQUENCE_STEP_ORDERS = {
+  flow: ['S2a','S2b','S1','S3','S4','S5','BREAKER','S6','S6b','S7','S8a','S8b','S8c','S9','S11','S10','S12','S13','S14'],
+  heat: ['H2a','H2b','H1','H5','H3','H4','HBREAKER','H6','H6b','H7','H8a','H11','H12','H13','H9','H10','H14'],
+  jets: ['J_SCOPE','J2a','J2b','J1','J_JF','J_DV','J4','J_SS','J10','J_SH','J_VT','J9','J13','J14'],
+};
+const CONCLUSION_STEP_TO_SEQUENCE = { S14: 'flow', H14: 'heat', J14: 'jets' };
+const REVIEW_MAX_TURNS = 3;
+
+function scanSequenceForFlags(state, sequenceKey) {
+  const ids = SEQUENCE_STEP_ORDERS[sequenceKey] || [];
+  return (state.steps || []).filter(s => ids.includes(s.id) && (s.skipped || s.passed === false || s.possible));
+}
+
 // ── Diag state store ──────────────────────────────────────────────
 const diagStateStore = {};
 
@@ -2190,11 +2228,12 @@ app.get("/api/models-for-make", async (req, res) => {
 // Version endpoint -- used by bug reporter to detect client/server mismatch
 app.get("/api/version", (req, res) => {
   // Echo back whatever client version the requester actually sent (X-SpaFix-Client-Version,
-  // added in 4.9.21ar) instead of a manually-maintained constant -- CLT caught the constant
-  // going stale across 5 client-only builds (ap-e through au-e) where nobody had a reason
-  // to touch index.js. This way it's never stale again, since the client always knows its
-  // own version (Tony's spec 2026-06-26).
-  const reportedClientVersion = req.headers['x-spafix-client-version'] || CLIENT_VERSION;
+  // added in 4.9.21ar) instead of a manually-maintained constant. If THIS request has no
+  // header (e.g. direct browser navigation, which can't send custom headers), fall back to
+  // the last real version seen from any request this server session -- not a static constant,
+  // which goes stale every client-only build (Tony's spec 2026-06-28, after CLT Brief #10
+  // caught it stale at 4.9.21av while running 4.9.21ba).
+  const reportedClientVersion = req.headers['x-spafix-client-version'] || lastKnownClientVersion || CLIENT_VERSION;
   res.json({ client: reportedClientVersion, server: process.env.APP_VERSION || 'unknown' });
 });
 
@@ -2454,6 +2493,7 @@ app.post("/api/diag-button", async (req, res) => {
     let advanceNow = true;
     let skipPending = false;
     let deadEndButtons = null;
+    let actionFireAckRequired = null;
     let partCardButtons = null; // inline buttons to append after partCard renders
     let briefOmitted = null; // text omitted due to briefMode -- sent to admin/tester for highlight
 
@@ -2565,7 +2605,29 @@ app.post("/api/diag-button", async (req, res) => {
     }
 
     // Handle special actions
-    if (outcome === 'action') {
+    if (outcome === 'action' && action && action.startsWith('revisit_step:')) {
+      // User chose to go back and revisit a flagged step instead of accepting the conclusion.
+      // Must update nextStep itself (not just state.currentStep) -- the review-interception
+      // block below checks nextStep, and a stale conclusion-step value there re-triggered the
+      // same review message instead of advancing to the revisited step (CLT Brief #11, Bug 2).
+      const revisitId = action.split(':')[1];
+      const revisitStep = DIAG_STEPS[revisitId];
+      advanceNow = true;
+      if (revisitStep) {
+        nextStep = revisitId;
+        state.currentStep = revisitId;
+        responseMsg = null;
+      }
+    } else if (outcome === 'action' && action && action.startsWith('confirm_conclusion:')) {
+      // User chose to proceed to the control-board conclusion despite outstanding flags
+      const targetId = action.split(':')[1];
+      if (!state.reviewedConclusions) state.reviewedConclusions = {};
+      state.reviewedConclusions[targetId] = true;
+      advanceNow = true;
+      nextStep = targetId;
+      state.currentStep = targetId;
+      responseMsg = null;
+    } else if (outcome === 'action') {
       switch(action) {
         // ── W_ SEQUENCE HANDLERS (added to match W_ step action keys) ──────────
 
@@ -3297,11 +3359,11 @@ app.post("/api/diag-button", async (req, res) => {
           break;
 
         case 'heat_multimeter_test':
-          responseMsg = "Set your multimeter to resistance (Ω). Turn off the breaker and disconnect the heater element leads from the control board terminals. Test across the two element terminals -- a healthy 5.5kW element should read between 9--12Ω. Also test each terminal to ground (the stainless steel heater tube) -- you should read infinite (OL). What do you get?";
+          responseMsg = "Set your multimeter to resistance (Ω). Turn off the breaker and disconnect the heater element leads from the control board terminals. Test across the two element terminals — a healthy 5.5kW element should read between 9-12Ω. Also test each terminal to ground (the stainless steel heater tube) — you should read infinite (OL). What do you get?";
           advanceNow = false;
           deadEndButtons = [
-            { l: 'Reads 9--12Ω and OL to ground -- element OK', o: 'pass', a: '' },
-            { l: 'Out of range or shorts to ground -- failed element', o: 'action', a: 'fail_heater_element' },
+            { l: 'Reads 9-12Ω and OL to ground — element OK', o: 'pass', a: '' },
+            { l: 'Out of range or shorts to ground — failed element', o: 'action', a: 'fail_heater_element' },
           ];
           break;
 
@@ -3394,12 +3456,17 @@ app.post("/api/diag-button", async (req, res) => {
           advanceNow = true;
           break;
 
-        case 'identify_pump':
-          responseMsg = "Upload a clear photo of your pump label (Premium feature) and I'll help identify the exact model and find replacement options.";
-          advanceNow = false;
-          deadEndButtons = [
-            { l: 'Continue diagnosis', o: 'pass', a: '' },
-          ];
+        // identify_pump intercepted client-side (handleCameraBtn) -- never reaches server, same as identify_board
+
+        case 'jetpump_confirmed_fail':
+          // Pump confirmed as the cause (Tony's spec 2026-06-29) -- end the sequence here
+          // instead of also routing into J14's "probably the board/wiring" conclusion.
+          // Previously J13->J14 was unconditional regardless of outcome, so confirming the
+          // pump immediately followed up by suggesting it might actually be the board.
+          stepResult.passed = false;
+          partCard = 'jet pump';
+          advanceNow = true;
+          nextStep = null;
           break;
 
         case 'temps_mismatch':
@@ -3440,11 +3507,11 @@ app.post("/api/diag-button", async (req, res) => {
           break;
 
         case 'multimeter_test':
-          responseMsg = "Set your multimeter to resistance (Ω). Disconnect the heater element leads. Test across the two terminals -- you should read between 8-16 Ω for a working element. Also test each terminal to ground -- you should read infinite (OL). What do you get?";
+          responseMsg = "Set your multimeter to resistance (Ω). Disconnect the heater element leads. Test across the two terminals — you should read between 8-16 Ω for a working element. Also test each terminal to ground — you should read infinite (OL). What do you get?";
           advanceNow = false;
           deadEndButtons = [
-            { l: 'Reads 8--16Ω and OL to ground -- element OK', o: 'pass', a: '' },
-            { l: 'Out of range or shorts to ground -- failed element', o: 'action', a: 'fail_heater_element' },
+            { l: 'Reads 8-16Ω and OL to ground — element OK', o: 'pass', a: '' },
+            { l: 'Out of range or shorts to ground — failed element', o: 'action', a: 'fail_heater_element' },
           ];
           break;
 
@@ -3464,13 +3531,7 @@ app.post("/api/diag-button", async (req, res) => {
           advanceNow = false;
           break;
 
-        case 'identify_board':
-          responseMsg = "Upload a clear photo of your control board (Premium feature) and I'll help identify the exact model.";
-          advanceNow = false;
-          deadEndButtons = [
-            { l: 'Continue diagnosis', o: 'pass', a: '' },
-          ];
-          break;
+        // identify_board intercepted client-side (handleCameraBtn) -- never reaches server, same as upload_filter_bay_photo
 
         // ── All noise action branches ──
         case 'noise_bay':
@@ -3682,6 +3743,24 @@ app.post("/api/diag-button", async (req, res) => {
       Object.assign(existing, stepResult);
     }
 
+    // ── Pre-conclusion review -- intercept before S14/H14/J14 fire ──
+    if (advanceNow && nextStep && CONCLUSION_STEP_TO_SEQUENCE[nextStep] && !(state.reviewedConclusions && state.reviewedConclusions[nextStep])) {
+      const seqKey = CONCLUSION_STEP_TO_SEQUENCE[nextStep];
+      const flags = scanSequenceForFlags(state, seqKey);
+      if (!state.reviewedConclusions) state.reviewedConclusions = {};
+      advanceNow = false;
+      if (flags.length > 0) {
+        const flagList = flags.map(f => `${f.label}${f.skipped ? ' (skipped)' : f.possible ? ' (not fully ruled out)' : ' (failed)'}`).join(', ');
+        responseMsg = `Before pointing to the control board — a few things weren't fully resolved: ${flagList}. Want to go back and revisit any of these, or continue anyway?`;
+        deadEndButtons = flags.map(f => ({ l: `Revisit ${f.label}`, o: 'action', a: `revisit_step:${f.id}` }))
+          .concat([{ l: 'Continue to control board anyway', o: 'action', a: `confirm_conclusion:${nextStep}` }]);
+      } else {
+        state.reviewPending = { target: nextStep, turn: 0 };
+        responseMsg = "Before we conclude — is there anything else about this issue you haven't mentioned yet?";
+        clientAction = 'awaitReviewFreeText';
+      }
+    }
+
     if (advanceNow && nextStep) {
       state.currentStep = nextStep;
     } else if (advanceNow && !nextStep) {
@@ -3706,6 +3785,7 @@ app.post("/api/diag-button", async (req, res) => {
       }
     }
 
+
     // ── FLAG: dead-end detector ──
     if (!advanceNow && !skipPending && !deadEndButtons && !partCardButtons && !responseMsg && outcome !== 'action') {
       responseMsg = `⚑ Undefined sequence -- flagged for review.
@@ -3725,13 +3805,82 @@ app.post("/api/diag-button", async (req, res) => {
       deadEndButtons,
       briefOmitted,
       clientAction,
-      fireAckRequired: step.fireAckRequired || null,
+      fireAckRequired: actionFireAckRequired || step.fireAckRequired || null,
     });
   } catch(err) {
     console.error('[/api/diag-button] error:', err.message);
     if (!res.headersSent) res.status(500).json({ error: err.message });
   }
 
+});
+
+// ── Pre-conclusion review free-text endpoint (Tony's spec 2026-06-28) ──────
+// Handles the bounded (max 3 turn) free-text exchange that opens when a sequence
+// is otherwise clean (nothing skipped/failed/possible) before S14/H14/J14 fire.
+// Sonnet's role is narrow: decide whether the user's reply raises something not
+// yet covered (warranting one more clarifying question) or whether it's fine to
+// proceed to the conclusion. Sonnet does not write the conclusion text itself.
+app.post("/api/diag-review-reply", async (req, res) => {
+  try {
+    const { message, diagState, clientId: bodyClientId } = req.body;
+    const clientId = bodyClientId || req.headers['x-spafix-client-id'] || 'unknown';
+    let state = diagState || getDiagState(clientId);
+    if (!state || !state.reviewPending) {
+      return res.status(400).json({ error: 'No review in progress' });
+    }
+    const target = state.reviewPending.target;
+    const turn = (state.reviewPending.turn || 0) + 1;
+    const seqKey = CONCLUSION_STEP_TO_SEQUENCE[target];
+    const completedLabels = (state.steps || [])
+      .filter(s => (SEQUENCE_STEP_ORDERS[seqKey] || []).includes(s.id))
+      .map(s => s.label).join(', ');
+
+    let needsClarification = false;
+    let question = '';
+    if (turn < REVIEW_MAX_TURNS) {
+      try {
+        const sysPrompt = `You are reviewing one user reply during a spa diagnostic. Steps already completed and ruled out: ${completedLabels || '(none recorded)'}. The user was asked if there's anything else about the issue they haven't mentioned. Their reply: "${message}". Decide: does this reply raise something genuinely new that isn't covered by the completed steps and warrants ONE brief clarifying question? Respond with ONLY a JSON object, no other text: {"needsClarification": true, "question": "..."} or {"needsClarification": false}.`;
+        const aiResp = await callAnthropicWithRetry({
+          model: "claude-sonnet-4-6",
+          max_tokens: 200,
+          system: sysPrompt,
+          messages: [{ role: 'user', content: message }],
+        }, 1, 12000);
+        const aiData = await aiResp.json();
+        const raw = aiData?.content?.[0]?.text || '{}';
+        const parsed = JSON.parse(raw.replace(/```json|```/g, '').trim());
+        needsClarification = !!parsed.needsClarification;
+        question = parsed.question || '';
+      } catch (e) {
+        console.error('[diag-review-reply] Sonnet check failed, proceeding to conclusion:', e.message);
+        needsClarification = false;
+      }
+    }
+
+    if (needsClarification && question) {
+      state.reviewPending.turn = turn;
+      setDiagState(clientId, state);
+      return res.json({ responseMsg: question, awaitReviewFreeText: true, diagState: state });
+    }
+
+    // No clarification needed, or turn cap hit -- proceed to the conclusion
+    if (!state.reviewedConclusions) state.reviewedConclusions = {};
+    state.reviewedConclusions[target] = true;
+    state.reviewPending = null;
+    state.currentStep = target;
+    setDiagState(clientId, state);
+    const ns = DIAG_STEPS[target];
+    const nextStepData = ns ? {
+      id: ns.id, label: ns.label,
+      question: (ns.questionFn ? ns.questionFn(state) : ns.question) || '',
+      fire: ns.fire ? applyFireTemplates(`[${ns.fire}]`) : null,
+      buttons: ns.buttons, bayStep: ns.bayStep || false,
+    } : null;
+    res.json({ advanceNow: true, nextStep: nextStepData, diagState: state });
+  } catch (err) {
+    console.error('[/api/diag-review-reply] error:', err.message);
+    if (!res.headersSent) res.status(500).json({ error: err.message });
+  }
 });
 
 // ─────────────────────────────────────────────────────────────────
