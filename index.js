@@ -1,4 +1,4 @@
-process.env.APP_VERSION = "v4.9.21l"
+process.env.APP_VERSION = "v4.9.21u"
 const CLIENT_VERSION = "4.9.21av"; // fallback only -- /api/version now echoes the X-SpaFix-Client-Version header when present
 require('dotenv').config();
 const express = require("express");
@@ -328,6 +328,8 @@ if (process.env.NODE_ENV !== 'production') {
 }
 const PRO_SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7 days
 const proSessions = new Map(); // token -> { testerName, clientId, expiresAt }
+const terminalSonnetHandoffCounts = new Map(); // "clientId:YYYY-MM-DD" -> count
+const TERMINAL_SONNET_DAILY_CAP = 10;
 
 // ── Transcript log (in-memory, resets on restart) ─────────────────
 const transcriptLog = {}; // key: testerName, value: array of session objects
@@ -527,12 +529,12 @@ const DISCLAIMER = ``;
 
 // ── FIRE templates -- server-side static text, zero prompt tokens ──
 const FIRE_TEMPLATES = {
-  'F:AP': `⚠️ Be sure to only use a plain garden hose for these steps -- no sprayer, nozzle or attachments. Forcing pressurized air or a hard stream can damage internal components.
+  'F:AP': `⚠️ Be sure to only use a plain garden hose for these steps — no sprayer, nozzle or attachments. Forcing pressurized air or a hard stream can damage internal components.
 
 1. Wrap a towel around the end of a plain garden hose to create a seal against the filter inlet opening.
 2. Have someone turn the water on fully and wait until only water (no air) is coming out of the hose end.
-3. Press the hose and towel firmly over the filter inlet and force water through for 30--60 seconds.
-4. You may see air bubbling up from the jets -- that's normal. Keep going until only water flows with no bubbles.
+3. Press the hose and towel firmly over the filter inlet and force water through for 30–60 seconds.
+4. You may see air bubbling up from the jets — that's normal. Keep going until only water flows with no bubbles.
 5. Stop and check if the error has cleared.
 6. If not cleared, repeat once more.`,
 
@@ -610,7 +612,7 @@ const DIAG_STEPS = {
     buttons:[
       {label:'All fully open', outcome:'pass'},
       {label:'Found one closed', outcome:'action', action:'valve_closed'},
-      {label:"My spa doesn't have these", outcome:'skip'}
+      {label:"My spa doesn't have these", outcome:'pass'}
     ]
   },
   S6b: { id:'S6b', next:'S7', label:'Air purge valve',
@@ -771,7 +773,7 @@ const DIAG_STEPS = {
     buttons:[
       {label:'All fully open', outcome:'pass'},
       {label:'Found one closed or partially closed', outcome:'action', action:'valve_closed'},
-      {label:"My spa doesn't have these", outcome:'skip'}
+      {label:"My spa doesn't have these", outcome:'pass'}
     ]
   },
   H6b: { id:'H6b', next:'H7', label:'Air purge valve',
@@ -1211,7 +1213,7 @@ const DIAG_STEPS = {
     ]
   },
   W_CONFIRM: { id:'W_CONFIRM', next:null, label:'Treatment confirmation',
-    question:'After treatment, wait 30--60 minutes with circulation running, then retest. What do your readings look like?',
+    question:'After treatment, wait 30–60 minutes with circulation running, then retest. What do your readings look like?',
     buttons:[
       {label:'Readings improved -- looking better', outcome:'action', action:'water_improving'},
       {label:'No change after treatment', outcome:'action', action:'water_no_change'},
@@ -2523,7 +2525,7 @@ app.post("/api/diag-button", async (req, res) => {
           'S7': buttonLabel === 'Error cleared' ? "The second air purge cleared it -- air was still in the system. Reinstall your filters as described earlier." : "Noted -- second purge didn't resolve it. Let's move on.",
           'S8b': "Good -- the flow switch paddle is moving freely and correctly oriented.",
           'S8c': buttonLabel === 'Error still showing' ? "Good -- flow switch is ruled out. Let's continue." : null,
-          'S9': "Good -- no visible burn marks, corrosion, or damage found.",
+          'S9': buttonLabel === 'Continue diagnosis' ? "Noted -- I've logged that finding for your summary. Let's keep checking the remaining items." : "Good -- no visible burn marks, corrosion, or damage found.",
           'S10': "Good -- all fuses are intact.",
           'S11': "Good -- temperature readings are consistent.",
           'S12': "Good -- hi-limit sensor checked.",
@@ -2882,7 +2884,7 @@ app.post("/api/diag-button", async (req, res) => {
             "**Treatment:**",
             "• Shock heavily at 3--5x the normal dose",
             "• Clean or replace filters immediately",
-            "• Run jets and leave cover off for 30--60 minutes",
+            "• Run jets and leave cover off for 30–60 minutes",
             "• Drain the plumbing lines (purge) if the smell persists after treatment",
             "• Retest and balance chemistry before using the spa",
             "",
@@ -3002,7 +3004,7 @@ app.post("/api/diag-button", async (req, res) => {
 
         // W_CONFIRM outcome handlers
         case 'water_improving':
-          responseMsg = "Great -- that's the direction we want to see. Keep the pump running and retest in another 30--60 minutes. Once all readings are in range and the water looks and feels normal, your spa is ready to use.";
+          responseMsg = "Great -- that's the direction we want to see. Keep the pump running and retest in another 30–60 minutes. Once all readings are in range and the water looks and feels normal, your spa is ready to use.";
           stepResult.passed = true;
           advanceNow = false;
           deadEndButtons = [
@@ -3445,6 +3447,7 @@ app.post("/api/diag-button", async (req, res) => {
           responseMsg = "⚠️ DANGER -- 240V PRESENT. This test requires the breaker ON with live high voltage exposed inside the equipment bay. Only proceed if you are completely comfortable working around live electrical panels. NEVER touch any terminals, wires, or components other than the multimeter probes.\n\nWith the breaker ON and the Jets button pressed to High: carefully place your multimeter probes on the pump's terminal plug on the circuit board. You should read 240V (or 120V depending on your setup).\n\n- Board outputs correct voltage but pump doesn't run → the pump or its cord is the problem → proceed to pump replacement\n- Board outputs 0V when button pressed → the board relay is bad → proceed to control board";
           advanceNow = false;
           deadEndButtons = [
+            { l: '240V confirmed, pump runs fine -- test clear', o: 'pass', a: '' },
             { l: '240V confirmed -- pump or cord issue', o: 'action', a: 'fail_jet_pump' },
             { l: '0V -- board relay issue', o: 'action', a: 'fail_control_board' },
             { l: 'Not comfortable with live voltage -- skip', o: 'skip', a: '' },
@@ -3465,6 +3468,26 @@ app.post("/api/diag-button", async (req, res) => {
           // pump immediately followed up by suggesting it might actually be the board.
           stepResult.passed = false;
           partCard = 'jet pump';
+          advanceNow = true;
+          nextStep = null;
+          break;
+
+        case 'fail_jet_pump':
+          // Was referenced by two buttons (voltage test confirmed, pump replacement
+          // link) but never actually implemented -- both produced unhandled-action
+          // errors, blocking users from finishing the Jets diagnosis (Tony 2026-07-02).
+          responseMsg = "That confirms it -- correct voltage at the terminal with the pump not running points to the pump or its power cord.";
+          stepResult.passed = false;
+          partCard = 'jet pump';
+          advanceNow = true;
+          nextStep = null;
+          break;
+
+        case 'fail_control_board':
+          // Same missing-case bug as fail_jet_pump above.
+          responseMsg = "0V at the terminal with the button pressed means the board isn't sending power to that pump -- the relay on the control board has failed.";
+          stepResult.passed = false;
+          partCard = 'control board';
           advanceNow = true;
           nextStep = null;
           break;
@@ -3499,7 +3522,7 @@ app.post("/api/diag-button", async (req, res) => {
           break;
 
         case 'unusual_finding':
-          responseMsg = "Describe what you see and I'll help identify it. Or upload a photo for a closer look (Premium).";
+          responseMsg = "Got it -- that's worth noting for the final summary. Tap Continue when you're ready to move on.";
           advanceNow = false;
           deadEndButtons = [
             { l: 'Continue diagnosis', o: 'pass', a: '' },
@@ -3740,6 +3763,17 @@ app.post("/api/diag-button", async (req, res) => {
     if (!existing) {
       state.steps.push(stepResult);
     } else {
+      // Stale-flag fix (Tony's Bug #8, 2026-07-04): Object.assign only overwrites keys
+      // present in stepResult -- it never clears flags left over from an earlier visit.
+      // A step marked `possible`/`skipped` on a first pass (e.g. H12's "Reset button
+      // found and pressed") would keep that flag forever even after a clean revisit
+      // answer (e.g. "No reset button found"), because the flag was never in the new
+      // stepResult to overwrite it. That caused the pre-conclusion review to flag the
+      // same step as unresolved no matter what was picked on revisit. Applied generically
+      // to every step, not just H12 -- any revisited step could hit the same bug.
+      delete existing.possible;
+      delete existing.skipped;
+      delete existing.preflagged;
       Object.assign(existing, stepResult);
     }
 
@@ -3786,6 +3820,23 @@ app.post("/api/diag-button", async (req, res) => {
     }
 
 
+    // ── Noise/Water interim dead-end exit fix (Tony, 2026-07-04) ──
+    // Noise and Water have no terminal step or pre-conclusion review (unlike
+    // Flow/Heat/Jets), so their ~37 individual dead-end branches leave users with no
+    // way out except closing the chat. Full fix (dedicated terminal + Sonnet gated on
+    // completion) is roadmapped for v4.9.22. This is the cheap interim: append
+    // client-side-only navigation (no server/AI cost, nothing to gate) to any
+    // dead-end response on these two topics so nobody gets stranded in the meantime.
+    if (deadEndButtons && (state.topic === 'noise' || state.topic === 'water')) {
+      const _hasNav = deadEndButtons.some(b => b.a === 'nav_reset' || b.a === 'nav_guides');
+      if (!_hasNav) {
+        deadEndButtons = deadEndButtons.concat([
+          { l: 'Diagnose Something Else', o: 'nav', a: 'nav_reset' },
+          { l: 'Review Guides', o: 'nav', a: 'nav_guides' },
+        ]);
+      }
+    }
+
     // ── FLAG: dead-end detector ──
     if (!advanceNow && !skipPending && !deadEndButtons && !partCardButtons && !responseMsg && outcome !== 'action') {
       responseMsg = `⚑ Undefined sequence -- flagged for review.
@@ -3820,6 +3871,24 @@ app.post("/api/diag-button", async (req, res) => {
 // Sonnet's role is narrow: decide whether the user's reply raises something not
 // yet covered (warranting one more clarifying question) or whether it's fine to
 // proceed to the conclusion. Sonnet does not write the conclusion text itself.
+// Terminal-step "Dig Deeper" Sonnet handoff -- 10/day cap, independent of the
+// existing Tester message quota. (Tony's spec 2026-07-03.)
+app.post("/api/terminal-sonnet-check", async (req, res) => {
+  try {
+    const clientId = req.body.clientId || req.headers['x-spafix-client-id'] || 'unknown';
+    const today = new Date().toISOString().slice(0, 10);
+    const key = `${clientId}:${today}`;
+    const used = terminalSonnetHandoffCounts.get(key) || 0;
+    if (used >= TERMINAL_SONNET_DAILY_CAP) {
+      return res.json({ allowed: false, used, cap: TERMINAL_SONNET_DAILY_CAP });
+    }
+    terminalSonnetHandoffCounts.set(key, used + 1);
+    res.json({ allowed: true, used: used + 1, cap: TERMINAL_SONNET_DAILY_CAP });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post("/api/diag-review-reply", async (req, res) => {
   try {
     const { message, diagState, clientId: bodyClientId } = req.body;
@@ -3837,6 +3906,7 @@ app.post("/api/diag-review-reply", async (req, res) => {
 
     let needsClarification = false;
     let question = '';
+    let _sonnetCheckFailed = false;
     if (turn < REVIEW_MAX_TURNS) {
       try {
         const sysPrompt = `You are reviewing one user reply during a spa diagnostic. Steps already completed and ruled out: ${completedLabels || '(none recorded)'}. The user was asked if there's anything else about the issue they haven't mentioned. Their reply: "${message}". Decide: does this reply raise something genuinely new that isn't covered by the completed steps and warrants ONE brief clarifying question? Respond with ONLY a JSON object, no other text: {"needsClarification": true, "question": "..."} or {"needsClarification": false}.`;
@@ -3854,13 +3924,14 @@ app.post("/api/diag-review-reply", async (req, res) => {
       } catch (e) {
         console.error('[diag-review-reply] Sonnet check failed, proceeding to conclusion:', e.message);
         needsClarification = false;
+        _sonnetCheckFailed = true;
       }
     }
 
     if (needsClarification && question) {
       state.reviewPending.turn = turn;
       setDiagState(clientId, state);
-      return res.json({ responseMsg: question, awaitReviewFreeText: true, diagState: state });
+      return res.json({ responseMsg: question, awaitReviewFreeText: true, diagState: state, sonnetCheckFailed: _sonnetCheckFailed });
     }
 
     // No clarification needed, or turn cap hit -- proceed to the conclusion
@@ -3876,7 +3947,7 @@ app.post("/api/diag-review-reply", async (req, res) => {
       fire: ns.fire ? applyFireTemplates(`[${ns.fire}]`) : null,
       buttons: ns.buttons, bayStep: ns.bayStep || false,
     } : null;
-    res.json({ advanceNow: true, nextStep: nextStepData, diagState: state });
+    res.json({ advanceNow: true, nextStep: nextStepData, diagState: state, sonnetCheckFailed: _sonnetCheckFailed });
   } catch (err) {
     console.error('[/api/diag-review-reply] error:', err.message);
     if (!res.headersSent) res.status(500).json({ error: err.message });
@@ -3967,6 +4038,7 @@ app.post("/api/chat", async (req, res) => {
 
   // systemOverride -- null diagStateEffective BEFORE detectRequestContext so context is built cleanly
   if (req.body.systemOverride && typeof req.body.systemOverride === 'string') {
+    if (req.body.sonnetHandoff) console.log('[DIAG-SONNET] nulling diagStateEffective for prompt context -- clientId:', clientId, 'pre-null currentStep:', diagStateEffective?.currentStep);
     diagStateEffective = null;
   }
 
@@ -4155,7 +4227,19 @@ app.post("/api/chat", async (req, res) => {
       if (lm?.role === 'user') appendToTranscript(testerName, clientId, 'user', typeof lm.content === 'string' ? lm.content : '');
       appendToTranscript(testerName, clientId, 'assistant', safeReply);
     }
-    return { reply: safeReply, diagState: updatedDiagState || diagStateEffective || null, partTags: _partTagsOut };
+    // [DIAG-SONNET] Sonnet handoff (systemOverride) replies never carry [A:]/[SK:] step-advance
+    // signals, and diagStateEffective was intentionally nulled earlier in this request (see the
+    // systemOverride branch above) to build a clean prompt context -- neither should be trusted
+    // for the diagState sent back to the client, or currentStep can come back empty and the
+    // client's free-text hard-block misfires (Tony's report 2026-07-03). Always return the
+    // authoritative persisted state on this path so currentStep survives the round trip.
+    let _finalDiagState = updatedDiagState || diagStateEffective || null;
+    if (req.body.sonnetHandoff) {
+      const _authoritativeDiagState = getDiagState(clientId);
+      console.log('[DIAG-SONNET] sonnetHandoff reply -- clientId:', clientId, 'authoritative currentStep:', _authoritativeDiagState?.currentStep, 'updatedDiagState currentStep:', updatedDiagState?.currentStep, 'diagStateEffective:', diagStateEffective);
+      _finalDiagState = _authoritativeDiagState || updatedDiagState || diagStateEffective || null;
+    }
+    return { reply: safeReply, diagState: _finalDiagState, partTags: _partTagsOut };
   }
 
   if (premiumAccess && !isTesterAccessCode(req)) {
@@ -4369,6 +4453,38 @@ app.post('/api/validate-error-code', async (req, res) => {
     if (!res.headersSent) res.status(500).json({ error: err.message });
   }
 
+});
+
+// ── Admin: Force Pass All (Tony's spec 2026-07-03) ──────────────────
+// Syncs the client-side Force Pass All action to the server's diagStateStore, so
+// Sonnet's context (built from server-persisted state) agrees with what the client
+// shows -- without this, Sonnet would say "everything passed" while Jet's own routing
+// still saw an incomplete/real diagState for the same clientId. Admin-only, matching
+// the client-side gating on the Force Pass All button itself.
+app.post('/api/admin/force-pass-all', async (req, res) => {
+  const { key, topic } = req.body;
+  if (!ADMIN_KEY || !accessCodesMatch(key, ADMIN_KEY)) return res.status(401).json({ error: 'Unauthorized' });
+  const order = SEQUENCE_STEP_ORDERS[topic];
+  if (!order) return res.status(400).json({ error: `Unknown topic "${topic}" -- expected flow, heat, or jets` });
+  const terminalId = order[order.length - 1];
+  const clientId = getClientId(req);
+  let state = getDiagState(clientId) || { spa: req.body.spa || 'Unknown', errorCode: null, topic, steps: [], currentStep: null };
+  state.topic = topic;
+  if (!state.steps) state.steps = [];
+  order.forEach(sid => {
+    if (sid === terminalId) return; // terminal step itself isn't a pass/fail step
+    const step = DIAG_STEPS[sid];
+    const existing = state.steps.find(s => s.id === sid);
+    if (existing) {
+      existing.passed = true; existing.skipped = false; existing.possible = false;
+    } else {
+      state.steps.push({ id: sid, label: step ? step.label : sid, passed: true, skipped: false, possible: false });
+    }
+  });
+  state.currentStep = terminalId;
+  setDiagState(clientId, state);
+  console.log('[DIAG-SONNET] Force Pass All synced server-side -- clientId:', clientId, 'topic:', topic, 'terminal:', terminalId);
+  res.json({ ok: true, diagState: getDiagState(clientId) });
 });
 
 // ── Admin: Unknown Error Codes ──────────────────────────────────
