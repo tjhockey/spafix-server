@@ -1,4 +1,4 @@
-process.env.APP_VERSION = "v4.9.21u"
+process.env.APP_VERSION = "v4.9.21x"
 const CLIENT_VERSION = "4.9.21av"; // fallback only -- /api/version now echoes the X-SpaFix-Client-Version header when present
 require('dotenv').config();
 const express = require("express");
@@ -2291,6 +2291,29 @@ app.get("/api/random-spa", async (req, res) => {
   }
 });
 
+// Lightweight, read-only limit check for client-side-only flows that never call
+// /api/diag-button -- Overheat (ohAdvance/startOverheatSequence) and the Other-checklist
+// funnel (otherShowChecklist/otherChecklistAnswer). Mirrors /api/diag-button's exemption
+// logic exactly. Does NOT increment dailyMsgs -- counting stays exactly as already
+// designed (sfCountDiagStepShown()/otherChecklistAnswer's own increment call, once per
+// step shown); this only blocks once that count is already over. (Tony's spec, 2026-07-06.)
+app.get("/api/check-limit", (req, res) => {
+  const clientId = getClientId(req);
+  const premiumAccess = hasPremiumAccess(req);
+  const proAuth = getProAuth(req);
+  const isPro = !!proAuth.session || premiumAccess;
+  const isTester = isTesterAccessCode(req);
+  const qaBypass = isQABypass(req);
+  if (isPro || (isTester && qaBypass)) {
+    return res.json({ limitReached: false });
+  }
+  const u = getUsage(clientId);
+  if (u.dailyMsgs >= FREE_DAILY_MSG_LIMIT) {
+    return res.json({ limitReached: true, reason: "daily_messages", message: `You've reached the ${FREE_DAILY_MSG_LIMIT} message limit for today. Come back tomorrow, or upgrade to Premium for unlimited messages.` });
+  }
+  res.json({ limitReached: false });
+});
+
 app.get("/api/usage", (req, res) => {
   const clientId = getClientId(req);
   const u = getUsage(clientId);
@@ -2443,6 +2466,25 @@ app.post("/api/diag-button", async (req, res) => {
   try {
     const { stepId, buttonLabel, outcome, part, action, briefMode } = req.body;
     const clientId = getClientId(req);
+
+    // Daily-limit enforcement (2026-07-06 fix): this endpoint previously had none at all,
+    // so a Free user at 10/10 could keep clicking structured diag-step buttons forever --
+    // sfCountDiagStepShown()/renderDiagStep() already count each step shown, but that call
+    // is fire-and-forget and never blocked anything. This check does the blocking; it does
+    // NOT increment dailyMsgs itself (that stays exactly as Tony's 2026-06-22 design has it,
+    // counted once per step displayed) -- this only rejects once that count is already over.
+    // Same exemption logic /api/chat uses: Premium/Pro and QA-bypass Tester traffic skip it.
+    const _premiumAccess = hasPremiumAccess(req);
+    const _proAuth = getProAuth(req);
+    const _isPro = !!_proAuth.session || _premiumAccess;
+    const _isTester = isTesterAccessCode(req);
+    const _qaBypass = isQABypass(req);
+    if (!_isPro && !(_isTester && _qaBypass)) {
+      const _u = getUsage(clientId);
+      if (_u.dailyMsgs >= FREE_DAILY_MSG_LIMIT) {
+        return res.status(429).json({ limitReached: true, reason: "daily_messages", message: `You've reached the ${FREE_DAILY_MSG_LIMIT} message limit for today. Come back tomorrow, or upgrade to Premium for unlimited messages.` });
+      }
+    }
 
     // Handle initialization
     if (stepId === 'INIT') {
@@ -3785,9 +3827,17 @@ app.post("/api/diag-button", async (req, res) => {
       advanceNow = false;
       if (flags.length > 0) {
         const flagList = flags.map(f => `${f.label}${f.skipped ? ' (skipped)' : f.possible ? ' (not fully ruled out)' : ' (failed)'}`).join(', ');
-        responseMsg = `Before pointing to the control board — a few things weren't fully resolved: ${flagList}. Want to go back and revisit any of these, or continue anyway?`;
+        // Hard block, no bypass (Tony's spec, 2026-07-06): applies to all four sequences.
+        // No path to Sonnet/conclusion exists until every flagged step is resolved --
+        // "Continue to control board anyway" removed entirely, replaced with the same
+        // non-Sonnet options S14/H14/J14 already offer, plus Shop with Jet.
+        responseMsg = `Before pointing to the control board — a few things weren't fully resolved: ${flagList}. Go back and revisit these to continue, or choose another option below.`;
         deadEndButtons = flags.map(f => ({ l: `Revisit ${f.label}`, o: 'action', a: `revisit_step:${f.id}` }))
-          .concat([{ l: 'Continue to control board anyway', o: 'action', a: `confirm_conclusion:${nextStep}` }]);
+          .concat([
+            { l: 'Diagnose Something Else', o: 'nav', a: 'nav_reset' },
+            { l: 'Review Guides', o: 'nav', a: 'nav_guides' },
+            { l: 'Shop with Jet', o: 'nav', a: 'nav_shop' },
+          ]);
       } else {
         state.reviewPending = { target: nextStep, turn: 0 };
         responseMsg = "Before we conclude — is there anything else about this issue you haven't mentioned yet?";
