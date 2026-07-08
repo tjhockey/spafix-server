@@ -1,4 +1,4 @@
-process.env.APP_VERSION = "v4.9.21x"
+process.env.APP_VERSION = "v4.9.21ad"
 const CLIENT_VERSION = "4.9.21av"; // fallback only -- /api/version now echoes the X-SpaFix-Client-Version header when present
 require('dotenv').config();
 const express = require("express");
@@ -265,8 +265,17 @@ async function fetch(input, init) {
     return nativeFetch(input, init);
   }
 
+  // Per-call timeout override (2026-07-07, Tony's report): this global 10s ceiling applies
+  // to every Anthropic call in the file, including ones that legitimately need longer --
+  // multi-image vision analysis (Get Repair Help) with a full structured response
+  // genuinely takes more than 10s. Individual callers can now pass a custom `timeoutMs` on
+  // their init object to get more time; everything else keeps the fast-failing 10s default
+  // (correct for ordinary short chat replies -- a stuck request shouldn't make those wait).
+  const { timeoutMs, ...restInit } = init || {};
+  const _effectiveTimeoutMs = typeof timeoutMs === "number" ? timeoutMs : ANTHROPIC_TIMEOUT_MS;
+
   const controller = new AbortController();
-  const upstreamSignal = init?.signal;
+  const upstreamSignal = restInit.signal;
   const abortFromUpstream = () => controller.abort();
 
   if (upstreamSignal) {
@@ -274,10 +283,10 @@ async function fetch(input, init) {
     else upstreamSignal.addEventListener("abort", abortFromUpstream, { once: true });
   }
 
-  const timeoutId = setTimeout(() => controller.abort(), ANTHROPIC_TIMEOUT_MS);
+  const timeoutId = setTimeout(() => controller.abort(), _effectiveTimeoutMs);
 
   try {
-    return await nativeFetch(input, { ...init, signal: controller.signal });
+    return await nativeFetch(input, { ...restInit, signal: controller.signal });
   } catch (error) {
     if (error?.name === "AbortError" && !upstreamSignal?.aborted) {
       return createAnthropicTimeoutResponse();
@@ -499,6 +508,15 @@ const FREE_WEEKLY_SESSION_LIMIT = 3; // sessions per week
 const usageStore = {}; // key: clientId, value: { dailyMsgs, dailyDate, weeklySessions, weekStart, sessionActive }
 
 function getClientId(req) {
+  // Device-ID fix (2026-07-07, Tony's report): raw IP as clientId meant every user behind
+  // the same IP (shared WiFi, office, mobile carrier NAT) shared the same usage quota AND
+  // the same persisted diagState -- confirmed live when a brand-new conversation picked up
+  // a stale currentStep from an unrelated earlier session on the same address. The client
+  // already has a stable per-browser DEVICE_ID (localStorage) sent as x-spafix-device-id on
+  // every request now -- prefer that; fall back to IP only when the header is missing
+  // (very old cached clients, non-browser callers).
+  const deviceId = req.headers["x-spafix-device-id"];
+  if (deviceId && typeof deviceId === "string" && deviceId.trim()) return deviceId.trim();
   return req.headers["x-forwarded-for"]?.split(",")[0].trim() || req.socket.remoteAddress || "unknown";
 }
 function getWeekStart(date = new Date()) {
@@ -1686,19 +1704,49 @@ The user has uploaded a photo of a hot tub part or issue. Your job is to:
 3. RECOMMEND the fix -- explain clearly what needs to be done
 4. SUGGEST REPLACEMENT PARTS using this exact format for each part:
 
----PART_RECOMMENDATION---
-name: [exact part name]
-amazon_url: https://www.amazon.com/s?k=[url+encoded+part+name]&tag=spafix-20
-supplier_url: https://www.spadepot.com/search?q=[url+encoded+part+name]
-easy_spa_parts_url: https://www.easyspaparts.com/shop/?s=[url+encoded+part+name]
-easy_spa_parts_broad_url: https://www.easyspaparts.com/shop/?s=[make+url+encoded+part+name]
-price_range: [$XX - $XX typical price range]
-notes: [compatibility notes or what to look for when buying]
----END_PART---
+>>PT
+nm: [exact part name] | az: [amazon URL with &tag=spafix-20] | sp: [spadepot URL] | azb: [broad amazon URL] | spb: [broad spadepot URL] | pr: [$XX-$XX] | nt: [compatibility notes] | ag: true/false
+<<PT
+
+Do NOT use any other vendor or link format. Amazon and SpaDepot are the only active vendors -- do not invent or reference any other retailer.
 
 After your diagnosis, note whether this is DIY-friendly or requires a professional.
 Use **bold** for part names and important warnings.
 ${DISCLAIMER}`;
+
+// Get Repair Help (2026-07-07, Tony's spec) -- adapted from PHOTO_SYSTEM_PROMPT for a
+// bounded, focused task: identify a CONFIRMED failed component (not general troubleshooting)
+// and produce a spa-specific replacement guide with its own required safety section. Users
+// reach this from a dedicated main chip (Premium/Pro-gated) or from a confirmed-failed
+// diagnostic step, not from general free-text chat.
+const REPAIR_HELP_SYSTEM_PROMPT = `You are Jet, SpaFix's expert hot tub and spa repair assistant. The user has a specific hot tub/spa component that has already been identified as broken or failed, and needs help replacing it. You may receive up to 3 photos of the same part/issue in this conversation -- do not ask the user to upload additional photos beyond what they've already provided.
+
+SCOPE -- important, applies to every message in this conversation, not just the first: you only help with hot tub/spa component identification and repair. If a message (or photo) is not related to a hot tub or spa -- e.g. homework, travel planning, general knowledge questions, anything unrelated -- politely decline in 1-2 sentences and redirect back to spa repair help. Reply in the same language the user wrote in. Do not answer the off-topic request even partially.
+
+If spa year/make/model is provided, use it specifically -- tailor part compatibility and any model-specific replacement nuances to that spa, not generic advice. If a part or pump model number is mentioned or visible in a photo, treat that as more specific/authoritative than the general spa model for compatibility purposes.
+
+Your job, in order:
+
+1. IDENTIFY the specific part shown/described. Be precise (e.g. "Sundance SUN6500-343 pump water inlet fitting", not just "a fitting").
+2. CONFIRM the failure mode visible (cracked, corroded, sheared thread, burnt, etc.)
+3. REPLACEMENT PROCEDURE -- clear, spa-specific steps to remove the failed part and install a new one. Note any spa-model-specific nuances (access panel location, fitting orientation, torque considerations, etc.) where relevant.
+4. SAFETY MEASURES -- always include this as its own clearly-labeled section: power/breaker precautions, water drainage if applicable, any part-specific hazards (electrical, pressurized water lines, sharp edges from a cracked fitting, etc.)
+5. SUGGEST REPLACEMENT PARTS using this exact format for each part:
+
+>>PT
+nm: [exact part name] | az: [amazon URL with &tag=spafix-20] | sp: [spadepot URL] | azb: [broad amazon URL] | spb: [broad spadepot URL] | pr: [$XX-$XX] | nt: [compatibility notes] | ag: true/false
+<<PT
+
+Do NOT use any other vendor or link format. Amazon and SpaDepot are the only active vendors -- do not invent or reference any other retailer.
+
+Note whether this repair is DIY-friendly or requires a professional. Keep the reply focused on this one repair -- this is not an open-ended diagnostic conversation.
+
+FORMATTING -- important, the chat renderer only understands a specific subset:
+- Do NOT use markdown headers (## or ###) anywhere in your reply.
+- Do NOT use standalone --- horizontal rules to separate sections.
+- For section labels (Part Identification, Failure Mode, Replacement Procedure, Safety Measures, DIY Assessment, etc.), use **Bold Text** on its own line instead of a header.
+- Use numbered lists (1. 2. 3.) for steps -- these render properly. Do not use tab characters or nested sub-bullets under a numbered step; keep each numbered item to one line or a short paragraph.
+- Use **bold** for part names and important warnings inline.`;
 
 const DOCUMENT_SUMMARY_PROMPT = `You are Jet, SpaFix's expert hot tub and spa repair assistant.
 
@@ -2433,7 +2481,11 @@ async function callAnthropicWithRetry(payload, maxRetries = 3, timeoutMs = 25000
       console.log(`[Anthropic] 429 received, retrying in ${delay}ms (attempt ${attempt}/${maxRetries})`);
       await new Promise(r => setTimeout(r, delay));
     }
-    // Server-side timeout -- 25s standard, 30s for sonnetHandoff analytical calls
+    // Server-side timeout -- 25s standard, 30s for sonnetHandoff analytical calls.
+    // Fixed 2026-07-07: this AbortController's own timeout was never actually reachable --
+    // the global fetch shadow's 10s default fired first every time since timeoutMs was
+    // never passed through to it, silently capping every call here at 10s regardless of
+    // what this function's own caller asked for. Now passes through correctly.
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -2442,6 +2494,7 @@ async function callAnthropicWithRetry(payload, maxRetries = 3, timeoutMs = 25000
         headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
         body: JSON.stringify(payload),
         signal: controller.signal,
+        timeoutMs,
       });
       clearTimeout(timeout);
       if (response.status === 429) continue;
@@ -2449,7 +2502,7 @@ async function callAnthropicWithRetry(payload, maxRetries = 3, timeoutMs = 25000
     } catch (err) {
       clearTimeout(timeout);
       if (err.name === 'AbortError') {
-        console.error(`[Anthropic] Request timed out after 25s (attempt ${attempt})`);
+        console.error(`[Anthropic] Request timed out after ${timeoutMs}ms (attempt ${attempt})`);
         if (attempt < maxRetries) continue;
         return { ok: false, status: 504, json: async () => ({ error: { message: "upstream_timeout" } }) };
       }
@@ -4353,23 +4406,47 @@ app.post("/api/chat", async (req, res) => {
 
 
 app.post("/api/analyze-photo", async (req, res) => {
-  const { imageBase64, mediaType, messages } = req.body;
-  if (!imageBase64 || !mediaType) return res.status(400).json({ error: "imageBase64 and mediaType required" });
+  const { imageBase64, mediaType, messages, imagesBase64, mediaTypes, text, repairHelpMode, spaDetails } = req.body;
+  // Backward-compatible: existing callers (sendPhoto, OH8c identify_board flow) send a
+  // single imageBase64/mediaType pair. Get Repair Help (2026-07-07) sends imagesBase64/
+  // mediaTypes arrays instead, so follow-up questions can reference every photo uploaded
+  // so far in that flow, not just the newest one.
+  const images = (imagesBase64 && imagesBase64.length)
+    ? imagesBase64.map((b64, i) => ({ base64: b64, mediaType: (mediaTypes && mediaTypes[i]) || 'image/jpeg' }))
+    : (imageBase64 ? [{ base64: imageBase64, mediaType: mediaType || 'image/jpeg' }] : []);
+  if (!images.length) return res.status(400).json({ error: "imageBase64 (or imagesBase64) required" });
   if (!requireProSession(req, res)) return;
   // Photo analysis is Pro-only -- no rate limiting needed here
+  // Logging added 2026-07-07: this endpoint previously had none at all, which is why
+  // Tony's server console showed nothing during his live 504 report -- no way to confirm
+  // whether the request was even reaching Anthropic or how long it actually took.
+  const _photoReqStart = Date.now();
+  console.log(`[/api/analyze-photo] ${new Date().toISOString()} images=${images.length} repairHelpMode=${!!repairHelpMode}`);
   try {
+    const contentBlocks = images.map(img => ({ type: "image", source: { type: "base64", media_type: img.mediaType, data: img.base64 } }));
+    let promptText = text || "Please identify this hot tub part or issue and give me your diagnosis and part recommendations.";
+    if (repairHelpMode && spaDetails && (spaDetails.year || spaDetails.make || spaDetails.model)) {
+      promptText = `Spa: ${[spaDetails.year, spaDetails.make, spaDetails.model].filter(Boolean).join(' ')}. ${promptText}`;
+    }
+    contentBlocks.push({ type: "text", text: promptText });
     const allMessages = [
       ...(messages || []),
-      { role: "user", content: [
-        { type: "image", source: { type: "base64", media_type: mediaType, data: imageBase64 } },
-        { type: "text", text: "Please identify this hot tub part or issue and give me your diagnosis and part recommendations." }
-      ]}
+      { role: "user", content: contentBlocks }
     ];
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 2048, system: PHOTO_SYSTEM_PROMPT, messages: allMessages }),
+      body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 2048, system: repairHelpMode ? REPAIR_HELP_SYSTEM_PROMPT : PHOTO_SYSTEM_PROMPT, messages: allMessages }),
+      // Vision analysis + a full structured response genuinely takes longer than the
+      // global 10s default -- confirmed via Tony's live testing (both a 2-image upload and
+      // a text-only follow-up in the same repair-help flow hit the 10s ceiling). More
+      // images and a longer required response (repair guide + safety section) need more
+      // room than a single-photo identification.
+      // 45s (previous build) still wasn't enough -- Tony's live report showed the actual
+      // Anthropic call taking 45010ms, right at the wall. Bumped to 65s for headroom.
+      timeoutMs: repairHelpMode ? 65000 : 30000,
     });
+    console.log(`[/api/analyze-photo] Anthropic responded after ${Date.now() - _photoReqStart}ms, status=${response.status}`);
     const data = await response.json();
     if (!response.ok) return res.status(response.status).json({ error: data?.error?.message || "API error" });
     const photoReply = (data.content?.map((b) => b.text || "").join("") || "").replace(/<br\s*\/?>/gi, "\n");
