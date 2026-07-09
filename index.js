@@ -1,4 +1,4 @@
-process.env.APP_VERSION = "v4.9.21ad"
+process.env.APP_VERSION = "v4.9.21ae"
 const CLIENT_VERSION = "4.9.21av"; // fallback only -- /api/version now echoes the X-SpaFix-Client-Version header when present
 require('dotenv').config();
 const express = require("express");
@@ -1528,9 +1528,10 @@ Buttons ARE the Q. Never combine Q+buttons.
 
 =PT=
 >>PT
-nm: [name] | az: [amazon URL &tag=spafix-20] | sp: [spadepot URL] | azb: [broad amazon] | spb: [broad spadepot] | pr: [$X-$X] | nt: [note] | ag: true/false
+nm: [name] | sq: [amazon search term] | az: [amazon URL &tag=spafix-20] | sp: [spadepot URL] | azb: [broad amazon] | spb: [broad spadepot] | pr: [$X-$X] | nt: [note] | ag: true/false
 <<PT
 Use for ALL product recs. No raw URLs.
+sq = a SHORT Amazon search term (3-6 words), NOT the descriptive name. Lead with generic category + spec (e.g. "hot tub tubing 3/8 OD", "spa nylon barbed fitting 3/8 MPT"). NO spa brand or model names (Sundance/Watkins/Jacuzzi etc. return near-empty results on Amazon). If a real OEM part number is known, put it FIRST (e.g. "6560-860 spa pump"). Drop parenthetical descriptions.
 
 =COR=
 >>COR
@@ -1734,8 +1735,12 @@ Your job, in order:
 5. SUGGEST REPLACEMENT PARTS using this exact format for each part:
 
 >>PT
-nm: [exact part name] | az: [amazon URL with &tag=spafix-20] | sp: [spadepot URL] | azb: [broad amazon URL] | spb: [broad spadepot URL] | pr: [$XX-$XX] | nt: [compatibility notes] | ag: true/false
+nm: [exact part name] | sq: [short amazon search term] | az: [amazon URL with &tag=spafix-20] | sp: [spadepot URL] | azb: [broad amazon URL] | spb: [broad spadepot URL] | pr: [$XX-$XX] | nt: [compatibility notes] | ag: true/false
 <<PT
+
+sq is a SHORT Amazon search term (3-6 words), distinct from nm. Lead with the generic category + spec ("hot tub tubing 3/8 OD", "spa nylon barbed fitting 3/8 MPT"). Do NOT put spa brand or model names in sq -- brand-first searches (Sundance/Watkins/Jacuzzi/etc.) return near-empty results on Amazon. If a real OEM part number is known, put it FIRST in sq. Never put a parenthetical description in sq.
+
+Part selection: when the correct size or spec cannot be determined for certain (e.g. you can't tell 3/8" vs 1/2" from the photo), recommend BOTH likely options as separate >>PT blocks and tell the user to measure to confirm -- do not silently guess one. Always include any consumable the repair itself requires (thread sealant / PTFE tape, hose clamps, o-rings, etc.) as its own >>PT block.
 
 Do NOT use any other vendor or link format. Amazon and SpaDepot are the only active vendors -- do not invent or reference any other retailer.
 
