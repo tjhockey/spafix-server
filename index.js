@@ -1,4 +1,4 @@
-process.env.APP_VERSION = "v4.9.21ae"
+process.env.APP_VERSION = "v4.9.21al"
 const CLIENT_VERSION = "4.9.21av"; // fallback only -- /api/version now echoes the X-SpaFix-Client-Version header when present
 require('dotenv').config();
 const express = require("express");
@@ -506,6 +506,75 @@ const FREE_WEEKLY_SESSION_LIMIT = 3; // sessions per week
 // In-memory store for rate limiting (resets on server restart)
 // In production, replace with Redis or a database
 const usageStore = {}; // key: clientId, value: { dailyMsgs, dailyDate, weeklySessions, weekStart, sessionActive }
+
+// ── Junk/off-topic lockout (Item 3, 2026-07-10) ──────────────────
+// Protects the expensive text-follow-up endpoint from off-topic/junk floods.
+// Server-side by clientId so localStorage.clear() can't reset it.
+// Two triggers: (1) 5 consecutive junk messages -> lock; a valid message resets the
+// consecutive counter. (2) after >=10 total messages in the rolling window, if >50% were
+// junk -> lock (catches a script alternating junk/valid to dodge the consecutive reset).
+// "Junk" = a message rejected by the repair-help gate (too short OR off-topic). Per Tony
+// (2026-07-10, 3B): short-junk DOES count toward lockout, subject to review if too strict.
+// Scope: free-text AI chat only. Button-driven diagnostics, guides, shop are never gated.
+const JUNK_LOCK_CONSECUTIVE = 5;
+const JUNK_LOCK_WARN_AT = 3;
+const JUNK_LOCK_RATIO_MIN_MSGS = 10;
+const JUNK_LOCK_RATIO_THRESHOLD = 0.5;
+const JUNK_LOCK_DURATION_MS = 10 * 60 * 1000; // 10 minutes
+const junkStore = {}; // clientId -> { consecutive, windowTotal, windowJunk, lockUntil }
+function getJunkState(clientId) {
+  if (!junkStore[clientId]) junkStore[clientId] = { consecutive: 0, windowTotal: 0, windowJunk: 0, lockUntil: 0 };
+  return junkStore[clientId];
+}
+// Returns { locked, remainingMs } without mutating.
+function checkJunkLock(clientId) {
+  const s = getJunkState(clientId);
+  if (s.lockUntil && Date.now() < s.lockUntil) {
+    return { locked: true, remainingMs: s.lockUntil - Date.now() };
+  }
+  // Lock expired: reset the consecutive counter for a fresh start (ratio window rolls on).
+  if (s.lockUntil && Date.now() >= s.lockUntil) { s.lockUntil = 0; s.consecutive = 0; }
+  return { locked: false, remainingMs: 0 };
+}
+// Record the outcome of a gated message. isJunk = gate rejected it. Returns
+// { lock, warn, remainingMs } describing any state change.
+function recordJunkOutcome(clientId, isJunk) {
+  const s = getJunkState(clientId);
+  s.windowTotal++;
+  if (isJunk) {
+    s.windowJunk++;
+    s.consecutive++;
+    // Option 2 (Tony 2026-07-10): any junk while already at/above threshold re-locks
+    // immediately -- so after a tester ↺ unlock (which clears only the timer), one more
+    // junk message re-locks without needing 5 fresh ones.
+    if (s.consecutive >= JUNK_LOCK_CONSECUTIVE) {
+      s.lockUntil = Date.now() + JUNK_LOCK_DURATION_MS;
+      return { lock: true, warn: false, remainingMs: JUNK_LOCK_DURATION_MS };
+    }
+    if (s.windowTotal >= JUNK_LOCK_RATIO_MIN_MSGS && (s.windowJunk / s.windowTotal) > JUNK_LOCK_RATIO_THRESHOLD) {
+      s.lockUntil = Date.now() + JUNK_LOCK_DURATION_MS;
+      return { lock: true, warn: false, remainingMs: JUNK_LOCK_DURATION_MS };
+    }
+    if (s.consecutive === JUNK_LOCK_WARN_AT) return { lock: false, warn: true, remainingMs: 0 };
+    return { lock: false, warn: false, remainingMs: 0 };
+  }
+  // Valid message resets the consecutive counter (ratio window is unaffected).
+  s.consecutive = 0;
+  return { lock: false, warn: false, remainingMs: 0 };
+}
+function clearJunkLock(clientId) {
+  const s = getJunkState(clientId);
+  s.lockUntil = 0; // clear timer only; counters persist (Tony 2026-07-10) so testing can continue
+}
+// Rotating lockout messages (Tony-supplied, 2026-07-10). Rotated by index so back-to-back
+// triggers don't repeat.
+const JUNK_LOCK_MESSAGES = [
+  "SpaFix is currently optimized only for hot tub and spa repairs. To protect system resources, chat has been paused for 10 minutes. Please check back shortly with your spa questions.",
+  "Chat is temporarily unavailable for 10 minutes due to multiple off-topic requests. Please return when you are ready to troubleshoot your spa.",
+  "This assistant is strictly for hot tub maintenance and repair help. Chat access will resume in 10 minutes for your spa diagnostic questions."
+];
+let _junkLockMsgIdx = 0;
+function nextJunkLockMessage() { const m = JUNK_LOCK_MESSAGES[_junkLockMsgIdx % JUNK_LOCK_MESSAGES.length]; _junkLockMsgIdx++; return m; }
 
 function getClientId(req) {
   // Device-ID fix (2026-07-07, Tony's report): raw IP as clientId meant every user behind
@@ -1722,7 +1791,7 @@ ${DISCLAIMER}`;
 // diagnostic step, not from general free-text chat.
 const REPAIR_HELP_SYSTEM_PROMPT = `You are Jet, SpaFix's expert hot tub and spa repair assistant. The user has a specific hot tub/spa component that has already been identified as broken or failed, and needs help replacing it. You may receive up to 3 photos of the same part/issue in this conversation -- do not ask the user to upload additional photos beyond what they've already provided.
 
-SCOPE -- important, applies to every message in this conversation, not just the first: you only help with hot tub/spa component identification and repair. If a message (or photo) is not related to a hot tub or spa -- e.g. homework, travel planning, general knowledge questions, anything unrelated -- politely decline in 1-2 sentences and redirect back to spa repair help. Reply in the same language the user wrote in. Do not answer the off-topic request even partially.
+SCOPE -- important, applies to every message in this conversation, not just the first: you help with hot tub/spa problems. If a message is a genuine spa/hot-tub SYMPTOM or issue (e.g. green or cloudy water, won't heat, weak jets, noises, leaks) rather than an already-identified failed part, do NOT say it's "outside your scope" and do NOT decline -- that reads as unhelpful when you then go on to help anyway. Instead help directly: briefly explain the likely cause and the fix, and point to a specific part only if one is actually involved. Water-chemistry issues (green/cloudy/foamy water) ARE in scope -- give practical balancing/treatment guidance. ONLY decline when a message is truly unrelated to hot tubs or spas -- e.g. homework, travel planning, general knowledge -- in which case politely decline in 1-2 sentences and redirect back to spa help, and do not answer the off-topic request even partially. Reply in the same language the user wrote in.
 
 If spa year/make/model is provided, use it specifically -- tailor part compatibility and any model-specific replacement nuances to that spa, not generic advice. If a part or pump model number is mentioned or visible in a photo, treat that as more specific/authoritative than the general spa model for compatibility purposes.
 
@@ -1752,6 +1821,76 @@ FORMATTING -- important, the chat renderer only understands a specific subset:
 - For section labels (Part Identification, Failure Mode, Replacement Procedure, Safety Measures, DIY Assessment, etc.), use **Bold Text** on its own line instead of a header.
 - Use numbered lists (1. 2. 3.) for steps -- these render properly. Do not use tab characters or nested sub-bullets under a numbered step; keep each numbered item to one line or a short paragraph.
 - Use **bold** for part names and important warnings inline.`;
+
+// Item 17 (2026-07-12): dedicated install-help prompt. Replaces the old client-side 3-button
+// step (step-by-step / quick overview / tools needed), which never worked in repair-help mode
+// -- the button labels fell through to free-text send and got rejected by the off-topic gate,
+// even incrementing the junk-lockout counter. Now a single install request returns all three
+// sections in ONE response: a quick overview, numbered step-by-step instructions, and the tools
+// needed. Qualifying tools are emitted as >>PT blocks so they auto-save to the Suggested list
+// via the existing parts pipeline. Per Tony: do NOT cheapen the Suggested list with
+// household-common tools.
+const INSTALL_HELP_SYSTEM_PROMPT = `You are Jet, SpaFix's expert hot tub and spa repair assistant. The user has identified a specific hot tub/spa part and wants to INSTALL or replace it. Give them everything they need in ONE response -- do not ask which format they want, and do not ask them to choose between overview / steps / tools. Provide all three.
+
+SCOPE: you only help with hot tub/spa parts and repair. If the named part or request is not related to a hot tub or spa, politely decline in 1-2 sentences and redirect. Reply in the same language the user wrote in.
+
+If spa year/make/model is provided, tailor the instructions to that spa (access panel location, fitting orientation, torque, drainage needs). If an OEM part number is on file for this part, reference it.
+
+Your response MUST contain these three labeled sections, in this order:
+
+1. **Quick Overview** -- 2-4 sentences: what the job involves, rough difficulty, and estimated time. Note whether it's DIY-friendly or needs a professional.
+
+2. **Step-by-Step Instructions** -- numbered steps (1. 2. 3.) covering power/water safety first, removal of the old part, installation of the new one, and testing. Keep each numbered item to one line or a short paragraph. Always lead with the safety/power-off step.
+
+3. **Tools Needed** -- list the tools and consumables required. Then, for each tool or consumable that a typical homeowner would need to BUY (specialty tools, spa-specific consumables like PTFE thread sealant, silicone lubricant, hose clamps, o-rings), emit a >>PT block so it's added to the user's Suggested list. Do NOT emit >>PT blocks for household-common tools the user almost certainly already owns (screwdriver, adjustable wrench, pliers, towels, bucket) -- list those in the text only. When in doubt about whether a tool is common, leave it out of the >>PT blocks.
+
+Use this EXACT format for each purchasable tool/consumable:
+
+>>PT
+nm: [exact tool/consumable name] | sq: [short amazon search term] | az: [amazon URL with &tag=spafix-20] | sp: [spadepot URL] | azb: [broad amazon URL] | spb: [broad spadepot URL] | pr: [$XX-$XX] | nt: [what it's for in this install] | ag: true/false
+<<PT
+
+sq is a SHORT Amazon search term (3-6 words), generic category + spec, NO spa brand or model names. Amazon and SpaDepot are the only vendors -- do not invent others.
+
+FORMATTING -- the chat renderer only understands a subset:
+- Do NOT use markdown headers (## or ###) or standalone --- horizontal rules.
+- Use **Bold Text** on its own line for the three section labels.
+- Use numbered lists (1. 2. 3.) for the steps.
+- Use **bold** for part names and important safety warnings inline.`;
+
+// Item 13 (2026-07-11): format this spa's on-file parts into a prompt snippet for repair-help.
+// When SpaFix has verified OEM data for the spa, Jet should PREFER those exact numbers over
+// guessing. Returns '' when nothing is on file, so the prompt is unchanged for uncovered spas
+// (DB coverage is still being backfilled). This never relaxes the "never invent part numbers"
+// rule -- it just gives Jet real data to use when we have it.
+function buildOnFilePartsSnippet(onFileParts) {
+  if (!onFileParts) return '';
+  const _cp = Array.isArray(onFileParts.compatible_parts) ? onFileParts.compatible_parts : [];
+  const _kpn = onFileParts.key_part_numbers || null;
+  let lines = [];
+  if (_kpn) {
+    if (typeof _kpn === 'object' && !Array.isArray(_kpn)) {
+      for (const [comp, pn] of Object.entries(_kpn)) {
+        if (pn) lines.push(`- ${comp}: ${typeof pn === 'object' ? JSON.stringify(pn) : pn}`);
+      }
+    } else if (typeof _kpn === 'string') {
+      lines.push(`- ${_kpn}`);
+    }
+  }
+  for (const p of _cp) {
+    if (!p) continue;
+    const bits = [
+      p.part_number ? `PN ${p.part_number}` : null,
+      p.oem_part_number ? `OEM ${p.oem_part_number}` : null,
+      p.description || null,
+      p.category ? `(${p.category})` : null,
+      p.superseded_by ? `[superseded by ${p.superseded_by}]` : null,
+    ].filter(Boolean);
+    if (bits.length) lines.push('- ' + bits.join(' | '));
+  }
+  if (!lines.length) return '';
+  return `\n\nON-FILE PARTS for this spa (SpaFix verified data -- PREFER these exact part numbers when a recommended part matches one of them; use them verbatim rather than guessing. If a needed part is NOT in this list, fall back to your normal guidance and use null/generic as usual -- do not invent a number):\n${lines.join('\n')}`;
+}
 
 const DOCUMENT_SUMMARY_PROMPT = `You are Jet, SpaFix's expert hot tub and spa repair assistant.
 
@@ -1925,8 +2064,17 @@ app.get("/api/model/:year/:make/:model", async (req, res) => {
         'limit': 10
       }),
       supabaseGet('parts', {
-        'select': 'part_number,description,category,manufacturer,oem_cross_references,oem_part_number,superseded_by,notes',
-        'compatible_brands': `cs.[${make}]`,
+        'select': 'part_number,description,category,manufacturer,oem_cross_references,oem_part_number,superseded_by,notes,compatible_brands,compatible_models',
+        // Item 15 (2026-07-11): parts query was silently returning ZERO rows. Two bugs per SC:
+        // (1) Postgres array-contains via PostgREST needs a curly-brace array literal {Sundance},
+        //     not JSON square brackets [Sundance] -- the old `cs.[${make}]` matched nothing.
+        // (2) Brand-only is too broad (every Sundance part regardless of model). Added a JSONB
+        //     containment filter on compatible_models -> {make} -> specific_models for model fit.
+        // SC's verified native query for the 2006 Cayman jet pump (T55MWCCE-1208 / OEM 6500-343):
+        //   compatible_brands @> ARRAY['Sundance']
+        //   AND compatible_models -> 'Sundance' -> 'specific_models' @> '["Cayman"]'::jsonb
+        'compatible_brands': `cs.{${make}}`,
+        'compatible_models': `cs.{"${make}":{"specific_models":["${model}"]}}`,
         'order': 'category',
       })
     ]);
@@ -2204,10 +2352,16 @@ app.post("/api/reset-usage", (req, res) => {
     u.weekStart = getWeekStart();
     u.sessionActive = false;
   }
+  // Item 3 (2026-07-10): either reset button also clears the junk lockout TIMER so a tester
+  // caught by a 10-min lock mid-run can continue. Counters persist intentionally (Tony) so
+  // the gate can be tested further -- with the consecutive counter still at 5, one more junk
+  // message re-locks instantly (option 2).
+  clearJunkLock(clientId);
   res.json({
     reset: resetType,
     dailyMsgs: u.dailyMsgs, dailyLimit: FREE_DAILY_MSG_LIMIT,
-    weeklySessions: u.weeklySessions, weeklyLimit: FREE_WEEKLY_SESSION_LIMIT
+    weeklySessions: u.weeklySessions, weeklyLimit: FREE_WEEKLY_SESSION_LIMIT,
+    junkLockCleared: true
   });
 });
 
@@ -2282,14 +2436,15 @@ app.get("/api/models-for-make", async (req, res) => {
 
 // Version endpoint -- used by bug reporter to detect client/server mismatch
 app.get("/api/version", (req, res) => {
-  // Echo back whatever client version the requester actually sent (X-SpaFix-Client-Version,
-  // added in 4.9.21ar) instead of a manually-maintained constant. If THIS request has no
-  // header (e.g. direct browser navigation, which can't send custom headers), fall back to
-  // the last real version seen from any request this server session -- not a static constant,
-  // which goes stale every client-only build (Tony's spec 2026-06-28, after CLT Brief #10
-  // caught it stale at 4.9.21av while running 4.9.21ba).
-  const reportedClientVersion = req.headers['x-spafix-client-version'] || lastKnownClientVersion || CLIENT_VERSION;
-  res.json({ client: reportedClientVersion, server: process.env.APP_VERSION || 'unknown' });
+  // Item 22 (2026-07-13): the `client` field was dropped. It reported the version from the
+  // X-SpaFix-Client-Version header when present, but on a direct hit with no header (browser
+  // nav, curl, a tool probe) it fell back to lastKnownClientVersion || CLIENT_VERSION, and a
+  // freshly-restarted server has no lastKnown yet -- so it returned the static CLIENT_VERSION
+  // constant, which goes stale every client-only build. That stale value produced repeated
+  // false "version mismatch" alarms in CLT (av vs the real dh/di/dj), burning sessions. The
+  // reliable client-version source is window.appVersion in the browser; this endpoint now
+  // reports ONLY the server version, which is always authoritative.
+  res.json({ server: process.env.APP_VERSION || 'unknown' });
 });
 
 app.get("/api/session-stats", (req, res) => {
@@ -4411,7 +4566,7 @@ app.post("/api/chat", async (req, res) => {
 
 
 app.post("/api/analyze-photo", async (req, res) => {
-  const { imageBase64, mediaType, messages, imagesBase64, mediaTypes, text, repairHelpMode, spaDetails } = req.body;
+  const { imageBase64, mediaType, messages, imagesBase64, mediaTypes, text, repairHelpMode, spaDetails, onFileParts } = req.body;
   // Backward-compatible: existing callers (sendPhoto, OH8c identify_board flow) send a
   // single imageBase64/mediaType pair. Get Repair Help (2026-07-07) sends imagesBase64/
   // mediaTypes arrays instead, so follow-up questions can reference every photo uploaded
@@ -4441,7 +4596,7 @@ app.post("/api/analyze-photo", async (req, res) => {
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 2048, system: repairHelpMode ? REPAIR_HELP_SYSTEM_PROMPT : PHOTO_SYSTEM_PROMPT, messages: allMessages }),
+      body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 2048, system: (repairHelpMode ? REPAIR_HELP_SYSTEM_PROMPT + buildOnFilePartsSnippet(onFileParts) : PHOTO_SYSTEM_PROMPT), messages: allMessages }),
       // Vision analysis + a full structured response genuinely takes longer than the
       // global 10s default -- confirmed via Tony's live testing (both a 2-image upload and
       // a text-only follow-up in the same repair-help flow hit the 10s ceiling). More
@@ -4456,6 +4611,78 @@ app.post("/api/analyze-photo", async (req, res) => {
     if (!response.ok) return res.status(response.status).json({ error: data?.error?.message || "API error" });
     const photoReply = (data.content?.map((b) => b.text || "").join("") || "").replace(/<br\s*\/?>/gi, "\n");
     res.json({ reply: photoReply });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Text-only Get Repair Help follow-up (Items 1/3/7, 2026-07-10) ──
+// A typed follow-up in an active repair-help session (no NEW photo this turn) no longer
+// re-sends the image payload to /api/analyze-photo -- that was paying full vision-token
+// prices (~26s calls) even for "uhoh". The prior analysis already lives in `messages`
+// as assistant text, so the model has the context it needs to answer follow-ups and
+// install questions (Item 7) without re-analyzing pixels.
+// Gate (Item 1): trimmed input < 10 chars is rejected client-side before reaching here
+// (no API call, nudge shown). This endpoint still gates for off-topic (any language) via
+// the existing isValidMessage keyword+Haiku check, and enforces the junk lockout (Item 3).
+app.post("/api/repair-help-text", async (req, res) => {
+  const { text, messages, spaDetails, wasShortGated, onFileParts, installHelp } = req.body;
+  if (!requireProSession(req, res)) return;
+  const clientId = getClientId(req);
+
+  // Enforce an existing lock first -- no work, no AI call while locked.
+  const lock = checkJunkLock(clientId);
+  if (lock.locked) {
+    return res.status(429).json({ locked: true, remainingMs: lock.remainingMs, message: nextJunkLockMessage() });
+  }
+
+  // wasShortGated: the client's <10-char gate already rejected this as junk and is telling
+  // us to count it toward the lockout (Tony 3B) without spending an AI call. Record and stop.
+  if (wasShortGated) {
+    const r = recordJunkOutcome(clientId, true);
+    if (r.lock) return res.status(429).json({ locked: true, remainingMs: r.remainingMs, message: nextJunkLockMessage() });
+    return res.json({ gated: true, warn: r.warn });
+  }
+
+  if (!text || !text.trim()) return res.status(400).json({ error: "text required" });
+
+  // Off-topic gate (reuses the /api/chat validator: keyword check, then cheap Haiku).
+  const check = await isValidMessage(text);
+  if (!check.valid) {
+    const r = recordJunkOutcome(clientId, true);
+    if (r.lock) return res.status(429).json({ locked: true, remainingMs: r.remainingMs, message: nextJunkLockMessage() });
+    return res.json({ gated: true, reason: check.reason, warn: r.warn });
+  }
+
+  // Valid message -- resets the consecutive junk counter.
+  recordJunkOutcome(clientId, false);
+
+  const _reqStart = Date.now();
+  console.log(`[/api/repair-help-text] ${new Date().toISOString()} textLen=${text.length}${installHelp ? ' installHelp=true' : ''}`);
+  try {
+    let promptText = text;
+    if (spaDetails && (spaDetails.year || spaDetails.make || spaDetails.model)) {
+      promptText = `Spa: ${[spaDetails.year, spaDetails.make, spaDetails.model].filter(Boolean).join(' ')}. ${promptText}`;
+    }
+    const allMessages = [ ...(messages || []), { role: "user", content: promptText } ];
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
+      // Item 17 (2026-07-12): install requests use the dedicated install prompt (overview +
+      // steps + tools in one response) instead of the general repair-help prompt.
+      body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 2048, system: (installHelp ? INSTALL_HELP_SYSTEM_PROMPT : REPAIR_HELP_SYSTEM_PROMPT) + buildOnFilePartsSnippet(onFileParts), messages: allMessages }),
+      // Matches the 65s vision-path allowance. Original 30s was based on wrong reasoning
+      // ("no images = less time"): the image processing was never the slow part -- the
+      // RESPONSE LENGTH is (full identification + failure mode + steps + safety + part
+      // blocks is a long generation), and this endpoint produces the same long writeup as
+      // the vision path. Confirmed live 2026-07-11: a 50-char follow-up hit 30008ms -> 504.
+      timeoutMs: 65000,
+    });
+    console.log(`[/api/repair-help-text] Anthropic responded after ${Date.now() - _reqStart}ms, status=${response.status}`);
+    const data = await response.json();
+    if (!response.ok) return res.status(response.status).json({ error: data?.error?.message || "API error" });
+    const reply = (data.content?.map((b) => b.text || "").join("") || "").replace(/<br\s*\/?>/gi, "\n");
+    res.json({ reply });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
