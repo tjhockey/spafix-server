@@ -1,4 +1,4 @@
-process.env.APP_VERSION = "v4.9.21al"
+process.env.APP_VERSION = "v4.9.21ao"
 const CLIENT_VERSION = "4.9.21av"; // fallback only -- /api/version now echoes the X-SpaFix-Client-Version header when present
 require('dotenv').config();
 const express = require("express");
@@ -1820,7 +1820,10 @@ FORMATTING -- important, the chat renderer only understands a specific subset:
 - Do NOT use standalone --- horizontal rules to separate sections.
 - For section labels (Part Identification, Failure Mode, Replacement Procedure, Safety Measures, DIY Assessment, etc.), use **Bold Text** on its own line instead of a header.
 - Use numbered lists (1. 2. 3.) for steps -- these render properly. Do not use tab characters or nested sub-bullets under a numbered step; keep each numbered item to one line or a short paragraph.
-- Use **bold** for part names and important warnings inline.`;
+- Use **bold** for part names and important warnings inline.
+- Item 25 (2026-07-13, tightened dm): when you recommend replacing a part, include a short **Tools & Supplies** section listing what the job needs. CRITICAL -- never print the **Tools & Supplies** heading with nothing under it. Almost every replacement needs basic hand tools, so under the heading you MUST list the household-common tools required (e.g. screwdriver, adjustable wrench, pliers, towels, bucket) as plain text lines; these are text-only and must never be omitted. Separately, emit any purchasable specialty tools or consumables (spa-specific: PTFE thread sealant, silicone lube, hose clamps, o-rings, dielectric grease) as >>PT blocks so they save to the user's Suggested list -- do NOT put household tools in >>PT blocks (it cheapens the Suggested list). Only omit the whole section, heading included, if the part genuinely needs no tools at all (e.g. a snap-in filter cartridge) -- in that case do not print the heading at all.
+- Item 32 (2026-07-13, ao): if the part has already been identified earlier in this conversation and the user is now asking a FOLLOW-UP question (compatibility, sizing, whether a suggested part fits, install steps, etc.), answer that specific question directly. Use any photos as reference, but do NOT restart with a full re-identification of the part -- the user already knows what it is and wants their question answered.
+- Item 33 (2026-07-13, ao): for any physical dimension or size (fitting/port diameter, thread size, hose size), give your best estimate when the image supports one, but state your confidence honestly. When the photo has no scale reference and you cannot size it reliably, say so plainly and ask the user to measure it -- the outside diameter with calipers or a tape measure -- or to reshoot the part next to a common object for scale, such as a coin or a tape measure. Never state a specific size with false confidence when you cannot verify it from the image; an incorrect size makes the user order the wrong part.`;
 
 // Item 17 (2026-07-12): dedicated install-help prompt. Replaces the old client-side 3-button
 // step (step-by-step / quick overview / tools needed), which never worked in repair-help mode
