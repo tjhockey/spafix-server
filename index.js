@@ -1,4 +1,4 @@
-process.env.APP_VERSION = "v4.9.21ao"
+process.env.APP_VERSION = "v4.9.21ar"
 const CLIENT_VERSION = "4.9.21av"; // fallback only -- /api/version now echoes the X-SpaFix-Client-Version header when present
 require('dotenv').config();
 const express = require("express");
@@ -2312,26 +2312,39 @@ app.get("/api/admin/report", (req, res) => {
 // Get current usage stats (called by frontend on load)
 app.post("/api/increment-msg", (req, res) => {
   if (hasPremiumAccess(req) && !isTesterAccessCode(req)) {
-      return res.json({ limitReached: false, dailyMsgs: 0, dailyLimit: FREE_DAILY_MSG_LIMIT, isPro: true });
+      return res.json({ limitReached: false, dailyMsgs: 0, dailyLimit: FREE_DAILY_MSG_LIMIT, weeklySessions: 0, weeklyLimit: FREE_WEEKLY_SESSION_LIMIT, isPro: true });
   }
   const proAuth = getProAuth(req);
   if (proAuth.session && proAuth.session.role !== 'tester') {
-    return res.json({ limitReached: false, dailyMsgs: 0, dailyLimit: FREE_DAILY_MSG_LIMIT, isPro: true });
+    return res.json({ limitReached: false, dailyMsgs: 0, dailyLimit: FREE_DAILY_MSG_LIMIT, weeklySessions: 0, weeklyLimit: FREE_WEEKLY_SESSION_LIMIT, isPro: true });
   }
   // QA bypass -- never increment or limit during automated test runs
   if (isQABypass(req)) {
     const clientId = getClientId(req);
     const u = getUsage(clientId);
-    return res.json({ limitReached: false, dailyMsgs: u.dailyMsgs, dailyLimit: FREE_DAILY_MSG_LIMIT, isPro: false });
+    return res.json({ limitReached: false, dailyMsgs: u.dailyMsgs, dailyLimit: FREE_DAILY_MSG_LIMIT, weeklySessions: u.weeklySessions, weeklyLimit: FREE_WEEKLY_SESSION_LIMIT, isPro: false });
   }
   const clientId = getClientId(req);
   const u = getUsage(clientId);
   resetDailyIfNeeded(u);
+  // Item 35 (2026-07-13, ap): increment-msg is the endpoint that actually counts user requests
+  // (diagnostic steps). It previously only touched dailyMsgs, so weeklySessions never advanced --
+  // the only session-claim path (start-session via startChat) is orphaned/dead. Claim the weekly
+  // session HERE, on the first counted request of the day, mirroring checkFreeLimits: enforce the
+  // weekly gate first, then claim. sessionActive persists until the day rolls over, so a session =
+  // one day of use (1/day, 3/week), idempotent alongside the /api/chat free branch.
+  if (!u.sessionActive) {
+    if (u.weeklySessions >= FREE_WEEKLY_SESSION_LIMIT) {
+      return res.json({ limitReached: true, reason: "weekly_sessions", message: `You've used all ${FREE_WEEKLY_SESSION_LIMIT} free sessions this week. Sessions reset every Sunday, or upgrade to Premium for unlimited access.`, dailyMsgs: u.dailyMsgs, dailyLimit: FREE_DAILY_MSG_LIMIT, weeklySessions: u.weeklySessions, weeklyLimit: FREE_WEEKLY_SESSION_LIMIT });
+    }
+    u.weeklySessions++;
+    u.sessionActive = true;
+  }
   if (u.dailyMsgs >= FREE_DAILY_MSG_LIMIT) {
-    return res.json({ limitReached: true, dailyMsgs: u.dailyMsgs, dailyLimit: FREE_DAILY_MSG_LIMIT });
+    return res.json({ limitReached: true, reason: "daily_messages", dailyMsgs: u.dailyMsgs, dailyLimit: FREE_DAILY_MSG_LIMIT, weeklySessions: u.weeklySessions, weeklyLimit: FREE_WEEKLY_SESSION_LIMIT });
   }
   u.dailyMsgs++;
-  res.json({ limitReached: false, dailyMsgs: u.dailyMsgs, dailyLimit: FREE_DAILY_MSG_LIMIT });
+  res.json({ limitReached: false, dailyMsgs: u.dailyMsgs, dailyLimit: FREE_DAILY_MSG_LIMIT, weeklySessions: u.weeklySessions, weeklyLimit: FREE_WEEKLY_SESSION_LIMIT });
 });
 
 // Manual usage-counter reset -- Tester/Admin only. Lets QA force a daily or weekly
@@ -3460,7 +3473,7 @@ app.post("/api/diag-button", async (req, res) => {
           stepResult.passed = false;
           advanceNow = false;
           partCard = 'filter';
-          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="continue" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button></div>';
+          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="continue" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button><button class="diag-btn" onclick="showScreen(\'guides\')">📘 View Guides</button><button class="diag-btn" onclick="openShopDrawer()">🛒 Shop with Jet</button></div>';
           break;
 
         case 'filter_clean_no':
@@ -3494,7 +3507,7 @@ app.post("/api/diag-button", async (req, res) => {
           stepResult.passed = false;
           advanceNow = false;
           partCard = 'filter';
-          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="continue" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button></div>';
+          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="continue" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button><button class="diag-btn" onclick="showScreen(\'guides\')">📘 View Guides</button><button class="diag-btn" onclick="openShopDrawer()">🛒 Shop with Jet</button></div>';
           break;
 
         case 'filter_keep_testing':
@@ -3506,14 +3519,14 @@ app.post("/api/diag-button", async (req, res) => {
         case 'suggest_filter_cleaning':
           responseMsg = "Here are some filter cleaning products that can help restore flow:";
           partCard = 'filter cleaning';
-          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="continue" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button></div>';
+          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="continue" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button><button class="diag-btn" onclick="showScreen(\'guides\')">📘 View Guides</button><button class="diag-btn" onclick="openShopDrawer()">🛒 Shop with Jet</button></div>';
           advanceNow = false;
           break;
 
         case 'suggest_filter_replace':
           responseMsg = "Here are replacement filter options for your spa:";
           partCard = 'filter';
-          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="continue" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button></div>';
+          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="continue" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button><button class="diag-btn" onclick="showScreen(\'guides\')">📘 View Guides</button><button class="diag-btn" onclick="openShopDrawer()">🛒 Shop with Jet</button></div>';
           advanceNow = false;
           break;
 
@@ -3904,9 +3917,21 @@ app.post("/api/diag-button", async (req, res) => {
           break;
 
         case 'noise_external_check':
-          responseMsg = "No error code and the noise is coming from the panel area -- check that all topside panel connectors are fully seated and that the panel itself isn't vibrating against the spa shell.";
+          responseMsg = "No error code showing -- that's good. With the panel ruled out as a fault source, let's check the topside panel itself: make sure all its connectors are fully seated and that the panel isn't vibrating against the spa shell, which can transmit a rattle or buzz.";
           advanceNow = false;
-          deadEndButtons = [{ l: 'Connectors look good', o: 'pass', a: '' }, { l: "Found a loose connector", o: 'pass', a: '' }];
+          deadEndButtons = [{ l: 'Connectors look good', o: 'action', a: 'noise_conn_ok' }, { l: "Found a loose connector", o: 'action', a: 'noise_conn_found' }];
+          break;
+
+        case 'noise_conn_ok':
+          responseMsg = "Good -- the panel connectors are seated and the panel isn't the source. Since we've worked through the checklist without pinpointing a mechanical cause, the noise may be intermittent or environmental. If it returns, note exactly when it happens (heating, jets, or idle) and start a fresh diagnosis with that detail -- it'll help narrow things down quickly.";
+          advanceNow = false;
+          deadEndButtons = [{ l: 'Understood', o: 'pass', a: '' }];
+          break;
+
+        case 'noise_conn_found':
+          responseMsg = "That's very likely your culprit -- a loose connector can rattle or buzz against the panel or shell. With the power off, reseat it firmly, make sure the panel is snug against its mount, then restore power and listen. If the noise is gone, you're all set.";
+          advanceNow = false;
+          deadEndButtons = [{ l: 'Noise gone -- fixed!', o: 'pass', a: '' }, { l: 'Still noisy', o: 'pass', a: '' }];
           break;
 
         case 'noise_fm_interference':
@@ -3998,6 +4023,19 @@ app.post("/api/diag-button", async (req, res) => {
           partCard = 'spa descaler';
           partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="continue" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button></div>';
           advanceNow = false;
+          break;
+
+        case 'fail_heater_element':
+          // A failed element is a definitive finding, but NOT a terminal one: unless the spa is
+          // dangerously overheating, the user may have other co-failed parts (clogged filter,
+          // flow switch, fuse). We flag the element for the final summary, show the heater part
+          // card, deliver the finding gently with a power-off reminder, and continue the checklist
+          // so everything gets caught in one trip -- one purchase/refill, not three. (The
+          // short-to-ground danger variant is slated for the #46 power-gate coverage audit.)
+          stepResult.passed = false;
+          responseMsg = "That reading points to a failed heater element -- an open or shorted element won't heat and needs to be replaced. Before you touch anything, make sure the breaker is OFF. I've flagged it for your summary and here's the part to look at. Since we're this far in, it's worth finishing the remaining checks -- a bad element sometimes comes with a clogged filter, a stuck flow switch, or a blown fuse, and catching those now saves you a second order and refill.";
+          partCard = 'heater';
+          advanceNow = true;
           break;
 
         // ── FLAG: Default -- unhandled action branch ──
@@ -4104,10 +4142,23 @@ app.post("/api/diag-button", async (req, res) => {
     }
 
     // ── FLAG: dead-end detector ──
+    // A stranded state (no message, no buttons, not advancing) used to leave the user with
+    // no way forward -- no buttons, no typing. Now we always attach nav exit buttons so nobody
+    // is stranded, and we gate the raw FLAG code to testers only. Regular users get graceful
+    // copy + the exits; testers still get the code so they can report which branch is incomplete.
     if (!advanceNow && !skipPending && !deadEndButtons && !partCardButtons && !responseMsg && outcome !== 'action') {
-      responseMsg = `⚑ Undefined sequence -- flagged for review.
+      if (isTesterAccessCode(req)) {
+        responseMsg = `⚑ Undefined sequence -- flagged for review.
   \`FLAG: dead-end → ${stepId} → ${state.topic || 'unknown'}\`
   _If you're testing, please send this code to support@spafix.app_`;
+      } else {
+        responseMsg = "Looks like we reached the end of this path without a clear next step. Let's pick things up somewhere else -- you can start a fresh diagnosis or browse the guides below.";
+        console.warn(`[FLAG] dead-end → ${stepId} → ${state.topic || 'unknown'}`);
+      }
+      deadEndButtons = [
+        { l: 'Diagnose Something Else', o: 'nav', a: 'nav_reset' },
+        { l: 'Review Guides', o: 'nav', a: 'nav_guides' },
+      ];
     }
 
     res.json({
