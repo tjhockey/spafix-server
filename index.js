@@ -1,4 +1,4 @@
-process.env.APP_VERSION = "v4.9.21ar"
+process.env.APP_VERSION = "v4.9.21au"
 const CLIENT_VERSION = "4.9.21av"; // fallback only -- /api/version now echoes the X-SpaFix-Client-Version header when present
 require('dotenv').config();
 const express = require("express");
@@ -902,7 +902,7 @@ const DIAG_STEPS = {
   },
   H12: { id:'H12', next:'H13', label:'Hi-limit sensor / reset',
     bayStep:true,
-    question:'The hi-limit sensor cuts power to the heater if it detects overheating -- even a false reading will prevent heating. Look on the heater assembly or control box for a small reset button (sometimes red or white). Press it firmly if present. Also check if the water feels dangerously hot.',
+    question:'Look on the heater assembly or control box for a small reset button (sometimes red or white) and press it firmly. The hi-limit sensor cuts power to the heater if it detects overheating, so even a false trip will completely stop your spa from heating. What is the status of your hi-limit check?',
     buttons:[
       {label:'Reset button found and pressed', outcome:'action', action:'heat_hilimit_reset'},
       {label:'No reset button found', outcome:'pass'},
@@ -4026,16 +4026,18 @@ app.post("/api/diag-button", async (req, res) => {
           break;
 
         case 'fail_heater_element':
-          // A failed element is a definitive finding, but NOT a terminal one: unless the spa is
-          // dangerously overheating, the user may have other co-failed parts (clogged filter,
-          // flow switch, fuse). We flag the element for the final summary, show the heater part
-          // card, deliver the finding gently with a power-off reminder, and continue the checklist
-          // so everything gets caught in one trip -- one purchase/refill, not three. (The
+          // A failed element is a definitive finding, but NOT terminal: unless the spa is
+          // dangerously overheating, the user may have co-failed parts (clogged filter, flow
+          // switch, fuse). We flag the element for the final summary, show the heater part card,
+          // explain the finding, then STOP and let the user choose what's next -- matching the
+          // established finding+card+buttons pattern (do NOT silently auto-advance). "Continue
+          // Diagnosis" resumes the checklist so everything gets caught in one trip. (The
           // short-to-ground danger variant is slated for the #46 power-gate coverage audit.)
           stepResult.passed = false;
-          responseMsg = "That reading points to a failed heater element -- an open or shorted element won't heat and needs to be replaced. Before you touch anything, make sure the breaker is OFF. I've flagged it for your summary and here's the part to look at. Since we're this far in, it's worth finishing the remaining checks -- a bad element sometimes comes with a clogged filter, a stuck flow switch, or a blown fuse, and catching those now saves you a second order and refill.";
+          responseMsg = "That points to a faulty heater element. An open, shorted, or visibly damaged element won't heat and must be replaced. Before you touch anything, make sure the breaker is OFF.\nTo be sure everything else is running smoothly, finishing the remaining checks is a smart safeguard. Ruling out any other issues now helps you avoid the hassle of a second parts order or another spa refill. I've flagged this for your summary, and the recommended replacement is shown below.";
           partCard = 'heater';
-          advanceNow = true;
+          partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="continue" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnosis</button><button class="diag-btn" onclick="showScreen(\'guides\')">📘 View Guides</button><button class="diag-btn" onclick="openShopDrawer()">🛒 Shop with Jet</button></div>';
+          advanceNow = false;
           break;
 
         // ── FLAG: Default -- unhandled action branch ──
@@ -4133,7 +4135,11 @@ app.post("/api/diag-button", async (req, res) => {
     // dead-end response on these two topics so nobody gets stranded in the meantime.
     if (deadEndButtons && (state.topic === 'noise' || state.topic === 'water')) {
       const _hasNav = deadEndButtons.some(b => b.a === 'nav_reset' || b.a === 'nav_guides');
-      if (!_hasNav) {
+      // Only attach exits when every button is a terminal acknowledgment (none carries an
+      // action). A branch with an action button is a continuation, not a dead-end, so exits
+      // there wrongly signal "we're done" (audited across all noise/water branches, 4.9.21ds-at).
+      const _hasAction = deadEndButtons.some(b => b.o === 'action');
+      if (!_hasNav && !_hasAction) {
         deadEndButtons = deadEndButtons.concat([
           { l: 'Diagnose Something Else', o: 'nav', a: 'nav_reset' },
           { l: 'Review Guides', o: 'nav', a: 'nav_guides' },
@@ -4146,7 +4152,20 @@ app.post("/api/diag-button", async (req, res) => {
     // no way forward -- no buttons, no typing. Now we always attach nav exit buttons so nobody
     // is stranded, and we gate the raw FLAG code to testers only. Regular users get graceful
     // copy + the exits; testers still get the code so they can report which branch is incomplete.
-    if (!advanceNow && !skipPending && !deadEndButtons && !partCardButtons && !responseMsg && outcome !== 'action') {
+    // Reaching a designed terminal (node.next === null) via a pass with nothing more to
+    // show is a legitimate end of a noise/water path, NOT a strand -- give a neutral
+    // completion + exits and no FLAG (neutral copy covers Understood / Noise gone / Still
+    // noisy alike). Anything else that ends up stranded still FLAGs so testers can find
+    // incomplete branches. (4.9.21ds-au)
+    const _nothingToShow = !skipPending && !deadEndButtons && !partCardButtons && !responseMsg && outcome !== 'action';
+    const _designedTerminal = !!(DIAG_STEPS[stepId] && DIAG_STEPS[stepId].next === null);
+    if (_nothingToShow && advanceNow && !state.currentStep && _designedTerminal) {
+      responseMsg = "That wraps up this diagnostic path. If the issue is resolved, you're all set. If not, you can start a fresh diagnosis with more detail or browse the guides below.";
+      deadEndButtons = [
+        { l: 'Diagnose Something Else', o: 'nav', a: 'nav_reset' },
+        { l: 'Review Guides', o: 'nav', a: 'nav_guides' },
+      ];
+    } else if (_nothingToShow && (!advanceNow || !state.currentStep)) {
       if (isTesterAccessCode(req)) {
         responseMsg = `⚑ Undefined sequence -- flagged for review.
   \`FLAG: dead-end → ${stepId} → ${state.topic || 'unknown'}\`
@@ -5500,50 +5519,4 @@ app.post("/api/qa-evaluate", async (req, res) => {
       messages: [{ role: "user", content: prompt }]
     });
     const data = await response.json();
-    if (!response.ok) return res.status(500).json({ error: data?.error?.message || "API error" });
-    const result = (data.content || []).map(b => b.text || "").join("").trim();
-    res.json({ result });
-  } catch(e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.use((err, req, res, next) => {
-  if (err?.type === "entity.too.large") {
-    return res.status(413).json({ error: "Request body too large." });
-  }
-  return next(err);
-});
-
-// ── QA bypass helper -- localhost only ─────────────────────────────
-// Returns true when request carries x-spafix-qa: true AND originates
-// from localhost. On Railway the origin is never local so this can
-// never be triggered in production.
-function isQABypass(req) {
-  if (req.headers['x-spafix-qa'] !== 'true') return false;
-  const host = req.hostname || '';
-  const ip = req.socket?.remoteAddress || '';
-  return host === 'localhost' || host === '127.0.0.1' ||
-    ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
-}
-
-// ── DEV ONLY: reset usage for current IP (localhost only) ─────────
-app.post("/api/dev/reset-usage", (req, res) => {
-  const host = req.hostname || '';
-  const ip = req.socket.remoteAddress || '';
-  const isLocal = host === 'localhost' || host === '127.0.0.1' || ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
-  if (!isLocal) return res.status(403).json({ error: "Dev endpoint -- localhost only" });
-  const clientId = getClientId(req);
-  delete usageStore[clientId];
-  console.log(`[DEV] Usage reset for ${clientId}`);
-  res.json({ ok: true, message: `Usage reset for ${clientId}` });
-});
-
-// robots.txt -- disallow all crawlers (this is a web app, not crawlable content)
-app.get('/robots.txt', (req, res) => {
-  res.type('text/plain');
-  res.send('User-agent: *\nDisallow: /\n');
-});
-
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => console.log(`SpaFix server running on port ${PORT}`));
+    if (!response.ok) return res
