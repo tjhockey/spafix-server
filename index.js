@@ -1,4 +1,4 @@
-process.env.APP_VERSION = "v4.9.21au"
+process.env.APP_VERSION = "v4.9.22a";
 const CLIENT_VERSION = "4.9.21av"; // fallback only -- /api/version now echoes the X-SpaFix-Client-Version header when present
 require('dotenv').config();
 const express = require("express");
@@ -720,14 +720,23 @@ const DIAG_STEPS = {
     ]
   },
   S8a: { id:'S8a', next:'S8b', label:'Circ pump',
-    fire:'F:CP',
     fireAckRequired:'CP',
     bayStep:true,
-    question:'Find the circulation pump -- the smaller pump separate from the jet pumps. Some circ pumps run continuously while others only activate with certain features -- if yours isn\'t running right now, try activating the jets or heating cycle to bring it online. Some spas have more than one -- if yours does, check each one. Feel the housing.',
+    question:`⚠️ Power stays ON for this step. Touch only the outer pump housing. Keep your hands completely away from all wires, terminals, and electrical connectors.
+
+Find the circulation pump -- the smaller pump separate from the main jet pumps. It moves water through your plumbing and filtration system. #Depending on your spa, this might be a small dedicated pump, or one of several pumps in a multi-zone system.#
+
+#Some circ pumps run continuously; others only activate with the heating cycle or specific features. If yours isn't running, try turning up the temperature or starting a low-speed cycle to bring it online.#
+
+How to check it:
+1. Feel near it first. Hold your hand near (but not touching) the motor casing. If it feels very hot, water likely isn't flowing and the motor is overheating. Keep your hands off and prepare to cut power.
+2. If you've determined the pump is not hot, lightly touch the outer housing. It should feel warm, with a gentle vibration and a faint, steady hum.
+3. Look for leaks -- check around the pump and seals for dripping water, white scale, or green corrosion.`,
     buttons:[
-      {label:'Humming / warm', outcome:'action', action:'circ_flow_check'},
-      {label:'Silent', outcome:'fail', part:'circulation pump'},
-      {label:'Grinding / very hot', outcome:'fail', part:'circulation pump'},
+      {label:'Warm with a faint, steady hum', outcome:'action', action:'circ_flow_check'},
+      {label:'Silent/hum, no flow', outcome:'fail', part:'circulation pump'},
+      {label:'Very hot', outcome:'fail', part:'circulation pump', critical:true},
+      {label:'Grinding / screeching', outcome:'fail', part:'circulation pump'},
       {label:'Leaking', outcome:'fail', part:'circ pump seal'}
     ]
   },
@@ -753,7 +762,7 @@ const DIAG_STEPS = {
   },
   S9: { id:'S9', next:'S10', label:'Visual inspection',
     bayStep:true,
-    question:'Using a flashlight, inspect the entire equipment bay. Look for burn marks, scorched wires, corrosion, or anything that looks out of place. Pay close attention to the control board -- look for any black or brown spots or char marks around the connectors.',
+    question:`Using a flashlight, inspect the control board and the full equipment bay. Look for burn marks, scorched wires, melted insulation, corrosion, or charred solder joints. Pay close attention to the control board and any terminal blocks -- look for blackish char marks around the connectors and housing.`,
     buttons:[
       {label:'Everything looks clean', outcome:'pass'},
       {label:'Found burn marks or corrosion', outcome:'fail', part:'control board'},
@@ -776,7 +785,7 @@ const DIAG_STEPS = {
     ]
   },
   S12: { id:'S12', next:'S13', label:'Hi-limit sensor',
-    question:"Find the hi-limit sensor and check for a small reset button -- press it if present. The hi-limit cuts power to the heater if water gets too hot. Check if your water feels dangerously hot.",
+    question:`Look on the heater assembly or control box for a small reset button (sometimes red or white), if present press it firmly. #Not all spas have a reset button.# The hi-limit sensor cuts power to the heater if it detects overheating, so even a false trip will completely stop the spa from heating. What's the status of your hi-limit check?`,
     buttons:[
       {label:'Reset button found and pressed / No button', outcome:'pass'},
       {label:'Water feels dangerously hot', outcome:'fail', part:'hi-limit sensor', critical:true}
@@ -881,14 +890,23 @@ const DIAG_STEPS = {
     ]
   },
   H8a: { id:'H8a', next:'H11', label:'Circ pump',
-    fire:'F:CP',
     fireAckRequired:'CP',
     bayStep:true,
-    question:"Find the circulation pump -- the smaller pump separate from the jet pumps. The circ pump is responsible for moving water through the heater. If it isn't running, the heater will never fire. Some circ pumps run continuously; others activate with the heating cycle. Feel the housing -- it should be warm and you should hear a faint hum.",
+    question:`⚠️ Power stays ON for this step. Touch only the outer pump housing. Keep your hands completely away from all wires, terminals, and electrical connectors.
+
+Find the circulation pump -- the smaller pump separate from the main jet pumps. It moves water through the heater -- if it isn't running, the heater will never fire. #Depending on your spa, this might be a small dedicated pump, or one of several pumps in a multi-zone system.#
+
+#Some circ pumps run continuously; others only activate with the heating cycle or specific features. If yours isn't running, try turning up the temperature or starting a low-speed cycle to bring it online.#
+
+How to check it:
+1. Feel near it first. Hold your hand near (but not touching) the motor casing. If it feels very hot, water likely isn't flowing and the motor is overheating. Keep your hands off and prepare to cut power.
+2. If you've determined the pump is not hot, lightly touch the outer housing. It should feel warm, with a gentle vibration and a faint, steady hum.
+3. Look for leaks -- check around the pump and seals for dripping water, white scale, or green corrosion.`,
     buttons:[
-      {label:'Humming / warm', outcome:'pass'},
-      {label:'Silent', outcome:'fail', part:'circulation pump'},
-      {label:'Grinding / very hot', outcome:'fail', part:'circulation pump'},
+      {label:'Warm with a faint, steady hum', outcome:'pass'},
+      {label:'Silent/hum, no flow', outcome:'fail', part:'circulation pump'},
+      {label:'Very hot', outcome:'fail', part:'circulation pump', critical:true},
+      {label:'Grinding / screeching', outcome:'fail', part:'circulation pump'},
       {label:'Leaking', outcome:'fail', part:'circ pump seal'}
     ]
   },
@@ -902,7 +920,7 @@ const DIAG_STEPS = {
   },
   H12: { id:'H12', next:'H13', label:'Hi-limit sensor / reset',
     bayStep:true,
-    question:'Look on the heater assembly or control box for a small reset button (sometimes red or white) and press it firmly. The hi-limit sensor cuts power to the heater if it detects overheating, so even a false trip will completely stop your spa from heating. What is the status of your hi-limit check?',
+    question:`Look on the heater assembly or control box for a small reset button (sometimes red or white), if present press it firmly. #Not all spas have a reset button.# The hi-limit sensor cuts power to the heater if it detects overheating, so even a false trip will completely stop the spa from heating. What's the status of your hi-limit check?`,
     buttons:[
       {label:'Reset button found and pressed', outcome:'action', action:'heat_hilimit_reset'},
       {label:'No reset button found', outcome:'pass'},
@@ -919,7 +937,7 @@ const DIAG_STEPS = {
   },
   H9: { id:'H9', next:'H10', label:'Visual inspection',
     bayStep:true,
-    question:'Using a flashlight, inspect the heater assembly and the full equipment bay. Look for burn marks, scorched wires, corrosion, or charred solder joints on the control board. Pay close attention to the heater terminal block and the wires connecting the board to the heater element.',
+    question:`Using a flashlight, inspect the heater assembly, control board, and terminal block and the full equipment bay. Look for burn marks, scorched wires, melted insulation, corrosion, or charred solder joints. Pay close attention to the control board and any terminal blocks -- look for blackish char marks around the connectors and housing.`,
     buttons:[
       {label:'Everything looks clean', outcome:'pass'},
       {label:'Found burn marks on heater', outcome:'fail', part:'heater element'},
@@ -1028,7 +1046,7 @@ const DIAG_STEPS = {
   },
   J9: { id:'J9', next:'J13', label:'Visual inspection',
     bayStep:true,
-    question:'Using a flashlight, inspect the jet pump and the full equipment bay. Look for burn marks, scorched wires, melted insulation, or corrosion. Check the wiring harness running to the pump -- look for any discoloration or damage near the terminals.',
+    question:`Using a flashlight, inspect the jet pump, its wiring harness, and terminals and the full equipment bay. Look for burn marks, scorched wires, melted insulation, corrosion, or charred solder joints. Pay close attention to the control board and any terminal blocks -- look for blackish char marks around the connectors and housing.`,
     buttons:[
       {label:'Everything looks clean', outcome:'pass'},
       {label:'Found burn marks on pump wiring', outcome:'fail', part:'jet pump'},
@@ -1122,7 +1140,7 @@ const DIAG_STEPS = {
     bayStep:true,
     question:'Carefully hold your hand near (not touching) the motor casing. Does it feel abnormally hot?',
     buttons:[
-      {label:'Abnormally hot -- very hot to the touch', outcome:'fail', part:'circulation pump'},
+      {label:'Abnormally hot -- very hot to the touch', outcome:'fail', part:'circulation pump', critical:true},
       {label:'Warm but normal', outcome:'pass'},
       {label:'Cool / room temperature', outcome:'pass'}
     ]
@@ -2809,6 +2827,20 @@ app.post("/api/diag-button", async (req, res) => {
       case 'fail':
         stepResult.passed = false;
         if (part) partCard = part;
+        // Relocated finding copy (#46): shown when a fault-identifying button is tapped.
+        // (Category-wide fault-ID stop behavior stays in the 4.9.23 slate; #46 only supplies copy
+        //  here and stops solely via the power gate above for the "Very hot" case.)
+        {
+          const _circFindings = {
+            'Silent/hum, no flow': "A silent pump, or one humming without moving water, may be seized, airlocked, or have a failed capacitor.",
+            'Grinding / screeching': "Grinding or screeching means the internal bearings are failing -- the pump will need replacing soon.",
+          };
+          if ((stepId === 'S8a' || stepId === 'H8a') && _circFindings[buttonLabel]) {
+            responseMsg = _circFindings[buttonLabel];
+          } else if ((stepId === 'S9' || stepId === 'H9' || stepId === 'J9') && /^Found burn marks/i.test(buttonLabel || '')) {
+            responseMsg = "Found scorching or burn marks. The spa may still run, but the damaged component should be replaced -- and it's safest to power off until it is.";
+          }
+        }
         break;
       case 'possible':
         stepResult.passed = true;
@@ -4050,9 +4082,16 @@ app.post("/api/diag-button", async (req, res) => {
       }
     }
 
-    // Critical safety override
-    if (part === 'hi-limit sensor' && req.body.critical) {
-      responseMsg = "⚠️ Cut power to your spa immediately at the breaker. Do not use it until the hi-limit sensor is replaced.";
+    // Reusable power gate (#46): any button flagged critical fires it, regardless of part.
+    // Fires a part-parameterized cut-power message AND stops the flow (advanceNow=false, #51 fix).
+    if (req.body.critical) {
+      const _gatePart = part || 'affected component';
+      responseMsg = `⚠️ Cut power to your spa immediately at the breaker. Do not use it until the ${_gatePart} has been checked and, if needed, replaced.`;
+      advanceNow = false;
+      // Liability record stub (#46): wire the user's answer to their profile when accounts ship.
+      // Intended to reuse the client _acks fire-ack shape rather than a parallel sink.
+      dbg('gate', 'power gate fired', { stepId: stepId, part: _gatePart, label: buttonLabel || null });
+      // TODO(accounts): recordGateAck({ stepId, part:_gatePart, answer:buttonLabel, ts:new Date().toISOString() });
     }
 
     // Update state
@@ -5519,4 +5558,50 @@ app.post("/api/qa-evaluate", async (req, res) => {
       messages: [{ role: "user", content: prompt }]
     });
     const data = await response.json();
-    if (!response.ok) return res
+    if (!response.ok) return res.status(500).json({ error: data?.error?.message || "API error" });
+    const result = (data.content || []).map(b => b.text || "").join("").trim();
+    res.json({ result });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.use((err, req, res, next) => {
+  if (err?.type === "entity.too.large") {
+    return res.status(413).json({ error: "Request body too large." });
+  }
+  return next(err);
+});
+
+// ── QA bypass helper -- localhost only ─────────────────────────────
+// Returns true when request carries x-spafix-qa: true AND originates
+// from localhost. On Railway the origin is never local so this can
+// never be triggered in production.
+function isQABypass(req) {
+  if (req.headers['x-spafix-qa'] !== 'true') return false;
+  const host = req.hostname || '';
+  const ip = req.socket?.remoteAddress || '';
+  return host === 'localhost' || host === '127.0.0.1' ||
+    ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+}
+
+// ── DEV ONLY: reset usage for current IP (localhost only) ─────────
+app.post("/api/dev/reset-usage", (req, res) => {
+  const host = req.hostname || '';
+  const ip = req.socket.remoteAddress || '';
+  const isLocal = host === 'localhost' || host === '127.0.0.1' || ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+  if (!isLocal) return res.status(403).json({ error: "Dev endpoint -- localhost only" });
+  const clientId = getClientId(req);
+  delete usageStore[clientId];
+  console.log(`[DEV] Usage reset for ${clientId}`);
+  res.json({ ok: true, message: `Usage reset for ${clientId}` });
+});
+
+// robots.txt -- disallow all crawlers (this is a web app, not crawlable content)
+app.get('/robots.txt', (req, res) => {
+  res.type('text/plain');
+  res.send('User-agent: *\nDisallow: /\n');
+});
+
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, () => console.log(`SpaFix server running on port ${PORT}`));
