@@ -1,4 +1,4 @@
-process.env.APP_VERSION = "v4.9.22a";
+process.env.APP_VERSION = "v4.9.22s";
 const CLIENT_VERSION = "4.9.21av"; // fallback only -- /api/version now echoes the X-SpaFix-Client-Version header when present
 require('dotenv').config();
 const express = require("express");
@@ -731,13 +731,15 @@ Find the circulation pump -- the smaller pump separate from the main jet pumps. 
 How to check it:
 1. Feel near it first. Hold your hand near (but not touching) the motor casing. If it feels very hot, water likely isn't flowing and the motor is overheating. Keep your hands off and prepare to cut power.
 2. If you've determined the pump is not hot, lightly touch the outer housing. It should feel warm, with a gentle vibration and a faint, steady hum.
-3. Look for leaks -- check around the pump and seals for dripping water, white scale, or green corrosion.`,
+3. Look for leaks -- check around the pump and seals for dripping water, white scale, or green corrosion.
+
+Based on the check list above, what best describes the condition of your circ pump?`,
     buttons:[
       {label:'Warm with a faint, steady hum', outcome:'action', action:'circ_flow_check'},
       {label:'Silent/hum, no flow', outcome:'fail', part:'circulation pump'},
       {label:'Very hot', outcome:'fail', part:'circulation pump', critical:true},
       {label:'Grinding / screeching', outcome:'fail', part:'circulation pump'},
-      {label:'Leaking', outcome:'fail', part:'circ pump seal'}
+      {label:'Leaking', outcome:'fail', part:'circulation pump'}
     ]
   },
   S8b: { id:'S8b', next:'S8c', label:'Flow switch visual',
@@ -901,13 +903,15 @@ Find the circulation pump -- the smaller pump separate from the main jet pumps. 
 How to check it:
 1. Feel near it first. Hold your hand near (but not touching) the motor casing. If it feels very hot, water likely isn't flowing and the motor is overheating. Keep your hands off and prepare to cut power.
 2. If you've determined the pump is not hot, lightly touch the outer housing. It should feel warm, with a gentle vibration and a faint, steady hum.
-3. Look for leaks -- check around the pump and seals for dripping water, white scale, or green corrosion.`,
+3. Look for leaks -- check around the pump and seals for dripping water, white scale, or green corrosion.
+
+Based on the check list above, what best describes the condition of your circ pump?`,
     buttons:[
       {label:'Warm with a faint, steady hum', outcome:'pass'},
       {label:'Silent/hum, no flow', outcome:'fail', part:'circulation pump'},
       {label:'Very hot', outcome:'fail', part:'circulation pump', critical:true},
       {label:'Grinding / screeching', outcome:'fail', part:'circulation pump'},
-      {label:'Leaking', outcome:'fail', part:'circ pump seal'}
+      {label:'Leaking', outcome:'fail', part:'circulation pump'}
     ]
   },
   H11: { id:'H11', next:'H12', label:'Temp sensor',
@@ -986,11 +990,11 @@ How to check it:
     ]
   },
   J_JF: { id:'J_JF', next:'J_DV', label:'Jet face adjustment',
-    question:'Many hot tub jets can be individually turned off by rotating the outer ring (bezel) clockwise. Over time, grit or calcium buildup can lock jet faces in the closed position -- making it seem like the pump is dead when the plumbing is just shut off at the seat. Try firmly twisting each jet face counter-clockwise to make sure they\'re fully open.',
+    question:'Many hot tub jets can be individually turned off by rotating the outer ring (bezel) clockwise. Over time, grit or calcium buildup can lock jet faces in the closed position -- making it seem like the pump is dead when the plumbing is just shut off at the seat. Try firmly twisting each jet face counter-clockwise to make sure they\'re fully open.\n\nTwo of the answers below both mean the jets are open and still weak -- pick the one that matches what you did: whether they were already open when you checked, or whether you had to twist them open yourself.',
     buttons:[
-      {label:'All jets are open', outcome:'pass'},
+      {label:'They were already open -- no change', outcome:'pass'},
       {label:'Found closed jets -- now fixed!', outcome:'action', action:'jets_face_fixed'},
-      {label:'Jets are open but still no pressure', outcome:'pass'}
+      {label:'I opened them, still no pressure', outcome:'pass'}
     ]
   },
   J_DV: { id:'J_DV', next:'J4', label:'Diverter valves',
@@ -1054,18 +1058,175 @@ How to check it:
       {label:'Found something unusual', outcome:'action', action:'unusual_finding'}
     ]
   },
-  J13: { id:'J13', next:'J14', label:'Jet pump',
+  // .22i BUILD B: J13 is no longer a hardcoded pump conclusion that absorbed every path which
+  // didn't get an explicit board finding. It now reads the verdict the discriminators actually
+  // produced. When nothing separated the two, it SAYS SO and throws no card -- a genuine 50/50
+  // is an honest answer, and telling a user to buy a pump on a maybe is not.
+  J13: { id:'J13', next:null, label:'Jet pump',
+    questionFn: (state) => {
+      const _why = (state && state.jetsVerdictWhy) || 'what we found in the checks';
+      if (state && state.jetsVerdict === 'pump') {
+        return `Based on your answers in the diagnostic steps, it sounds like the jet pump is the issue. What points there is ${_why}.\n\nBefore ordering, confirm the pump model number from the label on the pump housing -- wet-end size, horsepower, voltage and frame all have to match. Check the wiring harness while you're in there: a new pump won't last if it's being fed through damaged wiring.`;
+      }
+      if (state && state.jetsVerdict === 'board') {
+        return `Based on your answers in the diagnostic steps, this points at the control board rather than the pump -- specifically ${_why}. Let's go through what that means.`;
+      }
+      const _bits = [];
+      if (state && state.jetsPumpInspClean) _bits.push('the pump housing looked clean inside');
+      if (state && state.jetsBoardInspClean) _bits.push('the board looked clean front and back');
+      const _seen = _bits.length ? ` We inspected what we could -- ${_bits.join(' and ')} -- but as I said at the time, neither of those clears the part.` : '';
+      return `I'm going to give you the honest answer rather than a confident one: based on your answers in the diagnostic steps, it sounds like either the jet pump or the control board is at fault, and nothing we've been able to check separates them.${_seen}\n\nHere's why it genuinely stops here. A pump that's failed electrically -- a burnt winding, a dead start capacitor -- looks and feels identical to a healthy pump that simply isn't being sent power. The only thing that tells those apart is whether voltage is arriving at the pump terminals when the jets are called for, and that needs a multimeter or the swap test.\n\nI'm not going to card a part on a coin flip. Both are suspect, and one test settles it.`;
+    },
+    question:'',
+    buttonsFn: (state) => {
+      if (state && state.jetsVerdict === 'pump') {
+        return [
+          {label:'Show me jet pump options', outcome:'action', action:'jetpump_confirmed_fail'},
+          {label:'I need help identifying my pump', outcome:'action', action:'identify_pump'},
+          {label:'Pump runs fine, sounds/feels normal', outcome:'pass'}
+        ];
+      }
+      if (state && state.jetsVerdict === 'board') {
+        return [
+          {label:'Continue to the control board', outcome:'pass'},
+          {label:'I need help identifying my board', outcome:'action', action:'identify_board'}
+        ];
+      }
+      return [
+        {label:"I'd like a multimeter", outcome:'action', action:'suggest_multimeter'},
+        {label:'Try the swap test', outcome:'action', action:'goto_swap'},
+        {label:'Inspect the pump', outcome:'action', action:'goto_pump_insp'},
+        {label:'Inspect the control board', outcome:'action', action:'goto_board_insp'}
+      ];
+    },
     bayStep:true,
-    question:'Based on everything we\'ve checked, the jet pump itself is the likely cause. Before ordering, confirm the pump model number from the label on the pump housing. Also check the wiring harness for any damage -- a new pump with damaged wiring will fail immediately.',
     buttons:[
       {label:'Pump runs fine, sounds/feels normal', outcome:'pass'},
       {label:'Show me jet pump options', outcome:'action', action:'jetpump_confirmed_fail'},
       {label:'I need help identifying my pump', outcome:'action', action:'identify_pump'}
     ]
   },
+  // .22i BUILD B: J_SCOPE exists again as a server step. Its absence was the root cause of the
+  // "Unknown Step" dead-ends -- the client posted stepId=J_SCOPE, the server's step guard found
+  // nothing and returned before the action switch ever ran, which made the scope handlers
+  // unreachable dead code. It is deliberately kept OUT of every order array instead, which is what
+  // makes it a pre-sequence ROUTER: the drawer and the step numbering both read the order array,
+  // so it is neither drawn nor counted, and the scope actions below do its routing.
+  J_SCOPE: { id:'J_SCOPE', next:'J2a', label:'Jet scope',
+    question:'Which jets are affected?',
+    buttons:[
+      {label:'Just one jet', outcome:'action', action:'jets_scope_single'},
+      {label:'A whole zone / seat', outcome:'action', action:'jets_scope_zone'},
+      {label:'All jets', outcome:'action', action:'jets_scope_all'}
+    ]
+  },
+  // ── Branch: JUST ONE JET (core system is fine -- pump, electrical, filters and water skipped)
+  J_SJ_VIS: { id:'J_SJ_VIS', next:null, label:'Jet visual check',
+    question:'Look straight into the face of the jet that is not working and compare it against a jet that works properly. You are looking for anything blocking the opening -- calcium scale around the rim, a lodged piece of filter debris, hair, or a nozzle that will not spin when the others do.',
+    buttons:[
+      {label:'Found a blockage -- now cleared!', outcome:'action', action:'jets_single_cleared'},
+      {label:'Nozzle will not spin', outcome:'action', action:'jets_single_nozzle'},
+      {label:'Looks clear, same as the working jets', outcome:'pass'}
+    ]
+  },
+  J_DIFF: { id:'J_DIFF', next:null, label:'Diffuser / back housing',
+    question:'Behind every jet is a threaded back housing and a diffuser -- the internal cone that speeds the water up and creates the suction that pulls air in. Diffusers crack, and the threads holding them strip. With the jets running, put a hand over the jet face and feel for steady pressure, then check whether that jet pulls any air at all when the air control is opened. A cracked diffuser typically gives you weak flow AND no air draw on that one jet while every other jet behaves normally.',
+    buttons:[
+      {label:'Weak flow and no air draw', outcome:'fail', part:'anchored:jet diffuser|jet internals assembly|jet body back housing'},
+      {label:'Flow and air both seem normal', outcome:'pass'},
+      {label:'Cannot tell', outcome:'skip'}
+    ]
+  },
+  J_GSKT: { id:'J_GSKT', next:null, label:'Jet gasket / wall fitting',
+    question:'The jet body seals to the shell with a gasket at the wall fitting. If that seal has failed, water escapes behind the shell instead of coming out of the jet -- so pressure at that one jet drops while everything else runs fine. Check for dampness behind the spa cabinet in line with the failed jet, and take hold of the jet body to see whether it moves or rotates in the wall when it should be solid.',
+    buttons:[
+      {label:'Jet moves in the wall, or it is wet behind the cabinet', outcome:'fail', part:'anchored:jet wall fitting gasket|spa jet body assembly'},
+      {label:'Solid and dry', outcome:'pass'},
+      {label:'Cannot access behind the cabinet', outcome:'skip'}
+    ]
+  },
+  J_SJ_END: { id:'J_SJ_END', next:null, label:'Single jet -- result',
+    question:"That's the single-jet checks done, and nothing in them came back faulty -- the face is clear, the diffuser is drawing air, and the jet body is solid in the wall.\n\nThat is worth knowing rather than a dead end. A jet that reads clean at the jet itself is usually being starved further upstream, which means the problem is bigger than one jet even though only one jet shows it. The next thing up the line is the plumbing that feeds that seat.",
+    buttons:[
+      {label:'Widen the search to the zone checks', outcome:'action', action:'jets_widen_zone'},
+      {label:"It's working now -- we're done", outcome:'action', action:'jets_branch_resolved'},
+      {label:'Diagnose something else', outcome:'nav', action:'nav_reset'}
+    ]
+  },
+  // ── Branch: A WHOLE ZONE / SEAT (pump and pack are fine -- main pump, voltage, board, fuses skipped)
+  J_AIRC: { id:'J_AIRC', next:null, label:'Air control / venturi',
+    question:'Each zone usually has its own air control on the topside -- a knob or lever letting air into that group of jets. Jets feel dramatically weaker without air, so a seized or blocked air control reads exactly like a pressure problem. Open the air control for the affected zone fully and listen for the hiss of air being drawn in, then close it and listen for the change. No change at all means the control or the air line behind it is blocked, and those lines block with calcium and with insects that get in through the air intake.',
+    buttons:[
+      {label:'Air control was closed or stuck -- now working!', outcome:'action', action:'jets_aircontrol_fixed'},
+      {label:'No change either way -- no air at all', outcome:'fail', part:'anchored:spa air control valve|spa air control air line'},
+      {label:'Air control works normally', outcome:'pass'}
+    ]
+  },
+  J_MAN: { id:'J_MAN', next:null, label:'Manifold / branch blockage',
+    question:'Every zone is fed by its own branch off the manifold, the distribution block the pump feeds. One branch can block on its own while the rest of the spa runs at full pressure, usually from scale, a broken piece of filter, or debris that got past a torn cartridge. Run the spa and compare the affected zone against the others. A branch blockage gives you a whole seat or zone that is weak or dead while every other jet is strong.',
+    buttons:[
+      {label:'One zone is weak, all others are strong', outcome:'fail', part:'anchored:spa plumbing flush cleaner|filter cartridge'},
+      {label:'Several zones are weak', outcome:'action', action:'jets_zone_widespread'},
+      {label:'All zones look the same to me', outcome:'pass'}
+    ]
+  },
+  J_WZ_END: { id:'J_WZ_END', next:null, label:'Zone -- result',
+    question:"That's the zone checks done, and nothing in them came back faulty -- the diverter moves, there's no air lock, the air control works, and the manifold branch isn't blocked.\n\nThat points away from that zone's own plumbing and back toward something feeding every jet. It can look like one zone simply because that seat's jets are the ones you notice first.",
+    buttons:[
+      {label:'Widen the search to the full jets diagnostic', outcome:'action', action:'jets_widen_all'},
+      {label:"It's working now -- we're done", outcome:'action', action:'jets_branch_resolved'},
+      {label:'Diagnose something else', outcome:'nav', action:'nav_reset'}
+    ]
+  },
+  // ── All-jets tail additions ────────────────────────────────────────────
+  J_RC: { id:'J_RC', next:null, label:'Relay click', bayStep:true,
+    questionFn: (state) => {
+      // state.spa is the "2006 Sundance Cayman" label set at session start -- take the year off it.
+      const m = /(19|20)[0-9]{2}/.exec(String((state && state.spa) || ''));
+      const yr = m ? parseInt(m[0], 10) : NaN;
+      const lead = (!isNaN(yr) && yr >= 2010)
+        ? "Before you listen, one thing about your spa's age: boards from roughly 2010 onward -- Balboa BP, Gecko in.ye, in.yt and in.xe, and the Hot Spring / Watkins Eagle and IQ platforms -- switch the pumps with solid-state electronics, which are SILENT. On a spa of your vintage, hearing nothing is completely normal and does NOT mean the board has failed."
+        : "Before you listen, one thing about your spa's age: boards from before roughly 2012 use mechanical relays that make an audible click when they switch a pump on, so on a spa of your vintage you would normally expect to hear one. Solid-state boards, which came in around 2010 to 2012, switch silently instead.";
+      return lead + "\n\nStand at the equipment pack with the cabinet open and have someone press the Jets button, or press it yourself if you can hear the pack from the topside. Listen at the control box, not at the pump.\n\nDo you hear a click from the control box the moment the jets are called for?";
+    },
+    question:'Stand at the equipment pack with the cabinet open and have someone press the Jets button. Listen at the control box, not at the pump. Do you hear a click from the control box the moment the jets are called for?',
+    buttons:[
+      {label:'Yes -- a clear click', outcome:'action', action:'jets_relay_click'},
+      {label:'No click / silent', outcome:'action', action:'jets_relay_silent'},
+      {label:"Couldn't hear it clearly", outcome:'skip'}
+    ]
+  },
+  J_SWAP: { id:'J_SWAP', next:null, label:'Pump swap test', bayStep:true,
+    question:'One more test can settle this without a multimeter, but only if your spa is wired for it. With the power OFF at the breaker, look at the equipment pack: some spas have two pumps whose power leads end in the same style of plug on the board, which means the two can be swapped. What you need is a second pump with an IDENTICAL connector, not simply a second pump -- circulation pumps are usually wired differently and cannot be swapped.\n\nIf you do have two matching plugs, swap them at the board, restore power and call for the jets. If the jets pump now runs from the other position, the board output that feeds it is dead. If it still does not run, the pump is dead.',
+    buttons:[
+      {label:'Swapped -- the pump runs from the other position', outcome:'action', action:'jets_swap_board'},
+      {label:'Swapped -- the pump still does not run', outcome:'action', action:'jets_swap_pump'},
+      {label:'No second pump with a matching plug', outcome:'skip'},
+      {label:'Not sure what I am looking at', outcome:'skip'}
+    ]
+  },
+  J_PINSP: { id:'J_PINSP', next:null, label:'Pump inspection', bayStep:true,
+    question:'Before you start: a clean pump does NOT clear the pump. A burnt winding or a failed start capacitor is completely invisible from the outside, so this check can find a fault but it cannot rule one out.\n\nWith power OFF at the breaker and the jets-pump slice valves closed if you have them, carefully open the pump union enough to look inside the impeller housing. Use a phone camera or video if you cannot get your eye to it. You are looking for debris wrapped around the impeller, broken vanes, or a chewed-up impeller face.\n\nThe rear-shaft spin test was already covered earlier in this diagnostic, so there is no need to repeat it.',
+    buttons:[
+      {label:'Found debris or a damaged impeller', outcome:'action', action:'jets_pump_insp_found'},
+      {label:'Impeller housing looks clean', outcome:'action', action:'jets_pump_insp_clean'},
+      {label:'Cannot open the union safely', outcome:'skip'}
+    ]
+  },
+  J_BINSP: { id:'J_BINSP', next:null, label:'Board inspection', bayStep:true,
+    question:'Before you start: a clean board does NOT clear the board. A stuck relay or a failed driver circuit looks perfect, so this check can find a fault but it cannot rule one out.\n\nPower OFF at the breaker first, and photograph everything before you touch it -- a wide shot of the whole board, every connector, and all jumper settings. You will need those photos to put it back correctly. Pull connectors by the housing, never by the wires.\n\nThen unmount the board and look at the BACK of it. This is the part most people never check: arc damage often shows on the traces behind a relay while the front looks untouched. Look for browning, pitting, lifted or burnt traces around the relay pins, and any discoloured wires near a burn.\n\nPhotograph the back -- the relay area and the terminal traces -- and I can help you look at it.',
+    buttons:[
+      {label:'Found burn marks or damaged traces', outcome:'fail', part:'control board'},
+      {label:'Board looks clean front and back', outcome:'action', action:'jets_board_insp_clean'},
+      {label:'Not comfortable removing the board', outcome:'skip'}
+    ]
+  },
+
   J14: { id:'J14', next:null, label:'Control board / wiring',
     bayStep:true,
-    question:'If the pump is getting power but not running, or the board isn\'t sending power to the pump at all, the control board relay or wiring harness is the likely culprit. Before ordering a board, photograph everything -- every connector, all jumper settings, and any discolored wires. Pull connectors by the housing only, never by the wires.',
+    // .22i BUILD B: relay framed under the approved out-of-scope copy -- named in the diagnosis,
+    // never carded, never a referral out to a repair shop, and hedged to "is common" not "is likely".
+    question:'If the pump is getting power but not running, or the board isn\'t sending power to the pump at all, the control board relay or wiring harness is the culprit.\n\nWorth being straight with you about what has actually failed: on a board this age it is usually a single relay rather than the whole board. An experienced DIYer with soldering skills can swap one. The thing to weigh is that the rest of the board has run exactly the same hours under the same heat, and a second relay or a driver circuit failing soon after is common -- so SpaFix recommends replacing the control board for a complete repair rather than chasing one component at a time.\n\nBefore ordering, photograph everything -- every connector, all jumper settings, and any discolored wires. Pull connectors by the housing only, never by the wires.',
     buttons:[
       {label:'Show me control board options', outcome:'fail', part:'control board'},
       {label:'I need help identifying my board', outcome:'action', action:'identify_board'},
@@ -1126,28 +1287,41 @@ How to check it:
       {label:'No -- still noisy', outcome:'pass'}
     ]
   },
-  N_BAY: { id:'N_BAY', next:'N_TEMP', label:'Equipment bay visual',
+  N_BAY: { id:'N_BAY', next:'N_CIRC', label:'Equipment bay visual',
     bayStep:true,
     question:'Open the equipment bay and scan inside without touching anything. Look for dripping water near pump seals, white scale or green corrosion around the pump shaft, and loose hose clamps.',
     buttons:[
-      {label:'Dripping or scale around shaft seal', outcome:'fail', part:'circ pump seal'},
+      {label:'Dripping or scale around shaft seal', outcome:'fail', part:'circulation pump'},
       {label:'Scale or burn marks on heater tube', outcome:'action', action:'noise_heater_scale'},
       {label:'Rapid clicking from control pack', outcome:'action', action:'noise_chattering'},
       {label:'Everything looks dry and normal', outcome:'pass'}
     ]
   },
-  N_TEMP: { id:'N_TEMP', next:'N_IMP', label:'Motor temperature',
+  N_CIRC: { id:'N_CIRC', next:'N_JPUMP', label:'Circ Pump Check',
     bayStep:true,
-    question:'Carefully hold your hand near (not touching) the motor casing. Does it feel abnormally hot?',
+    question:'Power stays ON. Touch only the outer housing. Check the circulation pump (the smaller pump): is the motor abnormally hot, silent/humming with no flow, grinding, or leaking?',
     buttons:[
-      {label:'Abnormally hot -- very hot to the touch', outcome:'fail', part:'circulation pump', critical:true},
-      {label:'Warm but normal', outcome:'pass'},
-      {label:'Cool / room temperature', outcome:'pass'}
+      {label:'Warm and quiet — normal', outcome:'pass'},
+      {label:'Silent/hum, no flow', outcome:'fail', part:'circulation pump'},
+      {label:'Very hot', outcome:'fail', part:'circulation pump', critical:true},
+      {label:'Grinding / screeching', outcome:'fail', part:'circulation pump'},
+      {label:'Leaking', outcome:'fail', part:'circulation pump'}
     ]
   },
-  N_IMP: { id:'N_IMP', next:'N_BEEP', label:'Impeller check',
+  N_JPUMP: { id:'N_JPUMP', next:'N_IMP', label:'Jets Pump Check',
     bayStep:true,
-    question:'With power OFF and slice valves closed, carefully open just the face of the pump union -- enough to look inside. Do you see any debris in the impeller?',
+    question:'Power stays ON. Touch only the outer housing. Check the spa jets pump (the larger main pump): is the motor abnormally hot, silent/humming with no flow, grinding, or leaking?',
+    buttons:[
+      {label:'Warm and quiet — normal', outcome:'pass'},
+      {label:'Silent/hum, no flow', outcome:'fail', part:'jet pump'},
+      {label:'Very hot', outcome:'fail', part:'jet pump', critical:true},
+      {label:'Grinding / screeching', outcome:'fail', part:'jet pump'},
+      {label:'Leaking', outcome:'fail', part:'jet pump'}
+    ]
+  },
+  N_IMP: { id:'N_IMP', next:'N_BEEP', label:'Jets pump impeller',
+    bayStep:true,
+    question:'With power OFF and the jets-pump slice valves closed if you have them, carefully open the pump union enough to look inside the impeller housing. If you can\'t see inside the pump, try using a camera and recording video to get a clear look inside. Do you see any debris in the impeller?',
     buttons:[
       {label:'Found debris -- cleared it out', outcome:'action', action:'noise_impeller_cleared'},
       {label:'No debris visible', outcome:'pass'},
@@ -1335,8 +1509,39 @@ How to check it:
 const SEQUENCE_STEP_ORDERS = {
   flow: ['S2a','S2b','S1','S3','S4','S5','BREAKER','S6','S6b','S7','S8a','S8b','S8c','S9','S11','S10','S12','S13','S14'],
   heat: ['H2a','H2b','H1','H5','H3','H4','HBREAKER','H6','H6b','H7','H8a','H11','H12','H13','H9','H10','H14'],
-  jets: ['J_SCOPE','J2a','J2b','J1','J_JF','J_DV','J4','J_SS','J10','J_SH','J_VT','J9','J13','J14'],
+  // .22i BUILD B: J_SCOPE removed -- it is a pre-sequence router, not a step. J_JF moved to the
+  // single-jet branch. This entry is the ALL-JETS branch and is what the pre-conclusion review
+  // scans; the two short branches carry their own orders (JETS_BRANCH_ORDERS below).
+  jets: ['J2a','J2b','J1','J_DV','J4','J_RC','J_SS','J10','J_SH','J_VT','J9','J13','J14'],
 };
+
+// .22i BUILD B -- array-driven advance, built generically, opted into by jets only.
+//
+// The advance resolver below checks for an order array on the session FIRST and falls back to
+// the existing .next pointers when there is none. Nothing in it references jets by name, so the
+// mechanism is available to any sequence later as a one-line opt-in, while every un-migrated
+// sequence keeps working exactly as it does today, permanently. Blast radius is jets only.
+const JETS_BRANCH_ORDERS = {
+  // Just one jet -- the core system is provably fine, so pump, electrical, fuses, filters and
+  // water are skipped outright. SKIPPED, not auto-passed: the drawer must never claim a voltage
+  // test passed when no voltage test happened.
+  single: ['J_JF','J_SJ_VIS','J_DIFF','J_GSKT','J_SJ_END'],
+  // A whole zone / seat -- pump and pack are fine, so main pumps, voltage, board and fuses are
+  // skipped. Focus is diverters, air controls and the manifold branch feeding that zone.
+  zone:   ['J_DV','J4','J_AIRC','J_MAN','J_WZ_END'],
+  // All jets -- systemic, runs the full sequence.
+  all:    SEQUENCE_STEP_ORDERS.jets,
+};
+
+// Returns the step that follows stepId, using the session's order array when one is set and
+// falling back to the step's own .next pointer otherwise. Returns null at the end of an array.
+function resolveNextStep(state, stepId, fallbackNext) {
+  const order = state && Array.isArray(state.stepOrder) ? state.stepOrder : null;
+  if (!order) return fallbackNext;
+  const i = order.indexOf(stepId);
+  if (i === -1) return fallbackNext;   // step is off-array (e.g. a conclusion reached by routing)
+  return (i + 1 < order.length) ? order[i + 1] : null;
+}
 const CONCLUSION_STEP_TO_SEQUENCE = { S14: 'flow', H14: 'heat', J14: 'jets' };
 const REVIEW_MAX_TURNS = 3;
 
@@ -1555,7 +1760,7 @@ TIER 2 -- URGENT (FLO, Sn codes, pump, jets, heater, leak): Acknowledge using th
 - Sn1/sensor: "That's a water temperature sensor fault -- the spa has shut down to protect itself. It won't run again until the fault is resolved.\n\nTo get you the right fix, which spa do you have -- the make, model, and year?\n\n[SEQ:overheat]"
 - Sn3/sensor: "That's a hi-limit sensor fault -- the spa has shut down to protect itself. The hi-limit sensor monitors for overheating conditions. It won't run again until the fault is resolved.\n\nTo get you the right fix, which spa do you have -- the make, model, and year?\n\n[SEQ:overheat]"
 - Sn/sensor (generic): "That's a temperature sensor fault -- the spa has shut down to protect itself. It won't run again until the fault is resolved.\n\nTo get you the right fix, which spa do you have -- the make, model, and year?\n\n[SEQ:overheat]"
-- Pump won't start / won't turn on: "A pump that won't start is usually a power delivery issue, a failed capacitor (the part that gives the motor its starting kick), or a wiring fault. Let's figure out which one.\n\nTo get you the right fix, which spa do you have -- the make, model, and year?\n\n[SEQ:jets]"
+- Pump won't start / won't turn on: "A pump that won't start is usually a power delivery issue, a failed capacitor (the part that gives the motor its starting kick -- a component inside the motor, not a part SpaFix supports replacing on its own), or a wiring fault. Let's figure out which one.\n\nTo get you the right fix, which spa do you have -- the make, model, and year?\n\n[SEQ:jets]"
 - No jet pressure: "Low jet pressure usually comes down to one of four things: a clogged filter, an airlock in the pump, a worn pump impeller, or closed jet faces. Let's figure out which one." NOTE: This template applies to ALL low-pressure jet scenarios including the contrast pattern -- jets running/on but output is weak, low, or absent. "The jets are on but there's no pressure" is the same scenario as "no jet pressure" -- do not treat active jets as a different fault class.
 - Heater not heating: "A heater that's stopped working usually comes down to one of three things: not enough water flowing through it (flow fault), a burned-out heating element (the part that actually makes heat), or a safety switch that tripped to prevent overheating (high-limit). Let's figure out which one."
 - Leak: "A leak from under the tub usually points to a fitting, seal, or pump union -- stop using the spa and turn it off at the breaker box electrical panel or sub-panel until we find the source."
@@ -1819,6 +2024,17 @@ Your job, in order:
 2. CONFIRM the failure mode visible (cracked, corroded, sheared thread, burnt, etc.)
 3. REPLACEMENT PROCEDURE -- clear, spa-specific steps to remove the failed part and install a new one. Note any spa-model-specific nuances (access panel location, fitting orientation, torque considerations, etc.) where relevant.
 4. SAFETY MEASURES -- always include this as its own clearly-labeled section: power/breaker precautions, water drainage if applicable, any part-specific hazards (electrical, pressurized water lines, sharp edges from a cracked fitting, etc.)
+OUT-OF-SCOPE COMPONENTS -- read before identifying or recommending anything. SpaFix does component-level repair, not sub-component rebuilds. The following are OUT OF SCOPE and must NEVER be recommended as a purchasable part, emitted in a >>PT block, or walked through as a replacement procedure:
+- Pump seals of any kind -- shaft seal, wet-end seal, mechanical seal, seal kits, seal-and-o-ring rebuild kits.
+- Start/run capacitors.
+- Individual control-board relays or other board-level components.
+When the actual failure is one of these, DO NOT give a disassembly or seal-replacement procedure and DO NOT emit a part block for the seal. Instead:
+1. Name what has failed plainly (e.g. "the pump shaft seal has worn through").
+2. Explain that by the time a seal lets go, the bearings and impeller in that wet end have taken the same hours and heat, so a reseal on a worn pump often buys months rather than years.
+3. Recommend replacing the COMPLETE component (the whole pump) for a repair that is done once, and emit the >>PT block for the complete pump instead -- that IS in scope.
+4. You may note that an experienced DIYer could attempt the sub-component repair on their own, but frame the complete-component replacement as SpaFix's recommendation. Use "is common", never "is likely". NEVER refer the user out to a repairman or a repair shop -- that contradicts SpaFix's whole purpose.
+If there is genuinely no whole-component replacement that covers the fault, say so and add nothing to the suggested parts.
+
 5. SUGGEST REPLACEMENT PARTS using this exact format for each part:
 
 >>PT
@@ -1877,7 +2093,9 @@ FORMATTING -- the chat renderer only understands a subset:
 - Do NOT use markdown headers (## or ###) or standalone --- horizontal rules.
 - Use **Bold Text** on its own line for the three section labels.
 - Use numbered lists (1. 2. 3.) for the steps.
-- Use **bold** for part names and important safety warnings inline.`;
+- Use **bold** for part names and important safety warnings inline.
+
+SESSION CLOSE-OUT (Issue B, 2026-07-21): When you have fully answered the user and the repair guidance has reached a natural conclusion -- the part is identified, the replacement steps are given, and you have no open clarifying question of your own outstanding -- end that reply with the token [SESSION_END] on its own final line. Emit it ONLY at a genuine wrap-up; never while still asking the user something, still narrowing the part, or mid-procedure. The app strips this token and shows the user their wrap-up options, so never explain or mention it.`;
 
 // Item 13 (2026-07-11): format this spa's on-file parts into a prompt snippet for repair-help.
 // When SpaFix has verified OEM data for the spa, Jet should PREFER those exact numbers over
@@ -2742,7 +2960,7 @@ app.post("/api/diag-button", async (req, res) => {
       const errorCode = rawErrorCode ? rawErrorCode.replace(/[^A-Za-z0-9\/_\-\s_]/g, '').trim().toUpperCase() || null : null;
       const topic = req.body.topic || 'flow';
       const spaLabel = [spaYear, spaMake, spaModel].filter(v => v && v !== 'Unknown').join(' ') || 'Unknown';
-      const startStep = topic === 'heat' ? 'H2a' : topic === 'jets' ? 'J2a' : topic === 'noise' ? 'N_LOC' : topic === 'water' ? 'W1' : topic === 'overheat' ? 'OH1' : 'S2a';
+      const startStep = topic === 'heat' ? 'H2a' : topic === 'jets' ? 'J_SCOPE' : topic === 'noise' ? 'N_LOC' : topic === 'water' ? 'W1' : topic === 'overheat' ? 'OH1' : 'S2a';
       setDiagState(clientId, { spa: spaLabel, errorCode, topic, steps: [], currentStep: startStep, lastUpdated: Date.now() });
       return res.json({ ok: true, diagState: getDiagState(clientId) });
     }
@@ -2776,8 +2994,18 @@ app.post("/api/diag-button", async (req, res) => {
     const step = DIAG_STEPS[stepId];
     if (!step) return res.status(400).json({ error: 'Unknown step' });
 
+    // .22i: spaLabel was declared inside the session-start block (~2763) but referenced
+    // from the action switch, where it is out of scope -- every filter_dirty_yes reply
+    // threw a ReferenceError that surfaced as Jet's chat message. Resolve it here, at
+    // handler scope, so any branch can use it. Falls back to the plain word "spa" so the
+    // sentence still reads correctly when no spa details are on file.
+    const spaLabelSafe = (state && state.spa && state.spa !== 'Unknown')
+      ? state.spa
+      : ([req.body.spaYear, req.body.spaMake, req.body.spaModel]
+          .filter(v => v && v !== 'Unknown').join(' ') || 'spa');
+
     let stepResult = { id: stepId, label: step.label };
-    let nextStep = step.next;
+    let nextStep = resolveNextStep(state, stepId, step.next); // .22i: array-driven when set, .next otherwise
     let responseMsg = null;
     let partCard = null;
     let clientAction = null;
@@ -2787,6 +3015,9 @@ app.post("/api/diag-button", async (req, res) => {
     let actionFireAckRequired = null;
     let partCardButtons = null; // inline buttons to append after partCard renders
     let briefOmitted = null; // text omitted due to briefMode -- sent to admin/tester for highlight
+    let suspectPart = null; // #64: tag a part as suspect in the drawer WITHOUT rendering the interrupting card
+    let gateDeferred = null; // .22e: post-acknowledgment payload for the power gate (diagnosis + part + buttons), held hidden client-side until [Understood]
+    const CONTINUE_BTNS = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="continue" data-action="" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Continue Diagnostics</button><button class="diag-btn" onclick="openShopDrawer(\'recommended\')">View Suggested Parts</button></div>';
 
     switch(outcome) {
       case 'continue':
@@ -2818,6 +3049,8 @@ app.post("/api/diag-button", async (req, res) => {
           'S10': "Good -- all fuses are intact.",
           'S11': "Good -- temperature readings are consistent.",
           'S12': "Good -- hi-limit sensor checked.",
+          // .22d: lead-in shown before the impeller step (N_IMP) when the jets pump passes.
+          'N_JPUMP': "Your jets pump looks and sounds fine on the outside. Since debris pulled into the impeller can still cause noise, let's open it up and take a look -- this next step needs the power completely OFF.",
           'S13': null, // handled by sub-flow
         };
         if (passMessages[stepId] !== undefined && passMessages[stepId] !== null) {
@@ -2831,14 +3064,85 @@ app.post("/api/diag-button", async (req, res) => {
         // (Category-wide fault-ID stop behavior stays in the 4.9.23 slate; #46 only supplies copy
         //  here and stops solely via the power gate above for the "Very hot" case.)
         {
-          const _circFindings = {
-            'Silent/hum, no flow': "A silent pump, or one humming without moving water, may be seized, airlocked, or have a failed capacitor.",
-            'Grinding / screeching': "Grinding or screeching means the internal bearings are failing -- the pump will need replacing soon.",
-          };
-          if ((stepId === 'S8a' || stepId === 'H8a') && _circFindings[buttonLabel]) {
-            responseMsg = _circFindings[buttonLabel];
+          if ((stepId === 'S8a' || stepId === 'H8a' || stepId === 'N_CIRC' || stepId === 'N_JPUMP') && buttonLabel === 'Silent/hum, no flow') {
+            // #64: could be an airlock -- don't fire the parts card; tag the pump suspect and keep going
+            // 2.3 fix: record as SUSPECT (possible), not a hard fail -- the rail must show the
+            // yellow "Suspect" dot, not ❌. isFailed wins on passed===false, so flip passed true + possible.
+            // #57: part is parameterized (circulation pump vs jet pump) by the button's part.
+            const _susPump = part || 'circulation pump';
+            responseMsg = "A silent pump, or one humming without moving water, may be seized, airlocked, or have a failed capacitor. Let's continue our diagnostics to see if we can fix this problem.";
+            partCard = null;
+            suspectPart = _susPump;
+            stepResult.passed = true;
+            stepResult.possible = true;
+          } else if ((stepId === 'S8a' || stepId === 'H8a' || stepId === 'N_CIRC') && buttonLabel === 'Grinding / screeching') {
+            // #63: buy-a-part fault -- stop and offer continue/parts instead of dead-ending.
+            // .22d: circ-pump grinding copy (applies to every circ pump check: Flow S8a, Heat H8a, Noise N_CIRC).
+            responseMsg = "Grinding or screeching means the internal bearings are failing -- the pump will need to be replaced soon.";
+            advanceNow = false;
+            partCardButtons = CONTINUE_BTNS;
+            // .22e Option B: partCard alone renders the inline card but NEVER populates the
+            // Suggested drawer, so [View Suggested Parts] opened an empty tab. suspectPart is the
+            // existing drawer-add channel and is handled independently client-side -- setting both
+            // gives the unified model (in-chat card + Suggested entry) with no new plumbing.
+            suspectPart = part || 'circulation pump';
+          } else if (stepId === 'N_JPUMP' && buttonLabel === 'Grinding / screeching') {
+            // .22d: jets-pump grinding copy diverges from circ -- grinding can be ingested impeller
+            // debris, so the suggested pump is offered but we continue to the impeller check first.
+            responseMsg = "Screeching means the internal bearings are failing. Grinding noises can also mean the bearings are failing, but it can also mean the pump sucked in debris and it's being grinded in the impeller. I'll provide you with the suggested pump to order, but let's check for ingested debris first in the next step.";
+            advanceNow = false;
+            partCardButtons = CONTINUE_BTNS;
+            suspectPart = part || 'jet pump'; // .22e Option B
+          } else if ((stepId === 'S8a' || stepId === 'H8a' || stepId === 'N_CIRC' || stepId === 'N_JPUMP') && buttonLabel === 'Leaking') {
+            // .22d: leaking follow-up -- help the user find the source (hose / clamp / pump body)
+            // before replacing anything; tubing + clamps live in Shop > Tools & Parts > Plumbing.
+            // .22e: the recommended part is now the WHOLE PUMP (seal parts retired -- SpaFix does not
+            // support pump disassembly or seal replacement).
+            responseMsg = "Leaking means water is escaping around the pump \u2014 track down the source before deciding what to replace. Check the hoses and their clamps first: a loose clamp or a split hose is the easiest fix. If the leak is coming from the pump body itself rather than a hose or fitting, the pump will likely need to be replaced. Take a close look and see where the water is actually coming from. You may need to run the spa to see the leak. Tell me what you find.";
+            advanceNow = false;
+            // Leak source gate (2026-07-22, Tony option 3): NO part is committed here. The copy
+            // tells the user to find the source first, so auto-suggesting the pump contradicted
+            // it (cf #44 premature card). The part is assigned only after they answer below.
+            // .22i: suspectPart alone was not enough -- partCard still held the value assigned
+            // earlier in the fail case, so the inline pump card rendered anyway and the whole
+            // gate never worked. Clear both, matching the silent/humming branch above.
+            partCard = null;
+            suspectPart = null;
+            deadEndButtons = [
+              { l: 'Hose/Clamp Leak', o: 'action', a: 'leak_src_hose' },
+              { l: 'Pump is leaking', o: 'action', a: 'leak_src_pump' },
+              { l: "Unsure what's leaking", o: 'action', a: 'leak_src_unsure' },
+              { l: 'Leak is fixed', o: 'action', a: 'leak_fixed' },
+            ];
+          } else if (stepId === 'J_AIRC') {
+            // .22o: air-control/venturi blocked. Same fail+anchored-card pattern as the single-jet
+            // faults -- previously this button was fail+action and the action never ran (no card,
+            // no copy; reported 5c). Red X + anchored part, holds with continue buttons.
+            responseMsg = "No air either way means the air control or the line behind it is blocked. These block with calcium, and surprisingly often with insects that get in through the air intake and nest in the line.\n\nWith the power off, pull the air line off the back of the control and check whether you can blow through it. If the line is clear, the control itself is the blockage; if the line is blocked, clearing it from the intake end usually does it. For the specific design and disassembly method of the air control on your spa, check your owner's manual.";
+            advanceNow = false;
+            partCardButtons = CONTINUE_BTNS;
+          } else if (stepId === 'J_MAN') {
+            // .22o: manifold/branch blockage. Same fix as 5c (reported 5d).
+            responseMsg = "One zone weak while every other jet is strong is a blocked branch at the manifold. The pump is clearly making pressure, so something is restricting the pipe that feeds that seat -- usually scale, or a piece of a broken-down filter cartridge that got past into the plumbing.\n\nA plumbing flush through the jets is the first thing to try and it clears a lot of these. If it doesn't, the branch has to be opened at the manifold, which means getting behind the cabinet -- check your owner's manual for the manifold layout on your spa. Check your filter's condition while you're at it: if it's shedding, whatever you clear will just come back.";
+            advanceNow = false;
+            partCardButtons = CONTINUE_BTNS;
+          } else if (stepId === 'J_DIFF') {
+            // .22n: single-jet diffuser fault. Fails the step (red X) AND cards the anchored part.
+            // partCard was set from the button's `part:` above; hold here with continue buttons
+            // instead of auto-advancing, matching the other buy-a-part faults.
+            responseMsg = "That combination -- weak flow AND no air draw on one jet while every other jet behaves -- is a cracked diffuser or a stripped back housing. The diffuser is the cone behind the jet face that accelerates the water and creates the venturi suction that pulls air in. Once it cracks, the water takes the easy path and the suction disappears, which is why you lose flow and air together on that one jet.\n\nThe internal assembly behind the face is what needs replacing. An experienced DIYer can usually pull the old internals out from inside the shell without opening the cabinet, but the back housing threads are what these break at, so check the housing is sound before ordering internals alone. For the disassembly method specific to your jets, check your owner's manual.";
+            advanceNow = false;
+            partCardButtons = CONTINUE_BTNS;
+          } else if (stepId === 'J_GSKT') {
+            // .22n: single-jet gasket / wall-fitting fault. Red X + anchored part card.
+            responseMsg = "A jet body that moves in the wall, or dampness behind the cabinet in line with it, means the wall-fitting seal has failed. Water is escaping behind the shell instead of coming out of the jet, which is why that one jet lost pressure while everything else runs normally.\n\nThis one needs dealing with promptly -- water behind the shell soaks the cabinet framing and insulation, and that damage costs far more than the fitting does. The jet body and its gasket come out from inside the shell on most spas -- check your owner's manual for the method specific to your model.";
+            advanceNow = false;
+            partCardButtons = CONTINUE_BTNS;
           } else if ((stepId === 'S9' || stepId === 'H9' || stepId === 'J9') && /^Found burn marks/i.test(buttonLabel || '')) {
+            // #63: burn-marks card no longer dead-ends
             responseMsg = "Found scorching or burn marks. The spa may still run, but the damaged component should be replaced -- and it's safest to power off until it is.";
+            advanceNow = false;
+            partCardButtons = CONTINUE_BTNS;
           }
         }
         break;
@@ -2874,6 +3178,10 @@ app.post("/api/diag-button", async (req, res) => {
             'S4':  "Air locks are one of the most common causes of flow errors -- skipping means we can't rule it out.",
             'H4':  "Air locks are one of the most common causes of heating problems -- skipping means we can't rule it out.",
             'J4':  "Air locks are a common cause of jet pressure loss -- skipping means we can't rule it out.",
+            // .22o: "Cannot tell" on the diffuser check is not "skip" -- the user needs to know what
+            // to look for, then answer. This copy explains the two-part test, then the Try/Skip
+            // buttons re-offer the step so they can go back and check.
+            'J_DIFF': "No problem -- here's exactly what to check so you can tell. Run the jets and do two things at that one weak jet: first, hold your palm flat over the jet face and feel for push -- a healthy jet shoves back firmly, a cracked diffuser feels weak or mushy. Second, open the air control for that seat all the way and listen right at the jet for a hiss of air being pulled in. A good jet draws air and you'll hear it; a cracked diffuser pulls little or none. If you get weak push AND no air draw on that one jet while the others are fine, that's your diffuser. Head back and pick the answer that matches what you found.",
             'S5':  "The heater indicator check quickly confirms whether the control board is calling for heat -- easy to do and worth a moment.",
             'H5':  "Mode settings are a quick win -- Economy or Sleep mode silently prevents heating and is easy to overlook.",
             'J_VT': "The voltage test is the most reliable way to tell whether the issue is the pump or the control board.",
@@ -3521,7 +3829,7 @@ app.post("/api/diag-button", async (req, res) => {
           break;
 
         case 'filter_dirty_yes':
-          responseMsg = `Perfect -- we've found our culprit! If the spa runs fine without them, those filters are just a bit too restricted to let the water through. Even a "little dirty" can cause enough micro-resistance to trip a flow error.\n\nFilters are the first line of defense for your ${spaLabel}, protecting your pump and maintaining flow. Since yours are feeling a bit tired, you can either give them a deep chemical soak to clear out hidden oils and mineral buildup, or grab a fresh set to get back to soaking immediately.\n\nWhat sounds best to you?`;
+          responseMsg = `Perfect -- we've found our culprit! If the spa runs fine without them, those filters are just a bit too restricted to let the water through. Even a "little dirty" can cause enough micro-resistance to trip a flow error.\n\nFilters are the first line of defense for your ${spaLabelSafe}, protecting your pump and maintaining flow. Since yours are feeling a bit tired, you can either give them a deep chemical soak to clear out hidden oils and mineral buildup, or grab a fresh set to get back to soaking immediately.\n\nWhat sounds best to you?`;
           stepResult.passed = false;
           advanceNow = false;
           partCardButtons = '<div class="diag-step-btns" style="margin-top:10px;"><button class="diag-btn" data-step="__STEP__" data-outcome="action" data-action="suggest_filter_cleaning" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Clean them</button><button class="diag-btn" data-step="__STEP__" data-outcome="action" data-action="suggest_filter_replace" data-part="" data-critical="false" onclick="handleDiagBtn(this)">Replace them</button></div>';
@@ -3682,15 +3990,203 @@ app.post("/api/diag-button", async (req, res) => {
           break;
 
         // ── Jets actions ──────────────────────────────────────────
+        // ---- Leak source gate (2026-07-22, Tony option 3) ----
+        // The Leaking outcome on the four pump checks (S8a/H8a/N_CIRC/N_JPUMP) no longer commits
+        // a part up front. These branches assign the part only once the user reports the source.
+        case 'leak_src_hose':
+          responseMsg = "Good \u2014 a hose or clamp leak is the best case, and usually the cheapest fix. There's a stainless hose clamp assortment below if you need one.\n\nSafety: if the clamp is easy to reach, you can snug it up with the spa running so you can watch the leak stop. If you have to loosen a clamp, pull a hose, or work in a tight or awkward spot, cut power at the breaker first. Work within your limits and make smart choices \u2014 if it doesn't feel safe, stop.\n\nTry tightening the clamp and see if that does it.";
+          partCard = 'hose clamp';
+          advanceNow = false;
+          deadEndButtons = [
+            { l: 'That fixed it', o: 'action', a: 'leak_fixed' },
+            { l: 'Still leaking', o: 'action', a: 'leak_hose_unfixed' },
+          ];
+          break;
+
+        case 'leak_hose_unfixed':
+          // Tubing is only offered here -- a user whose clamp fix worked never needs to measure.
+          responseMsg = "Then the hose itself is likely damaged rather than just loose \u2014 a split or perished hose won't seal no matter how tight you crank the clamp. You'll need to replace that section of tubing.\n\nCut power at the breaker before pulling any hose.\n\nWhat size tubing do you need?";
+          advanceNow = false;
+          deadEndButtons = [
+            { l: '3/8 inch', o: 'action', a: 'leak_tube_38' },
+            { l: '1/2 inch', o: 'action', a: 'leak_tube_12' },
+            { l: '3/4 inch', o: 'action', a: 'leak_tube_34' },
+            { l: "Not sure how to measure", o: 'action', a: 'leak_tube_measure' },
+          ];
+          break;
+
+        case 'leak_tube_measure':
+          responseMsg = "Spa tubing is sized by INSIDE diameter, and the three common sizes are not interchangeable.\n\nTwo ways to check: measure across the inside of the cut end of the existing hose, or measure the OUTSIDE of the barb fitting the hose slides onto \u2014 that outside diameter is the tubing size you need. A tape measure or ruler is fine; you're looking for roughly 3/8\", 1/2\" or 3/4\".\n\nIf it measures between two sizes, go with the smaller one \u2014 vinyl tubing stretches onto a barb, it won't shrink.\n\nWhich size do you need?";
+          advanceNow = false;
+          deadEndButtons = [
+            { l: '3/8 inch', o: 'action', a: 'leak_tube_38' },
+            { l: '1/2 inch', o: 'action', a: 'leak_tube_12' },
+            { l: '3/4 inch', o: 'action', a: 'leak_tube_34' },
+          ];
+          break;
+
+        case 'leak_tube_38':
+        case 'leak_tube_12':
+        case 'leak_tube_34':
+          {
+            const _tubeSize = action === 'leak_tube_38' ? '3/8' : (action === 'leak_tube_12' ? '1/2' : '3/4');
+            // Full catalog name so the card resolves to the ONE selected size rather than
+            // keyword-matching every tubing entry.
+            partCard = 'Spa Vinyl Tubing ' + _tubeSize + ' in.';
+            responseMsg = "Here's " + _tubeSize + "\" spa vinyl tubing, shown below. Replace the damaged section, seat the tubing fully onto the barb, and secure it with a clamp at each end \u2014 snug, not crushed.\n\nKeep power off at the breaker until the hose is back together and the clamps are tight.";
+            advanceNow = false;
+            partCardButtons = CONTINUE_BTNS;
+          }
+          break;
+
+        case 'leak_src_pump':
+          responseMsg = "If water is coming from the pump body itself rather than a hose or fitting, the pump needs to be replaced \u2014 SpaFix doesn't recommend opening a pump to replace internal seals, so the whole component is the fix. I've added it to your suggested parts.\n\nKeep power off at the breaker until it's replaced, and note the model number from the label on the pump housing before ordering.";
+          partCard = (stepId === 'N_JPUMP') ? 'jet pump' : 'circulation pump';
+          // .22i: partCard alone renders the inline card but never populates the Suggested drawer,
+          // so the copy above was claiming something that never happened. suspectPart is the
+          // established drawer-add channel (same pattern as the grinding branches) -- setting both
+          // gives the unified model (in-chat card + Suggested entry) and makes the copy true.
+          suspectPart = (stepId === 'N_JPUMP') ? 'jet pump' : 'circulation pump';
+          advanceNow = false;
+          partCardButtons = CONTINUE_BTNS;
+          break;
+
+        case 'leak_src_unsure':
+          responseMsg = "That's a common spot to get stuck \u2014 water travels along hoses and drips somewhere other than where it started, so the visible drip is often not the source.\n\nTry this: dry the whole area thoroughly with a towel, then run the spa and watch closely for the first drop to reappear \u2014 that's your source. A second set of eyes helps a lot here; if you can get a friend to watch one side while you watch the other, it goes much faster. A flashlight and a phone camera in video mode can catch what's hard to see in the moment.\n\nIf you still can't tell, cut power at the breaker and go hands-on: run a dry finger or paper towel along each hose and around each clamp and fitting to find where it's wet. Work within your limits \u2014 if the area is cramped or you're not comfortable, stop there.\n\nTake another look and tell me what you find.";
+          advanceNow = false;
+          deadEndButtons = [
+            { l: 'Hose/Clamp Leak', o: 'action', a: 'leak_src_hose' },
+            { l: 'Pump is leaking', o: 'action', a: 'leak_src_pump' },
+            { l: "Still unsure", o: 'action', a: 'leak_src_unsure' },
+            { l: 'Leak is fixed', o: 'action', a: 'leak_fixed' },
+          ];
+          break;
+
+        case 'leak_fixed':
+          responseMsg = "Nice work \u2014 that's the leak sorted. Let's keep going and make sure nothing else needs attention.";
+          stepResult.passed = true;
+          advanceNow = true;
+          break;
+
+        // ── .22i BUILD B: single-jet and zone branch outcomes ─────────────────
+        case 'jets_single_cleared':
+          // .22n: mark the visual-check step PASSED in the drawer (it wasn't being set, so the
+          // step stayed active). "It stopped again" now re-runs the check as a FAIL rather than a
+          // pass -- clearing a blockage that comes right back is not a resolved step.
+          stepResult.passed = true;
+          responseMsg = "That'll do it -- a blocked jet face is the most common reason a single jet quits, and it's the cheapest possible fix. Calcium and grit build up around the opening over time, and a filter that's started to break down sheds pieces straight into the plumbing.\n\nWorth a look at your other jets while you're there, since whatever blocked that one has been circulating past all of them.";
+          advanceNow = false;
+          deadEndButtons = [
+            { l: 'Great -- all fixed!', o: 'action', a: 'jets_branch_resolved' },
+            { l: 'It stopped again', o: 'action', a: 'jets_single_recheck' },
+          ];
+          break;
+
+        case 'jets_single_recheck':
+          // .22n: a blockage that returns means the clearing did not hold -- mark the visual check
+          // FAILED (red X) and send the user back through it to clear again.
+          stepResult.passed = false;
+          responseMsg = "If it clogged straight back up, the source is still in the water -- most often a filter cartridge that has started to break down and is shedding debris into the plumbing. Clear the jet again, and this time check your filter: if it is crumbling or the fabric is torn, replace it before it blocks the jet a third time.";
+          advanceNow = false;
+          nextStep = 'J_SJ_VIS';
+          deadEndButtons = [
+            { l: 'Cleared again -- watching the filter', o: 'action', a: 'jets_branch_resolved' },
+            { l: 'Keeps happening', o: 'action', a: 'jets_widen_zone' },
+          ];
+          break;
+
+        case 'jets_single_nozzle':
+          // .22q: was outcome:'possible' + advanceNow:true, which advanced past the advice with
+          // no part offer (reported: "directly progresses to step 3, no suggestions, no parts").
+          // Now holds on the advice, marks the step a possible (yellow), and offers the nozzle
+          // assembly as an anchored part -- with continue buttons so the user can still proceed.
+          stepResult.possible = true;
+          partCard = 'anchored:spa jet nozzle assembly|spa jet internal insert';
+          responseMsg = "A nozzle that won't spin while the others do is usually seized with calcium rather than broken. Most jet nozzles pull straight out of the housing once you rotate the face fully counter-clockwise -- take it out and soak it in white vinegar or a scale remover for a few hours, then work it by hand until it turns freely.\n\nIf it's cracked rather than seized, the internal insert is a replacement part rather than a repair -- there's one below. For the removal method specific to your jets, check your owner's manual.";
+          advanceNow = false;
+          partCardButtons = CONTINUE_BTNS;
+          break;
+
+
+
+        case 'jets_aircontrol_fixed':
+          responseMsg = "That's the one -- air controls seize shut with calcium and get closed by accident constantly, and jets feel dramatically weaker without air even when the water flow is perfect. Cheapest possible outcome.";
+          advanceNow = false;
+          deadEndButtons = [
+            { l: 'Great -- all fixed!', o: 'action', a: 'jets_branch_resolved' },
+            { l: 'Still weak', o: 'pass', a: '' },
+          ];
+          break;
+
+
+
+        case 'jets_zone_widespread':
+          responseMsg = "Several zones weak at once changes the picture -- that's more than one branch, which points back at the pump or the water feeding all of them rather than that zone's plumbing. Let's widen out to the full diagnostic.";
+          state.stepOrder = JETS_BRANCH_ORDERS.all;
+          state.jetsScope = 'all';
+          nextStep = state.stepOrder[0];
+          advanceNow = true;
+          break;
+
+        case 'jets_branch_resolved':
+          responseMsg = "Good result. Your steps list stays where it is in case you want to look back at what we checked, and I'm here if it comes back.";
+          advanceNow = false;
+          deadEndButtons = [
+            { l: 'Diagnose Something Else', o: 'nav', a: 'nav_reset' },
+            { l: 'Review Guides', o: 'nav', a: 'nav_guides' },
+            { l: 'Shop with Jet', o: 'nav', a: 'nav_shop' },
+          ];
+          break;
+
+        // ── .22i BUILD B: pre-sequence router ──────────────────────────────────
+        // Each answer selects the order array the session will run. Previously all three
+        // converged on J2a and ran the identical 13-step sequence, so the scope question was
+        // informational only. The two short branches SKIP the steps they do not need -- they
+        // are never auto-passed, so the drawer never claims a check happened that did not.
         case 'jets_scope_single':
-          responseMsg = "Got it -- a single jet with low pressure usually means a closed or clogged jet face, or a stuck diverter routing flow away from that nozzle. We'll check both. Let's start with the basics first.";
+          state.stepOrder = JETS_BRANCH_ORDERS.single;
+          state.jetsScope = 'single';
+          nextStep = state.stepOrder[0];
+          responseMsg = "Got it -- one jet down while the rest are strong tells us a lot straight away. The pump is clearly moving water, the filters are passing it, and the pack is powering up, so we can skip all of that and go straight to the jet itself. There are only a few things that make a single jet quit, and we will step through each one.";
           stepResult.passed = true;
           advanceNow = true;
           break;
 
         case 'jets_scope_zone':
-          responseMsg = "Got it -- a full zone with low pressure is often a diverter valve stuck in the middle position, starving that whole seat. We'll check that shortly. Let's start with the basics first.";
+          state.stepOrder = JETS_BRANCH_ORDERS.zone;
+          state.jetsScope = 'zone';
+          nextStep = state.stepOrder[0];
+          responseMsg = "Got it -- a whole seat or zone out while the other jets run normally points at that zone's own plumbing rather than the pump or the pack. Both of those are clearly working, so we can skip the pump, the voltage checks, the board and the fuses entirely.\n\nThat leaves four things worth checking: the diverter valve feeding that zone, an air lock, the zone's air control, and a blockage in the manifold branch that feeds it.";
           stepResult.passed = true;
+          advanceNow = true;
+          break;
+
+        case 'jets_scope_all':
+          state.stepOrder = JETS_BRANCH_ORDERS.all;
+          state.jetsScope = 'all';
+          nextStep = state.stepOrder[0];
+          responseMsg = "Got it -- every jet weak or dead points at something feeding the whole system rather than any one jet, so we will work through the full sequence: water and filters first, then the pump, its power, and the board.";
+          stepResult.passed = true;
+          advanceNow = true;
+          break;
+
+        // ── Escalation: a short branch that finds nothing WIDENS rather than dead-ending ──
+        // A single-jet symptom can turn out to be systemic. Widening reuses the branch
+        // machinery already built here, and the steps drawer growing mid-walk is expected
+        // behaviour, not a defect -- the list reflects what the user's answers have earned.
+        case 'jets_widen_zone':
+          state.stepOrder = JETS_BRANCH_ORDERS.zone;
+          state.jetsScope = 'zone';
+          nextStep = state.stepOrder[0];
+          responseMsg = "Then let's widen the search. If the jet itself checks out, the next thing up the line is the plumbing that feeds it -- the diverter valve for that seat, an air lock, the zone's air control, and the manifold branch. Your steps list will grow to take these in.";
+          advanceNow = true;
+          break;
+
+        case 'jets_widen_all':
+          state.stepOrder = JETS_BRANCH_ORDERS.all;
+          state.jetsScope = 'all';
+          nextStep = state.stepOrder[0];
+          responseMsg = "Then let's widen the search to the whole system. If that zone's own plumbing checks out, the cause is more likely something feeding every jet -- water and filters first, then the pump, its power, and the board. Your steps list will grow to take these in.";
           advanceNow = true;
           break;
 
@@ -3732,6 +4228,7 @@ app.post("/api/diag-button", async (req, res) => {
           break;
 
         case 'jets_sound_squeal':
+          state.jetsVerdict = 'pump'; state.jetsVerdictWhy = 'the screech or squeal you heard when the jets run, which is the sound of failing motor bearings'; // .22i
           if (!briefMode) { responseMsg = "A screech or squeal when the jets run is the sound of worn or failing motor bearings. The jets may still work for now, but the pump is on its way out -- it needs a rebuild or replacement soon. I've flagged this as a likely pump issue."; } else { briefOmitted = "A screech or squeal when the jets run is the sound of worn or failing motor bearings. The jets may still work for now, but the pump is on its way out -- it needs a rebuild or replacement soon. I've flagged this as a likely pump issue."; }
           stepResult.passed = true;
           stepResult.possible = true;
@@ -3740,6 +4237,7 @@ app.post("/api/diag-button", async (req, res) => {
           break;
 
         case 'jets_shaft_locked':
+          state.jetsVerdict = 'pump'; state.jetsVerdictWhy = 'the pump shaft being locked solid'; // .22i
           responseMsg = "A locked shaft means something is either jammed in the impeller housing or the motor bearings have seized. Do not try to force the shaft -- further damage could result. This pump will need to be removed and inspected. The impeller housing can be disassembled to check for debris without replacing the full pump.";
           stepResult.passed = false;
           advanceNow = false;
@@ -3758,9 +4256,92 @@ app.post("/api/diag-button", async (req, res) => {
           break;
 
         case 'jets_no_multimeter':
-          responseMsg = "Without a multimeter we can't confirm whether the board is sending power. Based on everything we've tested, the most likely cause is either the jet pump itself or the control board relay. We'll check the pump wiring visually first.";
+          // .22i BUILD B: this used to advance straight on to the pump conclusion, which meant a
+          // user without a multimeter was told to buy a pump on a maybe -- while the copy itself
+          // admitted it could equally be the board. It is now the entry to the inconclusive fork.
+          // The multimeter is framed as the definitive test up front; the physical inspections are
+          // offered as a way to CATCH a fault without one, not as a way to clear either part.
+          state.jetsFork = true;
+          responseMsg = "Then let's be straight about where that leaves us. A multimeter is the test that actually settles this -- it answers one question, is power arriving at the pump terminals when the jets are called for, and that single answer separates a dead pump from a board that isn't feeding it. Nothing else gives you a definite answer.\n\nWhat we can do without one is go looking for a fault we can SEE. If we find physical damage at either the pump or the board, that's your answer. What we can't do is clear either part that way -- a burnt motor winding and a stuck relay both look perfectly normal.\n\nThere's also a swap test that settles it outright, but only on spas wired for it. Where would you like to start?";
+          advanceNow = false;
+          deadEndButtons = [
+            { l: 'Try the swap test', o: 'action', a: 'goto_swap' },
+            { l: 'Inspect the pump', o: 'action', a: 'goto_pump_insp' },
+            { l: 'Inspect the control board', o: 'action', a: 'goto_board_insp' },
+            { l: "I'd like a multimeter", o: 'action', a: 'suggest_multimeter' },
+          ];
+          break;
+
+        // Fork navigation -- the three fork steps are reached on demand rather than in sequence,
+        // so they sit off the order array and route explicitly.
+        case 'goto_swap':       advanceNow = true; nextStep = 'J_SWAP';  break;
+        case 'goto_pump_insp':  advanceNow = true; nextStep = 'J_PINSP'; break;
+        case 'goto_board_insp': advanceNow = true; nextStep = 'J_BINSP'; break;
+
+        case 'jets_relay_click':
+          // A clear click means the board's logic AND its relay trigger both work, so attention
+          // moves to the pump and its power. It does NOT clear the relay contacts themselves.
+          responseMsg = "Good -- that click is the relay physically switching, which tells us the board's logic is running and it IS trying to power that pump. That moves our attention to the pump and the power reaching it.\n\nWorth knowing what it doesn't tell us: a relay can click and still fail to pass power through its contacts. It narrows things down, it doesn't close the case.";
+          stepResult.passed = true;
           advanceNow = true;
           break;
+
+        case 'jets_relay_silent':
+          // MUST NOT imply board failure -- on a solid-state board silence is normal.
+          responseMsg = "Understood, and we're going to carry that forward suspecting nothing. Silence at the control box only means something on a spa old enough to have mechanical relays -- on a solid-state board there is nothing to hear, so no click is exactly what a healthy board sounds like.\n\nWe'll let the rest of the diagnostic decide.";
+          stepResult.passed = true;
+          advanceNow = true;
+          break;
+
+        case 'jets_swap_board':
+          state.jetsVerdict = 'board';
+          state.jetsVerdictWhy = 'the pump running normally once you moved it to the other position, which proves the pump is fine and the board output that feeds it is dead';
+          responseMsg = "That settles it without a multimeter. The pump runs perfectly well when it's fed from the other position, so the pump is fine -- what's failed is the board output that normally feeds it.";
+          advanceNow = true;
+          nextStep = 'J14';
+          break;
+
+        case 'jets_swap_pump':
+          state.jetsVerdict = 'pump';
+          state.jetsVerdictWhy = 'the pump failing to run even when fed from a board output you had just proven works';
+          responseMsg = "That settles it. The pump was fed from an output you'd just proven works, and it still didn't run -- so the board is doing its job and the pump is dead.";
+          advanceNow = true;
+          nextStep = 'J13';
+          break;
+
+        case 'jets_pump_insp_found':
+          state.jetsVerdict = 'pump';
+          state.jetsVerdictWhy = 'the debris or impeller damage you found inside the pump housing';
+          responseMsg = "There's your fault. Debris wrapped around the impeller or damaged vanes explains the symptoms without needing to involve the board at all.\n\nIf it's loose debris and the impeller and vanes are undamaged, clearing it out may be the whole repair -- worth trying before you order anything. If the vanes are chewed or broken, the wet end has taken damage and the pump needs replacing.";
+          advanceNow = true;
+          nextStep = 'J13';
+          break;
+
+        case 'jets_pump_insp_clean':
+          state.jetsPumpInspClean = true;
+          responseMsg = "Noted -- and worth repeating, because it's the part people get wrong: that does not clear the pump. A burnt winding or a failed start capacitor is completely invisible from the outside, and the impeller housing looks perfect in both cases. All we've ruled out is a mechanical jam.\n\nThe pump is still in the frame.";
+          advanceNow = false;
+          deadEndButtons = [
+            { l: 'Inspect the control board', o: 'action', a: 'goto_board_insp' },
+            { l: 'Try the swap test', o: 'action', a: 'goto_swap' },
+            { l: 'Where does that leave me?', o: 'action', a: 'goto_jets_verdict' },
+            { l: "I'd like a multimeter", o: 'action', a: 'suggest_multimeter' },
+          ];
+          break;
+
+        case 'jets_board_insp_clean':
+          state.jetsBoardInspClean = true;
+          responseMsg = "Noted -- and the same caveat applies here, more strongly if anything: that does not clear the board. A stuck relay or a failed driver circuit looks pristine. Arc damage is the only board fault you can actually see, and plenty of boards fail without ever showing any.\n\nThe board is still in the frame.";
+          advanceNow = false;
+          deadEndButtons = [
+            { l: 'Inspect the pump', o: 'action', a: 'goto_pump_insp' },
+            { l: 'Try the swap test', o: 'action', a: 'goto_swap' },
+            { l: 'Where does that leave me?', o: 'action', a: 'goto_jets_verdict' },
+            { l: "I'd like a multimeter", o: 'action', a: 'suggest_multimeter' },
+          ];
+          break;
+
+        case 'goto_jets_verdict': advanceNow = true; nextStep = 'J13'; break;
 
         // identify_pump intercepted client-side (handleCameraBtn) -- never reaches server, same as identify_board
 
@@ -3769,13 +4350,18 @@ app.post("/api/diag-button", async (req, res) => {
           // instead of also routing into J14's "probably the board/wiring" conclusion.
           // Previously J13->J14 was unconditional regardless of outcome, so confirming the
           // pump immediately followed up by suggesting it might actually be the board.
+          // .22i BUILD B: partCard alone rendered a terminal card that never reached the
+          // Suggested drawer -- the Part-card Phase 2 carve-out, pulled into scope because a
+          // terminal card going nowhere is too visible to defer. suspectPart is the drawer channel.
           stepResult.passed = false;
           partCard = 'jet pump';
+          suspectPart = 'jet pump';
           advanceNow = true;
           nextStep = null;
           break;
 
         case 'fail_jet_pump':
+          state.jetsVerdict = 'pump'; state.jetsVerdictWhy = state.jetsVerdictWhy || 'correct voltage arriving at the pump terminals with the pump not running'; // .22i
           // Was referenced by two buttons (voltage test confirmed, pump replacement
           // link) but never actually implemented -- both produced unhandled-action
           // errors, blocking users from finishing the Jets diagnosis (Tony 2026-07-02).
@@ -3787,6 +4373,7 @@ app.post("/api/diag-button", async (req, res) => {
           break;
 
         case 'fail_control_board':
+          state.jetsVerdict = 'board'; state.jetsVerdictWhy = state.jetsVerdictWhy || 'no voltage reaching the pump terminals when the jets were called for'; // .22i
           // Same missing-case bug as fail_jet_pump above.
           responseMsg = "0V at the terminal with the button pressed means the board isn't sending power to that pump -- the relay on the control board has failed.";
           stepResult.passed = false;
@@ -4086,10 +4673,35 @@ app.post("/api/diag-button", async (req, res) => {
     // Fires a part-parameterized cut-power message AND stops the flow (advanceNow=false, #51 fix).
     if (req.body.critical) {
       const _gatePart = part || 'affected component';
-      responseMsg = `⚠️ Cut power to your spa immediately at the breaker. Do not use it until the ${_gatePart} has been checked and, if needed, replaced.`;
       advanceNow = false;
+      // #62 / .22e: the gate renders as a STANDALONE warning message with [Understood] as the
+      // ONLY control up front. Everything that follows the acknowledgment (diagnosis, part card,
+      // drawer entry, continue buttons) is pre-sent in `gateDeferred` and held hidden by the
+      // client until the user taps [Understood] -- no second round trip.
+      let _gateDiagnosis;
+      if (_gatePart === 'hi-limit sensor') {
+        // hi-limit keeps its own copy (the "allow to cool" copy doesn't fit "water dangerously hot")
+        responseMsg = `[GATE_ACK:${_gatePart}]⚠️ Cut power to your spa immediately at the breaker. Do not use it until the ${_gatePart} has been checked and replaced if needed.`;
+        // COPY REVIEW (.22e): hi-limit diagnosis authored by build engineer -- review wording.
+        _gateDiagnosis = `Now that the power is off, here's what this points to. The hi-limit sensor is the safety device that shuts your spa down when the water gets dangerously hot. So one of two things happened: it did its job and something else overheated the water, or the sensor itself has failed and is reporting a temperature that isn't real. Either way this has to be resolved before the spa is used again. I've added the hi-limit sensor to your suggested parts in case it turns out to be the culprit.`;
+      } else {
+        responseMsg = `[GATE_ACK:${_gatePart}]⚠️ Cut power to your spa immediately at the breaker. Allow the ${_gatePart} to cool completely, and do not use or enter the spa while this condition persists. An overheating ${_gatePart} creates a severe risk of equipment damage or electrical failure. A list of replacement parts will be provided in the shopping tab.\n\nFor continued troubleshooting: You may temporarily power the spa back on only to complete necessary active diagnostic tests.\n\nOnce testing is finished: Keep the power completely OFF at the breaker.`;
+        // COPY REVIEW (.22e): overheating diagnosis authored by build engineer -- review wording.
+        _gateDiagnosis = `Now that the power is off, here's what this points to. A ${_gatePart} running that hot is pulling far more current than it should. That almost always means the motor is failing — worn bearings, a failing start capacitor or windings that are breaking down. Once a motor has run this hot, it is unlikely to recover. Replacing the ${_gatePart} is the recommended fix.`;
+      }
+      // .22e: nothing but the warning renders up front. The part is NOT tagged into the drawer
+      // yet (suspectPart stays null) and the continue buttons are NOT inlined -- both move into
+      // gateDeferred and fire on acknowledgment.
+      partCard = null;
+      suspectPart = null;
+      partCardButtons = null;
+      gateDeferred = {
+        component: _gatePart,
+        diagnosis: _gateDiagnosis,
+        partName: _gatePart,
+        btns: CONTINUE_BTNS,
+      };
       // Liability record stub (#46): wire the user's answer to their profile when accounts ship.
-      // Intended to reuse the client _acks fire-ack shape rather than a parallel sink.
       dbg('gate', 'power gate fired', { stepId: stepId, part: _gatePart, label: buttonLabel || null });
       // TODO(accounts): recordGateAck({ stepId, part:_gatePart, answer:buttonLabel, ts:new Date().toISOString() });
     }
@@ -4158,7 +4770,7 @@ app.post("/api/diag-button", async (req, res) => {
           label: ns.label,
           question: (ns.questionFn ? ns.questionFn(state) : ns.question) || '',
           fire: ns.fire ? applyFireTemplates(`[${ns.fire}]`) : null,
-          buttons: ns.buttons,
+          buttons: (ns.buttonsFn ? ns.buttonsFn(state) : ns.buttons), // .22i: context-aware buttons
           bayStep: ns.bayStep || false,
         };
       }
@@ -4225,7 +4837,14 @@ app.post("/api/diag-button", async (req, res) => {
       responseMsg,
       partCard,
       partCardButtons,
+      gateDeferred,
+      suspectPart,
       nextStep: nextStepData,
+      // .22i BUILD B: the branch order lives on the session, and the steps drawer plus the step
+      // numbering are both rendered client-side from it -- so it has to reach the client. This
+      // endpoint was the one that never echoed diagState back, which would have left every jets
+      // walk showing the full all-jets list no matter which branch the user actually chose.
+      diagState: state,
       advanceNow,
       skipPending,
       deadEndButtons,
@@ -4320,7 +4939,7 @@ app.post("/api/diag-review-reply", async (req, res) => {
       id: ns.id, label: ns.label,
       question: (ns.questionFn ? ns.questionFn(state) : ns.question) || '',
       fire: ns.fire ? applyFireTemplates(`[${ns.fire}]`) : null,
-      buttons: ns.buttons, bayStep: ns.bayStep || false,
+      buttons: (ns.buttonsFn ? ns.buttonsFn(state) : ns.buttons), bayStep: ns.bayStep || false, // .22i
     } : null;
     res.json({ advanceNow: true, nextStep: nextStepData, diagState: state, sonnetCheckFailed: _sonnetCheckFailed });
   } catch (err) {
@@ -4843,6 +5462,36 @@ app.get("/", (req, res) => res.json({ message: "SpaFix API v4 running ✓" }));
 // ── PARTS LIST (cached in memory by year-make-model) ─────────────
 const partsCache = {};
 
+// .22i SEAL FILTER -- product policy: SpaFix is component-level repair only, so pump seals and
+// other internal sub-parts are never sold. Prompt wording alone already failed once (.22h removed
+// a category from the prompt and "Pump Shaft Seal (for 48Y frame wet end)" still came through), so
+// this is a hard filter applied on the way out AND before anything is cached.
+//
+// This deliberately matches NAME PATTERNS, never the bare word "seal". Leak sealer, sealant and
+// o-ring kits are IN scope as consumables, and removing those from the shop is a worse failure
+// than one seal slipping through. The allow-list below is the guard for that.
+const SEAL_ALLOW_RE = /sealant|sealer|seal[- ]?tape|o-?ring|thread\s*tape|ptfe|teflon|putty/i;
+const SEAL_BLOCK_RE = /\b(shaft|pump|wet[\s-]?end|mechanical|motor|impeller|volute|housing|heater)[\s-]+seals?\b|\bseals?[\s-]+(kit|assembly|set|rebuild)\b|\brebuild\s+kit\b/i;
+
+function isOutOfScopeSealPart(name) {
+  const n = String(name || '');
+  if (!n) return false;
+  if (SEAL_ALLOW_RE.test(n)) return false;
+  return SEAL_BLOCK_RE.test(n);
+}
+
+// Strips out-of-scope seal parts from a parts array. Used as both a read filter (cached rows are
+// sanitized on the way out, so a stale Supabase cache cannot serve a seal) and a write filter
+// (nothing out of scope is cached in the first place).
+function filterSealParts(parts) {
+  if (!Array.isArray(parts)) return parts;
+  const kept = parts.filter(p => !isOutOfScopeSealPart(p && (p.name || p.part_name)));
+  if (kept.length !== parts.length) {
+    console.log(`[seal-filter] removed ${parts.length - kept.length} out-of-scope seal part(s)`);
+  }
+  return kept;
+}
+
 // ── Unknown make validation + logging ──────────────────────────
 // ── Unknown Error Code Validation ────────────────────────────
 app.post('/api/validate-error-code', async (req, res) => {
@@ -4935,7 +5584,12 @@ app.post('/api/validate-error-code', async (req, res) => {
 app.post('/api/admin/force-pass-all', async (req, res) => {
   const { key, topic } = req.body;
   if (!ADMIN_KEY || !accessCodesMatch(key, ADMIN_KEY)) return res.status(401).json({ error: 'Unauthorized' });
-  const order = SEQUENCE_STEP_ORDERS[topic];
+  // .22q: prefer the exact order the client force-passed. The jets redesign added branch
+  // sequences (single jet / whole zone) whose order differs from SEQUENCE_STEP_ORDERS.jets, so
+  // scanning the topic order left branch steps unmarked and the pre-conclusion review kept
+  // hard-blocking Dig Deeper ("resolve flagged steps first") even after a force-pass. Using the
+  // client's actual order keeps the server flag-scan in sync with what was passed.
+  const order = (Array.isArray(req.body.order) && req.body.order.length) ? req.body.order : SEQUENCE_STEP_ORDERS[topic];
   if (!order) return res.status(400).json({ error: `Unknown topic "${topic}" -- expected flow, heat, or jets` });
   const terminalId = order[order.length - 1];
   const clientId = getClientId(req);
@@ -4953,6 +5607,14 @@ app.post('/api/admin/force-pass-all', async (req, res) => {
     }
   });
   state.currentStep = terminalId;
+  // .22p: two fixes for the redesigned sequences. (1) An admin who force-passed EVERY step has
+  // explicitly cleared the sequence, so the pre-conclusion review must not then hard-block the
+  // conclusion with "resolve flagged steps first" -- mark the conclusion as already reviewed so
+  // the board conclusion fires normally instead of the cold dead-end. (2) The terminal control
+  // board step (J14/H14/S14) was being left with no state entry, so the drawer showed it Active
+  // rather than resolved even though the walk is complete -- record it as reviewed/complete.
+  if (!state.reviewedConclusions) state.reviewedConclusions = {};
+  state.reviewedConclusions[terminalId] = true;
   setDiagState(clientId, state);
   console.log('[DIAG-SONNET] Force Pass All synced server-side -- clientId:', clientId, 'topic:', topic, 'terminal:', terminalId);
   res.json({ ok: true, diagState: getDiagState(clientId) });
@@ -5142,7 +5804,7 @@ app.post('/api/log-unknown-make', async (req, res) => {
 
 const PARTS_SYSTEM_PROMPT = `You are a hot tub parts expert. When given a spa year, make, and model, return a JSON array of commonly replaced parts for that specific model. Each item must have:
 - name: part name (string)
-- category: one of: "Filtration", "Heating", "Pumps & Jets", "Controls & Sensors", "Plumbing & Seals", "Chemicals & Consumables", "Covers & Accessories"
+- category: one of: "Filtration", "Heating", "Pumps & Jets", "Controls & Sensors", "Plumbing", "Chemicals & Consumables", "Covers & Accessories"
 - part_number: OEM part number ONLY if you have verified data for this exact model (string or null). NEVER invent or guess part numbers -- if unsure, use null.
 - mfr_model: SHORT base manufacturer/aftermarket model name buyers search for e.g. "Laing E-10", "Balboa VS501Z", "Gecko SSPA" -- NOT the full part number with suffixes (string or null)
 - interval: replacement interval e.g. "Every 1-2 years", "As needed", "5-10 years"
@@ -5158,7 +5820,6 @@ Include these categories of parts where applicable to the model:
 - Flow switch or flow sensor
 - Hi-limit temperature sensor
 - Water temperature sensor
-- Pump seal kit
 - O-ring kit
 - Jet inserts -- only list specific types that apply to this model
 - Ozonator -- only if this model comes with one
@@ -5340,7 +6001,8 @@ app.post('/api/parts-list', async (req, res) => {
     // Parts list is free for all tiers -- no session required
     const key = cacheKey || [year,make,model].map(v=>(v||'').toLowerCase().trim()).join('-').replace(/[^a-z0-9-]/g,'');
     // Check in-memory cache first (fastest)
-    if (partsCache[key]) return res.json({ parts: partsCache[key], cached: true });
+    // .22i: read filter -- sanitize on the way out so stale cached seals never reach a user.
+    if (partsCache[key]) return res.json({ parts: filterSealParts(partsCache[key]), cached: true });
 
     // Check Supabase persistent cache
     try {
@@ -5350,7 +6012,9 @@ app.post('/api/parts-list', async (req, res) => {
       if (sbCacheRes.ok) {
         const sbRows = await sbCacheRes.json();
         if (sbRows && sbRows.length > 0 && sbRows[0].parts) {
-          const cachedParts = sbRows[0].parts;
+          // .22i: read filter -- applied before warming memory AND before responding, so the
+          // persistent Supabase cache is sanitized on every hit without needing a purge.
+          const cachedParts = filterSealParts(sbRows[0].parts);
           partsCache[key] = cachedParts; // warm in-memory cache
           return res.json({ parts: cachedParts, cached: true });
         }
@@ -5400,7 +6064,7 @@ app.post('/api/parts-list', async (req, res) => {
       const start = cleaned.indexOf('[');
       const end = cleaned.lastIndexOf(']');
       if (start === -1 || end === -1) throw new Error('No JSON array found in response');
-      const parts = JSON.parse(cleaned.slice(start, end + 1));
+      let parts = JSON.parse(cleaned.slice(start, end + 1)); // .22i: let, so the seal write filter can rebind it
 
       // Flag parts with safety warnings from compatible_parts for UI badge rendering
       if (compatibleParts && compatibleParts.length > 0) {
@@ -5425,6 +6089,8 @@ app.post('/api/parts-list', async (req, res) => {
       if (parts.length > 0 && nullCount / parts.length > 0.5) {
         console.warn(`[FLAG] parts-data-thin → ${key} → ${nullCount}/${parts.length} parts missing part numbers`);
       }
+      // .22i: write filter -- nothing out of scope gets cached or returned in the first place.
+      parts = filterSealParts(parts);
       partsCache[key] = parts; // warm in-memory cache
       // Persist to Supabase cache async -- don't block response
       (async () => {
