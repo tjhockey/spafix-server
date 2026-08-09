@@ -1,4 +1,4 @@
-process.env.APP_VERSION = "v4.9.22s";
+process.env.APP_VERSION = "v4.9.22v";
 const CLIENT_VERSION = "4.9.21av"; // fallback only -- /api/version now echoes the X-SpaFix-Client-Version header when present
 require('dotenv').config();
 const express = require("express");
@@ -3069,10 +3069,14 @@ app.post("/api/diag-button", async (req, res) => {
             // 2.3 fix: record as SUSPECT (possible), not a hard fail -- the rail must show the
             // yellow "Suspect" dot, not ❌. isFailed wins on passed===false, so flip passed true + possible.
             // #57: part is parameterized (circulation pump vs jet pump) by the button's part.
-            const _susPump = part || 'circulation pump';
+            // .22u (F1 option A): do NOT commit a pump here. Silent/hum is inconclusive (airlock,
+            // seized winding, or failed capacitor) -- committing a part for a maybe is premature.
+            // The step stays flagged possible=true, so the yellow "suspect" dot shows AND the
+            // S14/H14/J14 pre-conclusion review hard-blocks and sends the user back to revisit the
+            // pump, where a definitive outcome (grinding/leaking/very hot) commits the real part.
             responseMsg = "A silent pump, or one humming without moving water, may be seized, airlocked, or have a failed capacitor. Let's continue our diagnostics to see if we can fix this problem.";
             partCard = null;
-            suspectPart = _susPump;
+            suspectPart = null;
             stepResult.passed = true;
             stepResult.possible = true;
           } else if ((stepId === 'S8a' || stepId === 'H8a' || stepId === 'N_CIRC') && buttonLabel === 'Grinding / screeching') {
