@@ -1,4 +1,4 @@
-process.env.APP_VERSION = "v4.9.22v";
+process.env.APP_VERSION = "v4.9.23a";
 const CLIENT_VERSION = "4.9.21av"; // fallback only -- /api/version now echoes the X-SpaFix-Client-Version header when present
 require('dotenv').config();
 const express = require("express");
@@ -633,7 +633,7 @@ const FIRE_TEMPLATES = {
 
   'F:BC': `⚠️ When opening the equipment bay, avoid touching any electrical components, wiring, or terminals. The spa pack (control box) houses the electrical components and should remain closed -- do not open it. You'll be working with plumbing components only. Some steps will require power ON to observe water flow and pump operation -- we'll let you know when power needs to be off. Only proceed if you're comfortable working around spa equipment.`,
 
-  'F:FJ': `⚠️ HIGH VOLTAGE WARNING\n1. Turn OFF the main circuit breaker to the spa now (the topside panel button does not cut power). Verify the tub display is completely dead.\n2. Protect Yourself: Opening the spa pack exposes live, lethal voltage. Do not touch any heavy wiring, terminal blocks, or large components on the circuit board. The only part you will touch is the low-voltage flow switch plug/pins to place your jumper.`,
+  'F:FJ': `To bypass the flow switch we'll open the spa pack -- the sealed control box that holds the electronics and high-voltage connections. Cut power at the breaker first (the topside button doesn't fully cut it) so those connections are dead, keep the pack dry, and handle it carefully.\n\n⚠️ Before you open the pack:\n1. Turn OFF the main circuit breaker to the spa now, and verify the tub display is completely dead.\n2. Inside the pack, the only part you'll touch is the low-voltage flow switch plug/pins for the jumper. Don't touch the heavy wiring, terminal blocks, or large board components -- those carry lethal voltage.`,
 };
 
 // ── Diagnostic step definitions -- button-driven state machine ─────
@@ -702,7 +702,7 @@ const DIAG_STEPS = {
       {label:"My spa doesn't have these", outcome:'pass'}
     ]
   },
-  S6b: { id:'S6b', next:'S7', label:'Air purge valve',
+  S6b: { id:'S6b', next:'S8a', label:'Air purge valve',
     bayStep:true,
     question:'Some spas have an air purge valve on the pump or plumbing -- it looks like a small bleed valve or knurled cap. Not all spas have one. If yours has one and you see air bubbling out when you open it, keep it open until only water flows, then close it.',
     buttons:[
@@ -745,11 +745,40 @@ Based on the check list above, what best describes the condition of your circ pu
   S8b: { id:'S8b', next:'S8c', label:'Flow switch visual',
     bayStep:true,
     question:"You've already located the flow switch -- now let's test it more closely. The circ pump pushes water through the heater and then to the flow switch/sensor downstream. The sensor must detect sufficient flow to function properly -- if flow is insufficient, the circuit won't close and the spa fails. You should be able to visually see the paddle of the flow sensor making contact with the post. Sometimes these sensors fail even when making contact.",
+    // .22z S8b redesign (spec 4C): every paddle finding now routes through the forced-flow functional
+    // test (S8b_flow) before any invasive step. The bypass (S8c) is reached ONLY from S8b_flow's
+    // "still doesn't move" outcome, so the pack is never opened until the non-invasive functional
+    // test has failed. "Moves freely" goes straight to the functional test; "stuck"/"arrow wrong"
+    // detour through the non-invasive checks (S8b_check) first.
     buttons:[
-      {label:'Paddle moves freely, making contact', outcome:'pass'},
-      {label:'Paddle stuck or not making contact', outcome:'fail', part:'flow switch'},
-      {label:'Arrow pointing wrong way', outcome:'fail', part:'flow switch'},
+      {label:'Paddle moves freely, making contact', outcome:'action', action:'flowsw_pass'},
+      {label:'Paddle stuck or not making contact', outcome:'action', action:'flowsw_stuck'},
+      {label:'Arrow pointing wrong way', outcome:'action', action:'flowsw_arrow'},
       {label:"Can't find it", outcome:'action', action:'cant_find_flow_switch'}
+    ]
+  },
+  // .22z S8b redesign -- OFF-array sub-steps (not in SEQUENCE_STEP_ORDERS.flow), reached only via the
+  // action routing above, mirroring the jets off-array pattern (J_SWAP/J_BINSP). Non-invasive checks
+  // first: catch the easy causes (a sticking paddle, debris, or an incomplete airlock purge) before
+  // touching anything. All findings advance to the forced-flow functional test.
+  S8b_check: { id:'S8b_check', next:'S8b_flow', label:'Flow switch checks',
+    bayStep:true,
+    question:"Before we open anything, three quick non-invasive checks with the spa running:\\n\\n1. Tap the flow switch housing -- does the paddle free up and start moving?\\n2. Look inside the clear housing -- any debris caught around the paddle?\\n3. Watch for large air bubbles moving through -- bubbles mean the airlock purge didn't fully clear.\\n\\nIf you found debris, clean it out now. Either way, the next step forces water flow so we can watch the paddle respond -- that's the real test.",
+    buttons:[
+      {label:'Checked -- run the flow test', outcome:'action', action:'flowsw_to_flow'}
+    ]
+  },
+  // Forced-flow functional test: re-run the airlock purge IN PLACE (no jump back) to force flow while
+  // a second person watches the paddle. Paddle responds -> the switch works, so the circ pump isn't
+  // providing normal flow (circ-pump suspect). Paddle stays dead -> blockage or a failed switch ->
+  // bypass confirm (S8c). This is the only path to S8c.
+  S8b_flow: { id:'S8b_flow', next:'S8c', label:'Forced-flow test',
+    bayStep:true,
+    fire:'F:AP',
+    question:"Forced-flow test. Re-run the airlock purge below to force water through -- but this time have a second person watch the flow switch paddle while you do it. Watch what the paddle does: if it moves toward the post, the switch is working; if it stays put, we'll bypass-test it next.",
+    buttons:[
+      {label:'Water flows and the paddle moves toward contact', outcome:'fail', part:'circulation pump'},
+      {label:"Paddle still doesn't move", outcome:'continue'}
     ]
   },
   S8c: { id:'S8c', next:'S9', label:'Flow switch jumper',
@@ -780,10 +809,12 @@ Based on the check list above, what best describes the condition of your circ pu
     ]
   },
   S11: { id:'S11', next:'S12', label:'Temp sensor',
-    question:'Compare the water temperature shown on your topside panel against how the water actually feels. A significant difference can indicate a faulty temp sensor.',
+    question:"Let's check the water's actual temperature and compare it to your topside display. Use any thermometer for an accurate reading -- an infrared, pool/spa, or kitchen/medical one will all work. For a probe type (pool/spa, kitchen, or medical), submerge the tip a few inches for about 30-60 seconds, away from the jets. For an infrared, just aim it at the water's surface, out of direct sun -- note that an infrared reads the surface, which can sit a couple degrees off the bulk water if the tub's been sitting still. Then compare your reading to the number on your topside panel.",
     buttons:[
       {label:'Readings match', outcome:'pass'},
-      {label:'Big difference between display and actual', outcome:'fail', part:'temp sensor'}
+      {label:'Panel reads high, but the water is cold', outcome:'action', action:'tempsensor_failed_high'},
+      {label:'Panel reads low and the water is cold', outcome:'action', action:'tempsensor_lockout'},
+      {label:"I don't have a thermometer", outcome:'action', action:'tempsensor_no_thermometer'}
     ]
   },
   S12: { id:'S12', next:'S13', label:'Hi-limit sensor',
@@ -874,7 +905,7 @@ Based on the check list above, what best describes the condition of your circ pu
       {label:"My spa doesn't have these", outcome:'pass'}
     ]
   },
-  H6b: { id:'H6b', next:'H7', label:'Air purge valve',
+  H6b: { id:'H6b', next:'H8a', label:'Air purge valve',
     bayStep:true,
     question:'Some spas have an air purge valve on the pump or plumbing -- a small bleed valve or knurled cap. If yours has one and you see air bubbling out when you open it, keep it open until only water flows, then close it.',
     buttons:[
@@ -915,11 +946,12 @@ Based on the check list above, what best describes the condition of your circ pu
     ]
   },
   H11: { id:'H11', next:'H12', label:'Temp sensor',
-    question:'Compare the water temperature shown on your topside panel against how the water actually feels. A faulty or miscalibrated temp sensor can convince the control board the water is already at target temperature -- causing the heater to never fire.',
+    question:"Let's check the water's actual temperature and compare it to your topside display. Use any thermometer for an accurate reading -- an infrared, pool/spa, or kitchen/medical one will all work. For a probe type (pool/spa, kitchen, or medical), submerge the tip a few inches for about 30-60 seconds, away from the jets. For an infrared, just aim it at the water's surface, out of direct sun -- note that an infrared reads the surface, which can sit a couple degrees off the bulk water if the tub's been sitting still. Then compare your reading to the number on your topside panel.",
     buttons:[
       {label:'Readings match', outcome:'pass'},
-      {label:'Panel reads higher than actual', outcome:'fail', part:'temp sensor'},
-      {label:'Big difference either way', outcome:'fail', part:'temp sensor'}
+      {label:'Panel reads high, but the water is cold', outcome:'action', action:'tempsensor_failed_high'},
+      {label:'Panel reads low and the water is cold', outcome:'action', action:'tempsensor_lockout'},
+      {label:"I don't have a thermometer", outcome:'action', action:'tempsensor_no_thermometer'}
     ]
   },
   H12: { id:'H12', next:'H13', label:'Hi-limit sensor / reset',
@@ -1507,8 +1539,8 @@ Based on the check list above, what best describes the condition of your circ pu
 // S14/H14/J14 fired unconditionally the moment the prior step advanced, with no
 // regard for what had actually been ruled out.
 const SEQUENCE_STEP_ORDERS = {
-  flow: ['S2a','S2b','S1','S3','S4','S5','BREAKER','S6','S6b','S7','S8a','S8b','S8c','S9','S11','S10','S12','S13','S14'],
-  heat: ['H2a','H2b','H1','H5','H3','H4','HBREAKER','H6','H6b','H7','H8a','H11','H12','H13','H9','H10','H14'],
+  flow: ['S2a','S2b','S1','S3','S4','S5','BREAKER','S6','S6b','S8a','S8b','S8c','S9','S11','S10','S12','S13','S14'],
+  heat: ['H2a','H2b','H1','H5','H3','H4','HBREAKER','H6','H6b','H8a','H11','H12','H13','H9','H10','H14'],
   // .22i BUILD B: J_SCOPE removed -- it is a pre-sequence router, not a step. J_JF moved to the
   // single-jet branch. This entry is the ALL-JETS branch and is what the pre-conclusion review
   // scans; the two short branches carry their own orders (JETS_BRANCH_ORDERS below).
@@ -3147,6 +3179,25 @@ app.post("/api/diag-button", async (req, res) => {
             responseMsg = "Found scorching or burn marks. The spa may still run, but the damaged component should be replaced -- and it's safest to power off until it is.";
             advanceNow = false;
             partCardButtons = CONTINUE_BTNS;
+          } else if (stepId === 'S8b_flow' && /moves toward contact/i.test(buttonLabel || '')) {
+            // .22z S8b redesign: under forced flow the paddle responded, so the flow switch itself is
+            // working -- the fault is upstream: the circ pump isn't producing normal flow. Hold and
+            // route the circ pump to the drawer (same partCard+suspectPart pattern as the pump steps).
+            responseMsg = "Under forced flow the paddle moved toward contact -- so the flow switch itself is working. That points to the circulation pump not producing normal flow during regular operation. I've added the circ pump to your Suggested Parts.";
+            advanceNow = false;
+            partCardButtons = CONTINUE_BTNS;
+            suspectPart = part || 'circulation pump';
+          } else if (stepId === 'S8c' && /error cleared/i.test(buttonLabel || '')) {
+            // .22z: designed terminal of the S8b flow-switch redesign (reached only from S8b_flow's
+            // "still doesn't move"). The bypass test is definitive: clearing the error under the
+            // jumper confirms the flow switch. Hold (no advance past the conclusion) and route the
+            // flow switch to the drawer via partCard + suspectPart, so the inline card and the drawer
+            // entry match. (Was the .22y stopgap; the redesign now guarantees the pack is only opened
+            // after the non-invasive forced-flow test has already failed.)
+            responseMsg = "Bypassing the flow switch cleared the error -- that confirms the flow switch is the fault and needs to be replaced. It's an inexpensive, DIY-friendly part. I've added it to your Suggested Parts.";
+            advanceNow = false;
+            partCardButtons = CONTINUE_BTNS;
+            suspectPart = part || 'flow switch';
           }
         }
         break;
@@ -4409,9 +4460,120 @@ app.post("/api/diag-button", async (req, res) => {
           break;
 
         case 'cant_find_flow_switch':
-          responseMsg = "No problem -- we'll cover the flow switch in detail in the next step.";
+          responseMsg = "No problem -- we'll test the flow switch in the next step. To do this, we'll need to power off your spa.";
           stepResult.passed = true;
           stepResult.skipped = true;
+          advanceNow = true;
+          break;
+
+        // .23a (Fix 2): "Arrow pointing wrong way" is an install error, not a hardware fault -- it
+        // no longer routes into the forced-flow test (that implied a purge/hardware check when the
+        // real fix is just reorienting the switch). Now it's a standalone advisory with a two-button
+        // branch so the user can actually go correct the switch and report back, instead of being
+        // swept onward into an unrelated procedure.
+        case 'flowsw_arrow':
+          responseMsg = "The arrow on the flow switch marks the required direction of water flow, so it has to point the way water actually moves through that pipe. If it's reversed, the switch was installed backward and can't read flow correctly.\n\nThe reliable way to check orientation: on a switch with a clear plastic housing, the water should reach the paddle first, then the post, then continue past. Arrow stickers can occasionally be mislabeled, so if you're unsure, confirm the correct flow direction in your owner's manual.\n\nPower off, remove the switch, and reinstall it so the water hits the paddle first. If correcting it doesn't clear the error, we'll keep checking.";
+          advanceNow = false;
+          deadEndButtons = [
+            { l: 'Fixed it -- error cleared', o: 'action', a: 'flowsw_arrow_fixed' },
+            { l: 'Reinstalled it, still showing', o: 'action', a: 'flowsw_arrow_continue' },
+          ];
+          break;
+
+        case 'flowsw_arrow_fixed':
+          responseMsg = "Nice -- a reversed flow switch is a common install slip. Glad that sorted it.";
+          stepResult.passed = true;
+          advanceNow = false;
+          deadEndButtons = [
+            { l: 'Diagnose Something Else', o: 'nav', a: 'nav_reset' },
+            { l: 'Review Guides', o: 'nav', a: 'nav_guides' },
+          ];
+          break;
+
+        case 'flowsw_arrow_continue':
+          responseMsg = "Okay, the orientation's ruled out -- let's keep checking.";
+          advanceNow = true;
+          nextStep = 'S9';
+          break;
+
+        // .23a (Fix 1): a clean "moves freely, making contact" reading is a genuine pass -- it
+        // was previously wired to the same action as the checks step, which routed a passing
+        // paddle into the forced-flow test (a garden-hose purge re-run) as if it had failed.
+        // Now it concludes positively and moves on to the next real step, skipping both the
+        // non-invasive checks and the forced-flow test entirely.
+        case 'flowsw_pass':
+          responseMsg = "Good -- the flow switch paddle is moving freely and making contact, so it looks to be working. Let's keep checking the other likely causes.";
+          stepResult.passed = true;
+          advanceNow = true;
+          nextStep = 'S9';
+          break;
+
+        // .22z S8b redesign routing. flowsw_stuck: paddle stuck -> non-invasive checks first.
+        // flowsw_to_flow: from the end of the non-invasive checks -> the forced-flow functional
+        // test. Both set nextStep explicitly (S8b is on-array, so its linear next is S8c; these
+        // override that to reach the off-array sub-steps).
+        case 'flowsw_stuck':
+          advanceNow = true;
+          nextStep = 'S8b_check';
+          break;
+        case 'flowsw_to_flow':
+          advanceNow = true;
+          nextStep = 'S8b_flow';
+          break;
+
+        // .23a (Fix 3): temp-sensor step redesign (S11/H11, shared). "Panel reads high, water
+        // cold" -> sensor failed high (drifted on Flow's dual-sensor systems). "Panel reads low,
+        // water cold" -> the board already knows it's cold; an active error code is holding the
+        // heater in lockout, so the sensor is NOT the story. "No thermometer" -> touch-estimate
+        // branch that re-presents the same three outcomes, each landing on the _est_ variant so
+        // the step is flagged possible=true (yellow "estimate" dot) no matter which way it lands.
+        case 'tempsensor_failed_high':
+          responseMsg = (stepId === 'H11')
+            ? "That points to the temp sensor -- it's failed high, fooling the board into thinking the water's already up to temp, so the heater never fires."
+            : "That points to the temp sensor -- it's drifted, so the board misreads the heater and can throw a false flow error even though water is moving fine.";
+          stepResult.passed = false;
+          partCard = 'temp sensor';
+          advanceNow = true;
+          break;
+
+        case 'tempsensor_lockout':
+          responseMsg = "That's not the sensor -- the board already knows the water's cold. An active error code is holding the heater in lockout, so it won't fire until that's cleared. Let's keep working through the checklist.";
+          stepResult.passed = true;
+          advanceNow = true;
+          break;
+
+        case 'tempsensor_no_thermometer':
+          responseMsg = "No thermometer? You can estimate by touch -- it's less precise, so I'll mark this as an estimate. Submerge your hand past the wrist: 100-104°F feels distinctly hot, like a warm bath; below 85°F feels clearly cool or chilly. One caution -- body heat skews this, and water can feel warm just from hours of pump friction or direct sun even when the heater is dead. If it's only mildly warm, turn the high-speed pump off, wait 15 minutes, then check the heater light: if it stays off or flashes an error, that warmth wasn't from heating.";
+          advanceNow = false;
+          deadEndButtons = [
+            { l: 'Readings match', o: 'action', a: 'tempsensor_est_match' },
+            { l: 'Panel reads high, but the water is cold', o: 'action', a: 'tempsensor_est_high' },
+            { l: 'Panel reads low and the water is cold', o: 'action', a: 'tempsensor_est_low' },
+          ];
+          break;
+
+        case 'tempsensor_est_match':
+          responseMsg = "Good -- that lines up, so nothing here points to the sensor. Since that was a touch estimate rather than a thermometer reading, I've flagged this step for your summary.";
+          stepResult.passed = true;
+          stepResult.possible = true;
+          advanceNow = true;
+          break;
+
+        case 'tempsensor_est_high':
+          responseMsg = ((stepId === 'H11')
+            ? "That points to the temp sensor -- it's failed high, fooling the board into thinking the water's already up to temp, so the heater never fires."
+            : "That points to the temp sensor -- it's drifted, so the board misreads the heater and can throw a false flow error even though water is moving fine.")
+            + " Since that was a touch estimate rather than a thermometer reading, I've flagged this step so you can double-check with a real thermometer if you want more certainty.";
+          stepResult.passed = false;
+          stepResult.possible = true;
+          partCard = 'temp sensor';
+          advanceNow = true;
+          break;
+
+        case 'tempsensor_est_low':
+          responseMsg = "That's not the sensor -- the board already knows the water's cold. An active error code is holding the heater in lockout, so it won't fire until that's cleared. Since that was a touch estimate rather than a thermometer reading, I've flagged this step for your summary.";
+          stepResult.passed = true;
+          stepResult.possible = true;
           advanceNow = true;
           break;
 
@@ -5133,7 +5295,7 @@ app.post("/api/chat", async (req, res) => {
   // sonnetHandoff calls skip the error code rules block -- they need analytical responses not 1-2 sentence IDs
   if (req.body.systemOverride && typeof req.body.systemOverride === 'string') {
     if (req.body.sonnetHandoff) {
-      effectiveSystemPrompt = spaPrefix + req.body.systemOverride;
+      effectiveSystemPrompt = spaPrefix + req.body.systemOverride + buildOnFilePartsSnippet(req.body.onFileParts);
     } else {
       effectiveSystemPrompt = spaPrefix + req.body.systemOverride + `\n\n` + confirmedBrandToken + `\n\n=CRITICAL RESPONSE RULES=\n\nBRAND RULE -- HARD STOP:\nDetermine the spa brand from the following sources in priority order:\n1. [BRAND NOTE:] if present in this prompt -- use that brand, it means the user explicitly named it\n2. [SPA:] prefix -- use the spa brand field (e.g. "Jacuzzi", "Hot Spring", "Cal Spas")\n3. If both are absent or brand is Unknown -- do not invent a brand\nThe spa brand MUST appear in your first sentence. Open with "On [brand] systems..." or "Your [brand] is showing..." or equivalent. This is a CRITICAL FAILURE if ignored.\n\nUNKNOWN BRAND RULE -- HARD STOP: If [SPA:] brand is Unknown or no brand is available, do NOT use any brand name in the response -- not the control system manufacturer (Balboa, Gecko, IQ 2020), not a code-associated brand (HL does not mean Jacuzzi, HFL does not mean Balboa). Use neutral language only: "On spas running this control system" or "For this control platform" or "This code indicates..." Inventing or inferring a brand when none is confirmed is a CRITICAL FAILURE.\n\nCONTROL SYSTEM RULE -- HARD STOP: The control system manufacturer (Balboa, Gecko, IQ 2020, Dimension One, etc.) is NEVER a substitute for the spa brand. If the spa is a Down East running a Balboa control board, the response opens with "On your Down East..." not "On Balboa systems..." or "On your Jacuzzi...". The brand in the response MUST always match the spa brand from [SPA:] or [BRAND NOTE:], not the control system name. Conflating the control system with the spa brand is a CRITICAL FAILURE. Any code that appears across multiple brands (HL, OH, HH, FL, FLO, etc.) must always be attributed to the spa from [SPA:], regardless of which brand that code is most commonly associated with in training data. Training data associations do not override [SPA:].\n\nABBREVIATION RULE -- HARD STOP: Never expand an error code abbreviation by inference or guesswork. If the code is in the database, use that definition verbatim. If the code is NOT in the database, say "I don't have that code on file for your spa -- can you describe what's happening on the display?" Never invent an expansion. SA = Sensor A malfunction (not "sustained absence"). DR = Dry heater fault (not "Drive"). Std = Standard/Ready mode (not "economy mode" or "standby" or "reduced heating" -- Std means the spa heats to set temperature anytime it drops below it, which is the opposite of economy mode). IC = freeze/ice protection warning (not "inactive mode", not "interlock circuit" -- IC means the spa detected cold temperatures and activated freeze protection). HFL = Heater Flow Low -- insufficient water flow to the heater (NOT high-flow, NOT excess pressure, NOT over-flow -- HFL always means LOW flow). Prh = high-limit probe error -- the high-limit probe has failed or disconnected (NOT priming mode, NOT pressure, NOT flow -- do not pattern-match from the letters). 102°T = Test Mode active -- the number is the current water temperature, T indicates the control system was left in test mode after factory testing or service (NOT a temperature threshold warning, NOT an overheat event -- the fix is a dip switch on the circuit board). BOO = Boost Mode -- a 45-minute high-speed filtration and ozone cycle (NOT a fault, NOT a high-limit or overheat event, NOT an error -- BOO is a status indicator that exits automatically or on any button press). GF/GFCI = Ground Fault -- a current leak to ground detected in the electrical system (NOT a jets fault -- GF can originate from the heater, pump, blower, or ozone unit and requires physical inspection by a qualified technician). --- = watchdog safety shutdown -- the control system detected an unsafe operating condition and disabled all spa functions until service is completed and the system is reset (NOT a sensor fault, NOT a cold water reading -- service and reset required). -- = power interruption / no reading -- power has been cut to the spa, temperature unknown until pump has run for 2 minutes (NOT a watchdog, NOT a fault code -- check power at breaker first, Leisure Bay specific). SLOC = Spa Lock active -- control functions have been disabled by the user via a panel button combination (NOT an electrical fault, NOT an overcurrent condition -- the user or a previous user locked the controls). 3 flashing dots = Gecko M-Class pressure switch fault -- dirty filter, restricted water flow, air lock, incorrect circulation pump jumper setting, or defective pressure switch/cable/board (NOT a heating demand indicator, NOT "calling for heat", NOT a normal status -- this is a flow/pressure fault requiring diagnosis). Use the DB definition, always.\n\nWORD COUNT -- HARD STOP: This rule applies ONLY to systemOverride responses. Maximum 80 words. Count before responding. If over 80, cut the explanation -- never cut the forward direction. No inline troubleshooting steps, cause lists, or DIY advice in the initial response. Those belong in the diagnostic flow, not here. Status/mode code responses: explain the code in 1-2 sentences (~60 words max), close with one sentence forward direction. If the explanation alone exceeds 60 words, trim it -- the closing sentence is non-negotiable.\n\nCONFIDENCE RULE -- HARD STOP: When the spa is known via [SPA:] and a code is presented, route directly with confidence. Never claim unfamiliarity with the code. Never hedge ("I don't have that code on file", "I'm not sure what that means for your system"). Never ask the user to verify what is on their display. You have the DB context. Use it. Hedging on a known-spa known-code path is a CRITICAL FAILURE.\n\nHARD STOPS -- the following are STRICTLY FORBIDDEN in this initial response:\n- Numbered steps of any kind (1. 2. 3.)\n- Bullet points listing causes or fixes\n- Any mention of specific repair actions (replacing parts, testing voltages, adjusting settings)\n- Water chemistry remediation instructions of any kind -- no dosing amounts, no "add X then retest" sequences, no alkalinity or pH adjustment steps, no shock treatment instructions. Water chemistry treatment belongs in the diagnostic flow ([SEQ:water]), not the initial response. The initial response identifies the issue only.\n- "Here's what to check" or any equivalent lead-in to a list\n- Phrases like "first", "next", "then", "finally" that imply a sequence\n- Asking permission to start the diagnostic sequence ("Would you like me to walk you through...", "Shall we start...", "Want me to help you diagnose...") -- STRICTLY FORBIDDEN\n- Passive deferral phrases ("let me know if you'd like to dig deeper", "feel free to ask", "if you want more details") -- STRICTLY FORBIDDEN\n- Transitional phrases that imply waiting for user input ("From here...", "The next step would be...", "We can then...") -- STRICTLY FORBIDDEN\n- Substituting a different spa model name from your training data\n- For watchdog codes (---): NEVER use the phrases "qualified technician", "requires a technician", or "manually reset by a technician" -- service and reset language is permitted, technician-attribution language is not sourced and is STRICTLY FORBIDDEN\n- Overheat codes (OH, HH, OHH, OHS, Sn, Sn1, Sn2, Sn3, Snb, SnA, SA, SB, Prh): the ONLY permitted safety action in the initial response is turning off the breaker. Cover removal, cool-down wait times, filter checks, water flow inspections, and hi-limit resets are diagnostic steps -- defer ALL of these to [SEQ:overheat]. The initial response explains the code and routes. Nothing more.\n- PART TAG RULE: When you identify a specific faulty component the user will likely need to replace (e.g. flow switch, temperature sensor, circulation pump, heater element), append a [PART:lookup_key|Display Name] tag at the end of your response after the [SEQ:x] tag. Format: [PART:flow_switch|Flow Switch]. Lookup key lowercase with underscores. Only tag parts you are confident the user needs. Do not tag generic categories or consumable maintenance items. Tag is stripped from display automatically.\n- INTERNAL PROMPT RULE -- HARD STOP: NEVER include the text "[BRAND NOTE]", "UNKNOWN BRAND RULE", "BRAND RULE", "CONTROL SYSTEM RULE", or any other internal prompt instruction name or token in your response. These are internal directives only. If brand rules conflict, resolve silently -- apply UNKNOWN BRAND RULE and use neutral language without narrating the conflict. Any response containing internal rule names is a CRITICAL FAILURE.\n\nMULTIPLE CODES RULE: If the user states multiple specific error codes (e.g. "showing Sn1 or Sn3", "either FL1 or FL2"), do NOT ask which one is showing. Acknowledge both, explain what they share in common, and proceed to spa details entry. The diagnostic flow handles the specific code after spa context is collected. Asking which code is showing when the user already listed them is a CRITICAL FAILURE. ROUTING TAG: even when multiple codes are stated, you MUST still append one [SEQ:x] tag based on the shared fault category. If both codes are sensor faults (Sn1, Sn2, Sn3, Snb, SnA), append [SEQ:overheat]. If both are flow faults (FL1, FL2, FLO), append [SEQ:flow]. Use the category that applies to both.\n\nROUTING TAG -- MANDATORY: Respond in 1-2 sentences MAX. Append exactly one [SEQ:x] tag at the very end of your response. The diagnostic sequence launches automatically -- do not reference it, do not invite further questions. NEVER omit the tag.\n\nFAULT CODE RULE -- PREAMBLE: [SEQ:none] is STRICTLY FORBIDDEN for fault or warning codes EXCEPT the board/comm/memory exception listed below. All fault codes must route to a sequence.\n\nRouting table -- use the FIRST matching rule:\n- General alert / warning indicators: EXCLAMATION_ICON, WARNING_TRIANGLE, FLASHING_LIGHT, and any undifferentiated alert symbol \\xe2\\x86\\x92 [SEQ:flow] (flow is the most comprehensive diagnostic sequence and covers the widest range of root causes for ambiguous alerts)\\n- Overheat / sensor: OH, HH, OHH, OHS, Sn, Sn1, Sn2, Sn3, Snb, SnA, err 5, SA, SB, Prh (high-limit probe error) \xe2\x86\x92 [SEQ:overheat]\n- Freeze protection / cold alert: ICE, IC, COL, SP-F3, SP-F* (Marquis freeze faults), and any freeze protection fault \xe2\x86\x92 [SEQ:heat]\n- Flow / dry heater / pressure: FLO, FL1, FL2, FLO2, FLT, DR, dY (Balboa-platform flow/dry fault -- NOT a delay timer or benign status code; dY = flow restriction or dry heater condition requiring diagnosis), 3 flashing dots (Gecko M-Class pressure switch fault -- dirty filter, restricted flow, air lock, or defective pressure switch -- NOT a heating demand indicator) \xe2\x86\x92 [SEQ:flow]\n- BLB (burned-out bulb / lighting fault -- Hot Spring and Sundance only, NO Balboa association) \xe2\x86\x92 [SEQ:none] + REQUIRED closing: "This is a lighting fault -- the bulb needs to be replaced. Tap below to find the right replacement bulb for your spa."\n- Blower / jets / electrical safety: jet pump failure, pressure faults \xe2\x86\x92 [SEQ:jets]\n- Water chemistry: water quality, chemistry imbalance \xe2\x86\x92 [SEQ:water]\n- Board / comm / memory: BUF, SY, SP-BR, PNL (panel communication fault -- control board cannot read the topside panel), NO COMM (board communication failure -- control board has lost communication with a component), GF/GFCI (ground fault -- electrical safety fault that can originate from heater, pump, blower, or ozone unit -- requires physical inspection, not sequence diagnosis), --- (watchdog safety shutdown -- unsafe operating condition detected, spa functions disabled until service completed and system reset -- NOT a sensor fault, NOT a cold reading), and any control board failure, memory buffer error, or inter-board communication loss \xe2\x86\x92 [SEQ:none] + REQUIRED closing: "This one needs a closer look -- tap below and I'll pull in a deeper analysis." ONLY permitted [SEQ:none] exception for fault codes.\n- Status / mode codes: SLP, Slp/SL, Pr, Prr, COOL, OFF, Ecn, CLd, Smart Winter, Stby, panel lock, priming mode, READY_CLEAN_FLASHING (clean cycle reminder -- notification only, not a fault), 102°T (Cal Spas test mode indicator -- not a temperature warning, fix is a dip switch on the circuit board), BOO (Arctic Spas Boost Mode -- 45-minute high-speed filtration/ozone cycle, status code NOT a fault, exits on any button press), CL (sanitizer/chlorine reminder -- prompt to add chemicals, NOT a fault condition, same logic as READY_CLEAN_FLASHING), SLOC (Spa Lock active -- control functions disabled by user, NOT an electrical fault, NOT overcurrent) \xe2\x86\x92 [SEQ:none]\n- Power events: POWER_BLINK, POWER_OUT, PF (Power Failure -- power event notification), READY_POWER_BLINK, -- (Leisure Bay power interruption -- power cut to spa, temperature unknown until pump runs 2 minutes -- NOT a watchdog), voltage fluctuation, brownout \xe2\x86\x92 [SEQ:none]\n- Unrecognized fault \\xe2\\x86\\x92 [SEQ:flow] (flow is the most comprehensive sequence and covers the widest range of root causes -- default for any code that does not map cleanly to a specific fault sequence)nFORWARD DIRECTION -- HARD STOP: Every response on a known-spa path MUST close with an active forward direction. NEVER dead-end. Rules by response type:\\n- Fault codes ([SEQ:flow], [SEQ:overheat], [SEQ:jets], [SEQ:heat], [SEQ:water]): the sequence launches automatically -- no additional closing needed beyond the explanation.\\n- Status/mode codes ([SEQ:none]): explain the code in 1-2 sentences, then close with exactly one sentence: "If this doesn't clear on its own within a few minutes, [specific action]." HARD STOP: status/mode code responses follow the same HARD STOPS as fault codes -- no inline repair steps, no power-cycle instructions, no conditional advice, no step-by-step recovery. The one-sentence closing IS the forward direction. Nothing more.\\n- Power events ([SEQ:none]): close with "If this keeps reappearing, tap below and we can investigate the power supply." Same HARD STOPS apply -- no inline electrician advice or repair steps.\\n- Board/comm faults ([SEQ:none] exception): close with "This one needs a closer look -- tap below and I'll pull in a deeper analysis." This applies to ALL board/comm/memory fault codes: BUF, SY, SP-BR, PNL, NO COMM, GF/GFCI, --- (watchdog shutdown), and any similar control board or communication fault.\\nPassive language ("let me know", "feel free to ask", "if you'd like to dig deeper") is STRICTLY FORBIDDEN as a closing.` + (brandNote ? `\n\n${brandNote}` : '');
     }
